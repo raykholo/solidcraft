@@ -50,10 +50,14 @@ and the nightly run them all. Each seed is its own test
 
 Explicit `platforms.<os>.seeds` records override only the listed seeds on that
 operating system; all other seeds keep the shared records and strict tolerances.
-The first four Windows records were independently reproduced on unmodified main
-`1e984c8e`; seed 94 was independently reproduced on unmodified main `c5992386`
-after the extrusion rebase. Both match the extrusion branch. Recording on a platform
-with such entries updates its changed seeds and preserves shared references.
+The Windows records for seeds 1, 23 and 34 were independently reproduced on unmodified
+main `1e984c8e`; seed 94 was independently reproduced on unmodified main `c5992386`
+after the extrusion rebase. Both match the extrusion branch. Seed 13's was recorded on
+unmodified main `65e6d9da`. Recording on a platform with such entries updates its
+changed seeds and preserves shared references. A platform record replaces the shared
+one whole, so a change that moves a seed with a platform record needs that seed checked
+on that platform too: seed 67's Windows record went stale this way after #2064 and
+#2247 and was removed once Windows built the shared record again.
 
 To record an intended change, give the reason:
 
