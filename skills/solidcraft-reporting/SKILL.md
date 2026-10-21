@@ -41,6 +41,7 @@ Shrink while the same failure, with the same message, still happens. Re-run afte
 
 ## 5. Privacy
 - Never attach, upload or quote the user's design, a crash report's `design.solidcraft`, or file contents without asking. The minimal synthetic script is the default attachment.
+- GitHub does not accept `.solidcraft` attachments. A design the user agrees to share goes up as a `.zip`: a `.solidcraft` file is a ZIP already, so copy or rename it to `name.solidcraft.zip`, or zip it. SolidCraft opens either kind of `.zip`.
 - Strip home folders, user names, part and project names and file paths from messages and logs (`/home/alice/clients/acme/bracket.solidcraft` → `bracket.solidcraft`).
 - Check screenshots for other windows, file names and anything personal.
 
