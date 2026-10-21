@@ -2098,6 +2098,7 @@
   "timeline.delete_after_marker_one": "Delete 1 Feature After History Marker",
   "timeline.delete_after_marker_other": "Delete {count} Features After History Marker",
   "timeline.delete_many": "Delete {count} Selected Features",
+  "timeline.feature_hint": "Double-click to edit · drag to reorder · right-click for more",
   "timeline.group": "New Feature Folder",
   "timeline.move_many": "Move Timeline Items",
   "timeline.move_to_group": "Move Features to Folder",

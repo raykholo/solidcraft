@@ -2098,6 +2098,7 @@
   "timeline.delete_after_marker_one": "删除历史标记之后的 1 个特征",
   "timeline.delete_after_marker_other": "删除历史标记之后的 {count} 个特征",
   "timeline.delete_many": "删除所选的 {count} 个特征",
+  "timeline.feature_hint": "双击编辑 · 拖动以重新排序 · 右键查看更多操作",
   "timeline.group": "新建特征文件夹",
   "timeline.move_many": "移动时间线项目",
   "timeline.move_to_group": "将特征移至文件夹",

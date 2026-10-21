@@ -2098,6 +2098,7 @@
   "timeline.delete_after_marker_one": "履歴マーカー以降の 1 個のフィーチャーを削除",
   "timeline.delete_after_marker_other": "履歴マーカー以降の {count} 個のフィーチャーを削除",
   "timeline.delete_many": "選択した {count} 個のフィーチャーを削除",
+  "timeline.feature_hint": "ダブルクリックで編集 · ドラッグで並べ替え · 右クリックでその他の操作",
   "timeline.group": "フィーチャーフォルダを新規作成",
   "timeline.move_many": "タイムライン項目を移動",
   "timeline.move_to_group": "フィーチャーをフォルダへ移動",
