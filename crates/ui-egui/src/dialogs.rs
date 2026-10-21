@@ -4734,6 +4734,40 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             d.extra.insert("center".into(), pt_expr(center));
             d
         }
+        FeatureKind::Coil { base, axis, diameter, pitch, turns, section_size, section, position, start_angle, clockwise, operation, targets } => {
+            let mut d = start("solid.coil")?;
+            d.kind = Kind::Primitive {
+                cmd: "solid.coil",
+                fields: vec![
+                    ("diameter", stored_length(s, diameter)),
+                    ("revolutions", turns.to_string()),
+                    ("pitch", stored_length(s, pitch)),
+                    ("section_size", stored_length(s, section_size)),
+                ],
+                operation: op_index(operation),
+                at: None,
+            };
+            d.extra.insert("base".into(), pt_expr(base));
+            d.extra.insert("axis".into(), pt3(axis.0));
+            if *section == solidcraft_engine::doc::CoilSection::Square {
+                d.extra.insert("section".into(), json!("square"));
+            }
+            match position {
+                ..0 => d.extra.insert("section_position".into(), json!("inside")),
+                1.. => d.extra.insert("section_position".into(), json!("outside")),
+                0 => None,
+            };
+            if let Some(a) = start_angle {
+                d.extra.insert("start_angle".into(), json!(a.to_string()));
+            }
+            if *clockwise {
+                d.extra.insert("clockwise".into(), json!(true));
+            }
+            if !targets.is_empty() {
+                d.extra.insert("targets".into(), json!(targets));
+            }
+            d
+        }
         FeatureKind::BoundaryFill { tools, cells, operation, remove_tools } => {
             let mut d = start("solid.boundary_fill")?;
             // The cells again, ticked where a stored cell point lies in the same cell.
