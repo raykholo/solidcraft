@@ -61,6 +61,10 @@ changed seeds and preserves shared references. A platform record replaces the sh
 one whole, so a change that moves a seed with a platform record needs that seed checked
 on that platform too: seed 67's Windows record went stale this way after #2064 and
 #2247 and was removed once Windows built the shared record again.
+The Windows records were made with the MSVC target (`x86_64-pc-windows-msvc`) and all
+six were checked again on main `e9490093`. A build for the GNU target (`x86_64-pc-windows-gnu`)
+has been reported to build the shared records for seeds 1, 23, 34 and 94 instead, but it
+is still given the Windows records, which select by operating system only (#4104).
 
 To record an intended change, give the reason:
 
