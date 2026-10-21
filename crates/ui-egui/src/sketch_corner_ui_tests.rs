@@ -925,3 +925,24 @@ fn centre_circle_on_an_existing_point_is_tied_by_a_coincident() {
         .any(|k| matches!(k.kind, ConstraintKind::Coincident { p, q } if (p, q) == (corner, centre) || (p, q) == (centre, corner)));
     assert!(tied, "a Coincident ties the centre to the corner: {:?}", sk.constraints);
 }
+
+#[test]
+fn fillet_candidates_exclude_3d_sketch_curves() {
+    use crate::sketch_modify_ui::candidate;
+    use crate::viewport::Hit;
+
+    let mut h = crate::scenario::Harness::new();
+    h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+    h.app.run("sketch.options", json!({"sketch_3d":true})).unwrap();
+    let wires = h.app.run("sketch.line3d", json!({"points":[[0,0,0],[20,0,0],[20,0,20]]})).unwrap();
+    h.app.run("sketch.line", json!({"points":[[0,0],[0,20]],"ids":["side"]})).unwrap();
+    h.app.start("sketch.fillet");
+    let d = h.app.dialog.as_ref().unwrap();
+    let sketch = h.app.session.active_sketch.unwrap();
+    for wire in wires["curves"].as_array().unwrap() {
+        let hit = Hit::SketchCurve { sketch, id: wire.as_str().unwrap().into(), straight: true };
+        assert!(candidate(d, &h.app.session, &hit).is_none(), "{hit:?}");
+    }
+    let hit = Hit::SketchCurve { sketch, id: "side".into(), straight: true };
+    assert!(candidate(d, &h.app.session, &hit).is_some());
+}
