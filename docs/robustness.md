@@ -53,7 +53,10 @@ operating system; all other seeds keep the shared records and strict tolerances.
 The Windows records for seeds 1, 23 and 34 were independently reproduced on unmodified
 main `1e984c8e`; seed 94 was independently reproduced on unmodified main `c5992386`
 after the extrusion rebase. Both match the extrusion branch. Seed 13's was recorded on
-unmodified main `65e6d9da`. Recording on a platform with such entries updates its
+unmodified main `65e6d9da`; seed 23's was re-recorded after #1653. Seed 36's, recorded
+on main `79a843c9`, holds a failure: on Windows (and macOS) its last step leaves a body that fails the
+validity check, where Linux builds it ok (#3583). The record only makes a further change
+show; it does not accept the failure. Recording on a platform with such entries updates its
 changed seeds and preserves shared references. A platform record replaces the shared
 one whole, so a change that moves a seed with a platform record needs that seed checked
 on that platform too: seed 67's Windows record went stale this way after #2064 and
