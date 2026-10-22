@@ -106,6 +106,8 @@ pub struct AgentConfig {
     /// API: the endpoint (`…/v1`) and model.
     pub base_url: String,
     pub model: String,
+    /// Added with the Ollama preset (even if its display name changes).
+    pub ollama: bool,
     /// API: a key is stored for it in the system keychain.
     pub key: bool,
     /// API: how long one model request may take, in seconds (clamped to

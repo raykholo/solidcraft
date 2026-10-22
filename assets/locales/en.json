@@ -2376,6 +2376,7 @@
   "ui.agent_chat_mode_all": "All",
   "ui.agent_chat_mode_ask": "Ask",
   "ui.agent_chat_mode_edits": "Edits",
+  "ui.agent_chat_model_no_tools": "{model} can't use SolidCraft's tools, so it can only chat. Pick a model with tool support.",
   "ui.agent_chat_model_tip": "The model the agent uses. Your choice is remembered for this agent.",
   "ui.agent_chat_new": "New chat",
   "ui.agent_chat_new_confirm": "Start a new chat? The current one is cleared.",

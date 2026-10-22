@@ -1614,6 +1614,8 @@ pub fn poll(app: &mut SolveApp, ctx: &egui::Context) {
             start_turn(app, text, image, at, files);
         }
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    settings::poll_capabilities(app, ctx);
     pump_tools(app);
     if !app.agent_chat.held.is_empty() || app.agent_chat.state() == State::Busy {
         ctx.request_repaint_after(std::time::Duration::from_millis(250));
@@ -1964,6 +1966,7 @@ pub fn status(app: &SolveApp) -> Value {
         "model": c.model,
         "providers": model_providers(app).iter().map(|(name, count)| json!({"name": name, "count": count})).collect::<Vec<_>>(),
         "provider": shown_provider(app),
+        "modelWarning": settings::model_warning(app),
         "modes": c.modes.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
         "mode": c.mode,
         "open": c.open,

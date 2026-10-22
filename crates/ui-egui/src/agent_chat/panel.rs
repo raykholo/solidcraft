@@ -1163,6 +1163,9 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         }
     });
+    if let Some(warning) = settings::model_warning(app) {
+        ui.label(RichText::new(warning).color(t.warning).size(t.font_small));
+    }
     ui.horizontal(|ui| {
         let b = if app.agent_chat.state().running() {
             ui_kit::button(ui, tr("ui.agent_chat_stop"), ui_kit::Button::Normal).on_hover_text(tr("ui.agent_chat_stop_tip"))

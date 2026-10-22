@@ -224,6 +224,13 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   endpoint's entry under **Agents**, where a change applies from the next request. A request that
   runs out of time ends the message with the limit it hit and where to raise it.
 
+For Ollama, choosing a model checks its reported capabilities in the background. If its
+capabilities list lacks `tools`, a warning below the model picker explains that the model can
+only chat and suggests choosing one with tool support. Results are cached in memory per base URL and
+model, with a limit of 128 entries. SolidCraft recognises Ollama through `/api/version` at the
+endpoint's origin or the Ollama preset. Failed checks and older servers without a capabilities
+field show no warning. The check never blocks sending a message.
+
 ### An agent inside WSL (Windows)
 
 An agent installed inside WSL keeps its own settings, skills and sign-in there. Add it as a
