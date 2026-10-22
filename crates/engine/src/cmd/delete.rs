@@ -1,6 +1,6 @@
 //! Delete for everything that can be selected, in one undo step: sketch entities (while
 //! sketching), timeline features and sketches (with the features that depend on them),
-//! construction planes, bodies (a Remove feature from here on in the timeline), occurrences and
+//! construction planes and axes, bodies (a Remove feature from here on in the timeline), occurrences and
 //! components, canvases and joints. `dry_run` reports what would go and what would fail without
 //! changing anything, so the UI can ask first.
 
@@ -98,7 +98,10 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
                 Some(f) if matches!(f.kind, FeatureKind::ConstructionPlane { .. }) => features.push(f.id),
                 _ => skip("the origin planes can't be deleted".into()),
             },
-            Sel::Axis { .. } => skip("the origin axes can't be deleted".into()),
+            Sel::Axis { name } => match s.doc.find_feature(name) {
+                Some(f) if matches!(f.kind, FeatureKind::ConstructionAxis { .. }) => features.push(f.id),
+                _ => skip("the origin axes can't be deleted".into()),
+            },
             Sel::Body { name } => bodies.push(name.clone()),
             Sel::Face { body, point, .. } => match faces.iter_mut().find(|(b, _)| b == body) {
                 Some((_, ps)) => ps.push(*point),
@@ -252,6 +255,31 @@ mod tests {
         assert_eq!(s.undo.len(), depth + 1);
         run(&mut s, "edit.undo", json!({}));
         assert_eq!((bodies(&s), s.doc.features.len()), (2, n));
+    }
+
+    #[test]
+    fn construction_axis_deletes_with_dry_run_and_undo_but_origin_axes_are_refused() {
+        let mut s = Session::default();
+        run(&mut s, "construct.axis.two_points", json!({"a": {"point": [0, 0, 0]}, "b": {"point": [1, 2, 3]}, "name": "CustomAxis"}));
+        let axis = s.doc.find_feature("CustomAxis").unwrap().id;
+        let depth = s.undo.len();
+        let items = json!([{"type": "axis", "name": "CustomAxis"}, {"type": "axis", "name": "X"}]);
+        let dry = run(&mut s, "selection.delete", json!({"items": items, "dry_run": true}));
+        assert_eq!(dry["deleted"], json!(["CustomAxis"]));
+        assert_eq!(dry["skipped"], json!(["the origin axes can't be deleted"]));
+        assert!(s.doc.feature(axis).is_some());
+        assert_eq!(s.undo.len(), depth);
+        let deleted = run(&mut s, "selection.delete", json!({"items": items}));
+        assert_eq!(deleted, dry);
+        assert!(s.doc.feature(axis).is_none());
+        assert_eq!(s.undo.len(), depth + 1);
+        run(&mut s, "edit.undo", json!({}));
+        assert!(s.doc.feature(axis).is_some());
+        for name in ["X", "Y", "Z"] {
+            let error = s.execute("selection.delete", &json!({"items": [{"type": "axis", "name": name}]})).unwrap_err();
+            assert!(error.to_string().contains("the origin axes can't be deleted"), "{error}");
+            assert!(s.doc.feature(axis).is_some());
+        }
     }
 
     #[test]
