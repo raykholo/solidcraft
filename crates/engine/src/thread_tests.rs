@@ -195,6 +195,17 @@ fn a_thread_without_a_coarse_pitch_suggests_explicit_pitches() {
 }
 
 #[test]
+fn automatic_sizing_past_the_coarse_range_suggests_a_size_with_its_pitch() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 37.5, "height": 10, "body_name": "Shaft"}));
+    let saved = s.doc.to_json();
+    let e = s.execute("solid.thread", &json!({"face": [37.5, 0, 5]})).unwrap_err().to_string();
+    assert!(e.contains("beyond the coarse thread range (up to M56)") && e.contains("M75x3 or M75x2"), "{e}");
+    assert_eq!(s.doc.to_json(), saved);
+    run(&mut s, "solid.thread", json!({"face": [37.5, 0, 5], "designation": "M75x2"}));
+}
+
+#[test]
 fn a_threaded_hole_without_a_coarse_pitch_suggests_explicit_pitches() {
     let mut s = Session::default();
     run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 10}));

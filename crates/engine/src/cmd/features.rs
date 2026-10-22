@@ -1892,6 +1892,38 @@ fn fine_only_hint(t: &str) -> Option<String> {
     None
 }
 
+/// Largest nominal diameter automatic thread sizing knows (the last ISO coarse size).
+const LARGEST_COARSE: f64 = 56.0;
+
+/// The refusal for automatic sizing on a cylinder too big for the coarse table (a Ø75 shaft):
+/// `None` when sizing finds a thread, or the cylinder is not past the table's end (the feature's
+/// own error then explains). It suggests sizes with a pitch to type, scaled to the diameter.
+fn beyond_coarse_range(st: &solidcraft_doc::ModelState, face: Vec3) -> Option<String> {
+    if solidcraft_doc::suggested_thread(st, face).is_ok() {
+        return None;
+    }
+    let cyl = st.bodies.iter().filter_map(|b| solidcraft_doc::kernel::cylinder_face_at(&b.body, face)).min_by(|a, b| {
+        let dist =
+            |c: &solidcraft_doc::kernel::CylinderFace| ((face - c.axis_point - c.axis * (face - c.axis_point).dot(c.axis)).len() - c.radius).abs();
+        dist(a).total_cmp(&dist(b))
+    })?;
+    let dia = cyl.radius * 2.0;
+    if !dia.is_finite() || dia <= LARGEST_COARSE * 0.9 || dia > 1e4 {
+        return None;
+    }
+    // ISO fine pitches for large sizes: the largest up to about a 25th of the diameter, then the
+    // next finer one. A hole's major diameter is about its bore plus one pitch.
+    const PITCHES: [f64; 4] = [4.0, 3.0, 2.0, 1.5];
+    let first = PITCHES.iter().position(|p| *p <= dia / 25.0 + 1e-6).unwrap_or(PITCHES.len() - 1);
+    let sizes: Vec<String> =
+        PITCHES.iter().skip(first).take(2).map(|p| format!("M{}x{p}", if cyl.internal { dia + p } else { dia }.round())).collect();
+    let kind = if cyl.internal { "hole" } else { "cylinder" };
+    Some(format!(
+        "a {dia:.2} mm {kind} is beyond the coarse thread range (up to M{LARGEST_COARSE}): type a size with its pitch, e.g. {}",
+        sizes.join(" or ")
+    ))
+}
+
 fn hole(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "solid.hole";
     // At sketch points: the holes go perpendicular to the sketch and follow its points.
@@ -2378,6 +2410,11 @@ fn thread(s: &mut Session, p: &Value) -> Result<Value> {
         check_expr(s, l, Kind::Length, cmd, "length")?;
     }
     let modeled = p.get("modeled").and_then(Value::as_bool).unwrap_or(false);
+    if designation.is_none()
+        && let Some(msg) = beyond_coarse_range(&s.model.state(), face)
+    {
+        return Err(bad(cmd, msg));
+    }
     let v = add_feature(s, p, FeatureKind::Thread { face: FacePick(face), designation, length, modeled })?;
     let st = s.model.state();
     let t = v.get("feature").and_then(Value::as_u64).and_then(|id| st.threads.iter().find(|t| t.feature == id).cloned());
