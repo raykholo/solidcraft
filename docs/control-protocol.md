@@ -44,7 +44,15 @@ launch and writes it, as one line of hex, to a file only the user can read:
 On Unix the folder is `0700` and the file `0600`; on Windows the file's inherited permissions are
 replaced by a single entry for the user. `SOLIDCRAFT_CONTROL_DIR` moves the folder. The file is
 removed when the app exits, and the next launch writes a new token. The token file's path is
-printed to stderr at start-up.
+printed to stderr at start-up. Beside it, `<port>.pid` holds the app's process id (and, on Linux,
+its start time).
+
+An app that is force-quit can't remove its files, so a later client may send that launch's token.
+When the app refuses it, `solidcraft-cli mcp` names the token file it read and when it was
+written, and says the file is stale when the process in `<port>.pid` has exited. Delete the file
+or restart SolidCraft. On Windows, an app or client started from inside an MSIX-packaged app (and
+the tools it launches) has its AppData redirected: it writes and reads
+`%LOCALAPPDATA%\Packages\<package>\LocalCache\Local\SolidCraft\control\` before the folder above.
 
 The first request on a connection must carry the token as a top-level `"token"` member
 (`{"id": 1, "method": "ui.inspect", "params": {}, "token": "…"}`); later requests on the same
