@@ -173,8 +173,9 @@ impl Backend for Remote {
         }
         let mut msg = json!({"id": id, "method": method, "params": params});
         // The token goes with every request (an app restarted mid-session has a new one).
-        if let Some(t) = solidcraft_engine::control_auth::client_token(self.port, self.explicit_token.as_deref()) {
-            msg["token"] = json!(t);
+        let token = solidcraft_engine::control_auth::client_token(self.port, self.explicit_token.as_deref());
+        if let Some(t) = &token {
+            msg["token"] = json!(t.token);
         }
         let line = msg.to_string();
         let reply = if method == "engine.batch" {
@@ -192,7 +193,9 @@ impl Backend for Remote {
         if v.get("ok").and_then(Value::as_bool) == Some(true) {
             Ok(v.get("result").cloned().unwrap_or(Value::Null))
         } else {
-            Err(v.get("error").and_then(Value::as_str).unwrap_or("error").to_string())
+            // A refused token: say which token file it came from (and whether it is stale).
+            let error = v.get("error").and_then(Value::as_str).unwrap_or("error");
+            Err(token.as_ref().map_or_else(|| error.to_string(), |t| t.explain_error(error)))
         }
     }
     fn has_ui(&self) -> bool {
