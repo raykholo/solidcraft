@@ -208,7 +208,11 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   OpenAI-compatible endpoint for its models; an Anthropic-compatible one gets a short message,
   because not every such endpoint lists models (Qwen's has no model list). For these agents
   SolidCraft runs the conversation itself, with the same tools, limits and questions as for a
-  coding agent, and at most 24 model requests per message.
+  coding agent, and at most 24 model requests per message. **Request timeout** is how long one model request may
+  take: 300 s by default, from 30 s to an hour. A slow local model (a large model on modest
+  hardware, or a long message with many tool results) may need more; raise it here or in the
+  endpoint's entry under **Agents**, where a change applies from the next request. A request that
+  runs out of time ends the message with the limit it hit and where to raise it.
 
 ## Signing in
 

@@ -803,6 +803,7 @@ pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
                         model: entry.model.clone(),
                         key,
                         http,
+                        request_timeout_s: entry.request_timeout_s,
                     },
                     start,
                 )
@@ -1621,9 +1622,16 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
         let Some(mode) = m.as_str().and_then(agents::Mode::parse) else { return Err("permissions must be ask, edits or all".into()) };
         app.preferences.ai_permissions = mode;
     }
-    // Add an agent (as the Add agent dialog does), for tests and screenshots: {id?, name, kind, command | base_url + model}.
+    // Add an agent (as the Add agent dialog does), for tests and screenshots:
+    // {id?, name, kind, command | base_url + model + request_timeout_s?}.
     if let Some(a) = p.get("add_agent") {
-        let mut c: agents::AgentConfig = serde_json::from_value(a.clone()).map_err(|e| format!("add_agent: {e}"))?;
+        let mut a = a.clone();
+        // Seconds are rounded and clamped to 30 s ..= 1 h, not refused for being out of range.
+        if let Some(t) = a.as_object_mut().and_then(|o| o.get_mut("request_timeout_s")) {
+            let secs = t.as_f64().filter(|s| s.is_finite()).ok_or("add_agent: request_timeout_s must be a number of seconds")?;
+            *t = json!(agents::request_timeout_s(secs));
+        }
+        let mut c: agents::AgentConfig = serde_json::from_value(a).map_err(|e| format!("add_agent: {e}"))?;
         if c.id.is_empty() {
             c.id = agents::new_id(&app.preferences, if c.kind.is_api() { c.kind.id() } else { "custom" });
         }
@@ -1799,7 +1807,7 @@ pub fn status(app: &SolveApp) -> Value {
         "features": app.preferences.ai_features,
         "toolbarButton": app.preferences.ai_toolbar_button,
         "permissions": app.preferences.ai_permissions.id(),
-        "agents": agents::entries(app).iter().map(|e| json!({"id": e.id, "name": e.name, "kind": e.kind.id(), "found": e.found, "version": e.version, "login": e.login})).collect::<Vec<_>>(),
+        "agents": agents::entries(app).iter().map(|e| json!({"id": e.id, "name": e.name, "kind": e.kind.id(), "found": e.found, "version": e.version, "login": e.login, "request_timeout_s": e.kind.is_api().then_some(e.request_timeout_s)})).collect::<Vec<_>>(),
         "currentAgent": agents::current(app).map(|e| e.id),
         "models": c.models.iter().map(|m| json!({"id": m.id, "name": m.name, "description": m.description})).collect::<Vec<_>>(),
         "model": c.model,

@@ -2019,3 +2019,34 @@ fn add_agent_opens_its_dialog_from_home() {
     assert!(h.app.agent_chat.settings.add.is_some(), "Add agent opened its dialog");
     assert!(handle_at("ai_add:add").is_some(), "the dialog is drawn over Home");
 }
+
+/// `ui.agent_chat` `add_agent` takes an endpoint's request timeout (rounded and clamped to 30 s
+/// ..= 1 h, 300 s when left out) and the state reports it.
+#[test]
+fn add_agent_takes_a_request_timeout_and_the_state_reports_it() {
+    let ctx = egui::Context::default();
+    let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+    let timeout = |app: &mut SolveApp, id: &str| {
+        let state = control(app, &ctx, &json!({})).unwrap();
+        state["agents"].as_array().unwrap().iter().find(|a| a["id"] == id).map(|a| a["request_timeout_s"].clone())
+    };
+    let add = |app: &mut SolveApp, t: Value| {
+        let mut a = json!({"id": "slow", "name": "Slow", "kind": "api", "base_url": "http://localhost:11434/v1", "model": "m"});
+        if !t.is_null() {
+            a["request_timeout_s"] = t;
+        }
+        control(app, &ctx, &json!({"add_agent": a}))
+    };
+    add(&mut app, json!(1200)).unwrap();
+    assert_eq!(timeout(&mut app, "slow"), Some(json!(1200)));
+    assert_eq!(app.preferences.agents.iter().find(|a| a.id == "slow").unwrap().request_timeout_s, 1200);
+    add(&mut app, json!(99999.7)).unwrap();
+    assert_eq!(timeout(&mut app, "slow"), Some(json!(3600)));
+    add(&mut app, json!(-3)).unwrap();
+    assert_eq!(timeout(&mut app, "slow"), Some(json!(30)));
+    add(&mut app, Value::Null).unwrap();
+    assert_eq!(timeout(&mut app, "slow"), Some(json!(300)));
+    assert!(add(&mut app, json!("long")).is_err());
+    control(&mut app, &ctx, &json!({"add_agent": {"id": "acp", "name": "A", "command": "x --acp"}})).unwrap();
+    assert_eq!(timeout(&mut app, "acp"), Some(Value::Null), "only endpoints have a request timeout");
+}
