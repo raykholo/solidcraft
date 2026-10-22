@@ -341,7 +341,9 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     });
                     ui_kit::settings_short_note(ui, &entry.detail());
-                    ui_kit::settings_form(ui, t.form_label_width + t.space_16, |ui| {
+                    // Wide enough for an endpoint's "Request timeout" too, so both rows line up.
+                    let label_w = (t.form_label_width + t.space_16).max(ui_kit::ContentWidth::label(ui, tr("ui.ai_request_timeout")) + t.space_16);
+                    ui_kit::settings_form(ui, label_w, |ui| {
                         ui_kit::row(ui, tr("ui.ai_permissions"), |ui| {
                             let current = app.preferences.agent_permissions.get(&entry.id).copied();
                             let shown = current.map_or_else(|| tr("ui.ai_mode_global").to_owned(), |mode| mode.label().to_owned());
@@ -370,7 +372,7 @@ fn agents_section(app: &mut SolveApp, ui: &mut egui::Ui) {
                     if entry.kind == Kind::Api
                         && let Some(c) = app.preferences.agents.iter_mut().find(|c| c.id == entry.id)
                     {
-                        ui_kit::settings_form(ui, t.form_label_width + t.space_16, |ui| {
+                        ui_kit::settings_form(ui, label_w, |ui| {
                             ui_kit::row(ui, tr("ui.ai_request_timeout"), |ui| {
                                 let mut secs = entry.request_timeout_s;
                                 if timeout_field(ui, &mut secs, &format!("prefs:ai_timeout:{}", entry.id)) {
