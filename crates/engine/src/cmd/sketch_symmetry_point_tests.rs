@@ -85,3 +85,18 @@ fn a_point_cannot_be_its_own_mirror() {
     assert!(s.execute("sketch.constraint.symmetry", &json!({"a": "p", "b": "origin", "point": "nope"})).is_err());
     assert_eq!(s.doc.to_json(), before);
 }
+
+#[test]
+fn a_dimensioned_rectangle_slides_symmetric_about_the_origin() {
+    // #4850: with its width and height dimensioned, neither corner can move alone and the origin
+    // never moves, so the symmetry was refused as "neither entity can move". The whole rectangle
+    // slides onto the origin instead.
+    let mut s = new_sketch();
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-19, -16], "p1": [41, 14]}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l1"], "value": 60}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["l2"], "value": 30}));
+    run(&mut s, "sketch.constraint.symmetry", json!({"a": "l1.start", "b": "l2.end", "point": "origin"}));
+    let sk = sketch(&s);
+    assert!(pt(&sk, "l1.start").dist(Vec2::new(-30.0, -15.0)) < 1e-6, "{:?}", pt(&sk, "l1.start"));
+    assert!(pt(&sk, "l2.end").dist(Vec2::new(30.0, 15.0)) < 1e-6, "{:?}", pt(&sk, "l2.end"));
+}
