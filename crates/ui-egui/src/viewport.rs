@@ -4165,6 +4165,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ssaa,
             ao_samples,
             product: false,
+            upload_error: None,
             key: app.viewport.key,
             slot: app.viewport.slot.clone(),
             sketch_key: app.viewport.sketch_key,
@@ -7462,6 +7463,7 @@ mod tests {
                 let frame = Frame {
                     product_lights: None,
                     product: false,
+                    upload_error: None,
                     key: 1,
                     slot: slot.clone(),
                     sketch_key: 0,

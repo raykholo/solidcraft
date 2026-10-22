@@ -17,6 +17,7 @@ use solidcraft_engine::render::{
 use crate::gpu::{Frame, GpuScene, SceneSlot, ViewportCallback};
 use crate::{SolveApp, theme::Tokens};
 
+#[cfg(test)]
 // Vertex payload only, not an OS/GPU peak-memory promise. Native viewport
 // uploads are already chunked by the installed device's buffer limit.
 const MAX_GEOMETRY_BYTES: usize =
@@ -70,6 +71,42 @@ mod transport;
 mod thumbnails;
 #[path = "render_ui/wear.rs"]
 mod wear;
+/// The browser's preview budget: WebGPU and WebGL share the tab's memory, so it stays small.
+const WEB_GEOMETRY_BYTES: u64 = 128 * 1024 * 1024;
+/// Desktop: at most this many of the device's largest buffers of geometry...
+const DESKTOP_GEOMETRY_BUFFERS: u64 = 8;
+/// ...and never more than this, whatever the device allows.
+const DESKTOP_GEOMETRY_CEILING: u64 = 2 * 1024 * 1024 * 1024;
+
+/// The product preview's geometry budget for a device whose largest buffer is `max_buffer_size`
+/// bytes (`wgpu::Device::limits`, what the device was created with). Uploads are split into
+/// buffers of at most that size, so the budget bounds memory, not a single buffer: 2 GiB on a
+/// device with the standard 256 MiB buffers. An allocation the device still refuses is caught
+/// by the upload's error scope and reported, not a crash.
+pub(crate) fn geometry_budget(max_buffer_size: u64, web: bool) -> u64 {
+    if web { WEB_GEOMETRY_BYTES } else { max_buffer_size.saturating_mul(DESKTOP_GEOMETRY_BUFFERS).min(DESKTOP_GEOMETRY_CEILING) }
+}
+
+fn admit_geometry(bytes: u64, budget: u64) -> Result<(), String> {
+    if bytes > budget {
+        return Err(format!(
+            "Render preview needs {:.1} MiB of geometry; the limit is {:.1} MiB. Hide bodies in Design, then return to Render and try again.",
+            bytes as f64 / 1048576.0,
+            budget as f64 / 1048576.0
+        ));
+    }
+    Ok(())
+}
+
+/// The message when the device refused the preview's geometry.
+fn upload_refusal(scene: &ProductScene, error: &str) -> String {
+    let bytes: u64 = scene.meshes.iter().map(|m| (m.mesh.triangles.len() as u64).saturating_mul(3 * crate::gpu::PBR_SIZE as u64)).sum();
+    format!(
+        "The graphics device could not hold the Render preview's {:.1} MiB of geometry ({error}). Hide bodies in Design, then return to Render and try again.",
+        bytes as f64 / 1048576.0
+    )
+}
+
 
 #[cfg(test)]
 #[path = "render_workspace_tests.rs"]
@@ -87,6 +124,9 @@ pub struct State {
     pub setup_seconds: std::collections::BTreeMap<String, f64>,
     /// The viewport adapter the current setup runs on.
     pub setup_key: Option<String>,
+    pub geometry_budget: u64,
+    /// A GPU error the preview's last geometry upload caught.
+    pub upload_error: crate::gpu::UploadError,
     pub image_host: Option<solidcraft_engine::render::job::CpuHost>,
     pub view: ViewState,
     revision: u64,
@@ -414,6 +454,8 @@ impl Default for State {
             pending_setup: None,
             setup_seconds: Default::default(),
             setup_key: None,
+            geometry_budget: WEB_GEOMETRY_BYTES,
+            upload_error: Arc::new(Mutex::new(None)),
             image_host: None,
             view: Default::default(),
             revision: u64::MAX,
@@ -570,11 +612,12 @@ pub fn reset_document(app: &mut SolveApp) {
     app.ui.ribbon_context = None;
     let host = app.render_workspace.host.clone();
     let image_host = app.render_workspace.image_host.clone();
+    let geometry_budget = app.render_workspace.geometry_budget;
     let path_host = std::mem::take(&mut app.render_workspace.path_host);
     let setup_seconds = std::mem::take(&mut app.render_workspace.setup_seconds);
     let setup_key = app.render_workspace.setup_key.take();
     let pending_setup = app.render_workspace.pending_setup.take();
-    app.render_workspace = State { host, image_host, path_host, setup_seconds, setup_key, pending_setup, ..Default::default() };
+    app.render_workspace = State { host, image_host, path_host, setup_seconds, setup_key, pending_setup, geometry_budget, ..Default::default() };
     if active(app) {
         app.ui.tab = "MODEL".into();
     }
@@ -1601,7 +1644,7 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
 impl State {
     fn prepare_preview(&mut self, signature: (u64, usize, u64), capture: impl FnOnce() -> Result<ProductScene, String>) -> Result<(), String> {
         if self.scene_signature != Some(signature) {
-            let prepared = capture().and_then(|scene| gpu_scene(&scene).map(|(key, gpu)| (scene, key, gpu)));
+            let prepared = capture().and_then(|scene| gpu_scene_with_budget(&scene, self.geometry_budget).map(|(key, gpu)| (scene, key, gpu)));
             self.scene_signature = Some(signature);
             match prepared {
                 Ok((scene, key, gpu)) => {
@@ -1623,6 +1666,9 @@ impl State {
                             return Err(error);
                         }
                         self.key = Some(key);
+                        if let Ok(mut error) = self.upload_error.lock() {
+                            *error = None;
+                        }
                     }
                     self.scene = Some(scene);
                     self.scene_error = None;
@@ -1725,10 +1771,7 @@ impl PreviewUploadPlan {
             &mut self.tris
         };
         *count = count.checked_add(bytes).ok_or(crate::i18n::tr("render.error_geometry_size"))?;
-        if self.bytes()? > limit {
-            return Err(crate::i18n::format("render.error_vertex_envelope", &[("limit", &(limit / (1024 * 1024)).to_string())]));
-        }
-        Ok(())
+        admit_geometry(self.bytes()? as u64, limit as u64)
     }
 }
 
@@ -1774,8 +1817,14 @@ fn preview_upload_plan(scene: &ProductScene, limit: usize) -> Result<PreviewUplo
 /// Convert all captured surfaces, without decimation. The finite, exact payload
 /// plan is admitted first; each output vector is reserved once rather than grown
 /// once per triangle. Device uploads retain their existing chunked buffer path.
-pub fn gpu_scene(scene: &ProductScene) -> Result<(u64, GpuScene), String> {
-    let plan = preview_upload_plan(scene, MAX_GEOMETRY_BYTES)?;
+#[cfg(test)]
+fn gpu_scene(scene: &ProductScene) -> Result<(u64, GpuScene), String> {
+    gpu_scene_with_budget(scene, MAX_GEOMETRY_BYTES as u64)
+}
+
+fn gpu_scene_with_budget(scene: &ProductScene, budget: u64) -> Result<(u64, GpuScene), String> {
+    let limit = usize::try_from(budget).unwrap_or(usize::MAX);
+    let plan = preview_upload_plan(scene, limit)?;
     let mut hash = std::collections::hash_map::DefaultHasher::new();
     let mut gpu = GpuScene::default();
     for (buffer, bytes) in [(&mut gpu.pbr, plan.pbr), (&mut gpu.tris, plan.tris), (&mut gpu.glass, plan.glass)] {
@@ -1959,6 +2008,9 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             Ok(scene)
         })?;
         let scene = app.render_workspace.scene.as_ref().ok_or(crate::i18n::tr("render.error_no_scene"))?;
+        if let Some(error) = app.render_workspace.upload_error.lock().ok().and_then(|e| e.clone()) {
+            return Err(upload_refusal(scene, &error));
+        }
         request.features = scene.required_features();
         solidcraft_engine::render::resolve_request(&[app.session.render_backend()], &request).map_err(|e| e.to_string())?;
         let key = app.render_workspace.key.ok_or(crate::i18n::tr("render.error_no_geometry"))?;
@@ -1980,6 +2032,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let callback = ViewportCallback(Frame {
             product_lights: Some(light::preview(app)?),
             product: true,
+            upload_error: Some(app.render_workspace.upload_error.clone()),
             key,
             slot: slot.clone(),
             sketch_key: 0,
@@ -2015,6 +2068,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         Ok(())
     })();
     if let Err(error) = result {
+        ui.ctx().request_repaint();
         preview_error(app, ui, rect, &error);
     }
     shot::overlay(app, ui, viewport);
