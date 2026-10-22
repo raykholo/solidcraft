@@ -26,8 +26,7 @@ pub(super) fn face_normal(s: &Session, p: Vec3) -> Option<Vec3> {
 /// The outward normal of the planar face at `p` of `body` (any body when `None`).
 pub(super) fn face_normal_in(s: &Session, p: Vec3, body: Option<&str>) -> Option<Vec3> {
     let (m, f, d, _) = face_at_in(s, p, body).ok().flatten()?;
-    let tol = (m.bounds().diagonal() * 1e-3).max(1e-3);
-    if d > tol * 10.0 {
+    if !near_face(&m, d) {
         return None;
     }
     m.triangles
@@ -38,11 +37,27 @@ pub(super) fn face_normal_in(s: &Session, p: Vec3, body: Option<&str>) -> Option
         .find_map(|[a, b, c]| (b - a).cross(c - a).normalized())
 }
 
+/// Is a face `d` from a point near enough to hold it: within a thousandth of the body's
+/// size (at least 1 µm), ten times over, as picks placed on faces are taken.
+fn near_face(m: &Mesh, d: f64) -> bool {
+    let tol = (m.bounds().diagonal() * 1e-3).max(1e-3);
+    d <= tol * 10.0
+}
+
+/// Does `p` lie on a face of a body (planar or curved), as features placed on a face need?
+/// Where flush bodies' faces are equally near, it lies on each of them.
+pub(super) fn on_a_face(s: &Session, p: Vec3) -> bool {
+    match face_at_in(s, p, None) {
+        Ok(Some((m, _, d, _))) => near_face(&m, d),
+        Ok(None) => false,
+        Err(tied) => tied.first().is_some_and(|b| matches!(face_at_in(s, p, Some(b)), Ok(Some((m, _, d, _))) if near_face(&m, d))),
+    }
+}
+
 /// Is the body face at `p` planar (`None`: no face there)?
 pub(super) fn face_is_planar(s: &Session, p: Vec3) -> Option<bool> {
     let (m, f, d, _) = face_at(s, p)?;
-    let tol = (m.bounds().diagonal() * 1e-3).max(1e-3);
-    if d > tol * 10.0 {
+    if !near_face(&m, d) {
         return None;
     }
     let ns: Vec<Vec3> = m
