@@ -177,6 +177,34 @@ fn a_thin_shaft_or_one_the_part_surrounds_is_refused() {
 }
 
 #[test]
+fn a_thread_without_a_coarse_pitch_suggests_explicit_pitches() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 14, "height": 10, "body_name": "Shaft"}));
+    let saved = s.doc.to_json();
+    for designation in ["M28", "m28", " M28 "] {
+        let e = s.execute("solid.thread", &json!({"face": [14, 0, 5], "designation": designation})).unwrap_err().to_string();
+        assert!(e.contains("has no coarse ISO pitch") && e.contains("M28x2") && e.contains("M28x1.5"), "{e}");
+        assert_eq!(s.doc.to_json(), saved);
+    }
+    for designation in ["MNaN", "Minf", "M-28", "M0", "M1e9", "M1e999", "M28x", "M28xNaN"] {
+        let e = s.execute("solid.thread", &json!({"face": [14, 0, 5], "designation": designation})).unwrap_err().to_string();
+        assert!(e.contains("unknown thread"), "{designation}: {e}");
+        assert_eq!(s.doc.to_json(), saved);
+    }
+    run(&mut s, "solid.thread", json!({"face": [14, 0, 5], "designation": "M28x2"}));
+}
+
+#[test]
+fn a_threaded_hole_without_a_coarse_pitch_suggests_explicit_pitches() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 40, "height": 10}));
+    let saved = s.doc.to_json();
+    let e = s.execute("solid.hole", &json!({"position": [20, 20, 10], "thread": "M28"})).unwrap_err().to_string();
+    assert!(e.contains("has no coarse ISO pitch") && e.contains("M28x2") && e.contains("M28x1.5"), "{e}");
+    assert_eq!(s.doc.to_json(), saved);
+}
+
+#[test]
 fn non_finite_thread_designations_are_refused_without_changing_the_design() {
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius":4,"height":10}));
