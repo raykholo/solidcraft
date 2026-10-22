@@ -5,6 +5,7 @@
 //! fingerprint it, so each sketch command took longer the more parts were inserted.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use solidcraft_geom::{Plane, Vec2, Vec3};
@@ -221,6 +222,72 @@ fn a_sketch_on_a_face_still_sees_the_placed_bodies() {
     let work = counted(|| model.evaluate(&doc));
     assert!(work.moved >= parts * 2 - 2, "{work:?}");
     assert_eq!(work.digested, 0);
+}
+
+#[test]
+fn editing_a_sketch_on_a_turned_occurrence_reuses_its_frame_bodies() {
+    use solidcraft_sketch::{LinkKind, LinkSource};
+
+    let mut doc = Document::new("turned face");
+    let comp = doc.add_component(Some("Plate"), 0).unwrap();
+    let occurrence = doc.occurrences.iter_mut().find(|o| o.component == comp).unwrap();
+    occurrence.transform = rigid(Vec3::ZERO, Vec3::ZERO, Vec3::X, std::f64::consts::FRAC_PI_2);
+    let path = vec![occurrence.id];
+    let kind = serde_json::from_value(serde_json::json!({
+        "type": "box", "corner": [0, 0, 0], "length": "90", "width": "120", "height": "8"
+    }))
+    .unwrap();
+    let plate = doc.add_feature(kind, Some("Plate")).unwrap();
+    doc.feature_mut(plate).unwrap().component = comp;
+    let mut model = Model::new();
+    model.evaluate(&doc);
+    let state = model.state();
+    let raw = state.bodies.first().unwrap();
+    let index = raw.body.face_sources().unwrap().iter().position(|s| matches!(s, Some(kernel::FaceSource::Box { axis: 2, high: true, .. }))).unwrap();
+    let world = world_state(&doc, &state);
+    let shown = world.bodies.first().unwrap();
+    let picked = shown.body.face_plane(index).unwrap();
+    let anchor = doc.capture_face_anchor(raw, index, &picked, &path, 0, &[]).unwrap();
+    let source = LinkSource::Face { body: raw.name.clone(), at: apply_point(&doc.component_transform(comp), Vec3::new(30., 60., 8.)) };
+    let resolved = crate::project::resolve(&doc, &BTreeMap::new(), &world, &picked, LinkKind::Project, &source).unwrap();
+    let plane = PlaneRef::Face { plane: picked, at: picked.origin, name: None, anchor: Some(Box::new(anchor.clone())) };
+    let mut sketch = Sketch::new();
+    let a = sketch.add_point(Vec2::ZERO, None).unwrap();
+    let b = sketch.add_point(Vec2::new(3., 3.), None).unwrap();
+    sketch.add_line_pts(a, b, None).unwrap();
+    sketch.add_link(LinkKind::Project, source, &resolved.geom).unwrap();
+    let id = doc.add_feature(FeatureKind::Sketch { plane, sketch }, None).unwrap();
+    doc.feature_mut(id).unwrap().component = 0;
+    let first = counted(|| model.evaluate(&doc));
+    assert!(first.moved > 0, "{first:?}");
+    assert!(model.result(id).unwrap().error.is_none(), "{:?}", model.result(id).unwrap().error);
+    let reopened = Model::adopt(&doc, &model.saved(&doc).unwrap()).unwrap();
+    for mut model in [model, reopened] {
+        let before = state_in_face_anchor_frame(&doc, &model.state_before(id), &anchor, 0).unwrap().bodies.first().unwrap().mesh();
+
+        for to in [Vec2::new(4., 5.), Vec2::new(6., 7.)] {
+            doc.sketch_mut(id).unwrap().points.get_mut(1).unwrap().pos = to;
+            let work = counted(|| model.evaluate(&doc));
+            assert_eq!(work.moved, 0, "sketch edit must reuse the unchanged placement: {work:?}");
+            assert_eq!(model.last_recomputed, 1);
+            let result = model.result(id).unwrap();
+            assert!(result.error.is_none(), "{:?}", result.error);
+            let solved = model.state();
+            let solved = solved.sketch(id).unwrap();
+            assert!(solved.sketch.links.iter().all(|link| !link.lost));
+            assert!((solved.plane.normal().dot(picked.normal()) - 1.).abs() < 1e-9);
+            let after = state_in_face_anchor_frame(&doc, &model.state_before(id), &anchor, 0).unwrap().bodies.first().unwrap().mesh();
+            assert!(Arc::ptr_eq(&before, &after), "the anchored body's mesh must survive sketch edits");
+        }
+        // A changed placement is a different frame: the body is moved again, not reused.
+        let turned = doc.occurrences.iter().find(|o| o.component == comp).unwrap().transform;
+        doc.occurrences.iter_mut().find(|o| o.component == comp).unwrap().transform =
+            rigid(Vec3::ZERO, Vec3::ZERO, Vec3::X, std::f64::consts::FRAC_PI_3);
+        let work = counted(|| model.evaluate(&doc));
+        assert!(work.moved > 0, "a changed placement must move the body again: {work:?}");
+        doc.occurrences.iter_mut().find(|o| o.component == comp).unwrap().transform = turned;
+        model.evaluate(&doc);
+    }
 }
 
 #[test]
