@@ -1164,7 +1164,7 @@ fn switcher(app: &mut SolveApp, ui: &mut egui::Ui) {
         }
     });
     if let Some(warning) = settings::model_warning(app) {
-        ui.label(RichText::new(warning).color(t.warning).size(t.font_small));
+        ui.add(egui::Label::new(RichText::new(warning).color(t.warning).size(t.font_small)).wrap());
     }
     ui.horizontal(|ui| {
         let b = if app.agent_chat.state().running() {
