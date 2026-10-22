@@ -1505,7 +1505,6 @@ fn keep_size(sk: &Sketch, e: Ent) -> Vec<ConstraintKind> {
 /// if neither can, the constraint conflicts and nothing changes. Everything else moves as
 /// little as it can. Later solves are ordinary ones (nothing is held).
 pub(super) fn apply_in_order(sk: &mut Sketch, rep: &SolveReport, first: &[Ent], second: Ent, cmd: &str) -> Result<()> {
-    let first_locked = first.iter().any(|e| ent_locked(sk, rep, *e));
     let second_locked = ent_locked(sk, rep, second);
     // (held geometry, temporary size constraints) to try in turn.
     let mut tries: Vec<(Hold, Vec<ConstraintKind>)> = Vec::new();
@@ -1548,8 +1547,11 @@ pub(super) fn apply_in_order(sk: &mut Sketch, rep: &SolveReport, first: &[Ent], 
             return Ok(());
         }
     }
-    // Both could move but holding either one leads nowhere: solve as usual.
-    if !first_locked && !second_locked {
+    // Both could move but holding either one leads nowhere: solve as usual. One movable first
+    // entity is enough: a symmetry's axis never moves, and with a width fixed between the mirrored
+    // sides neither side moves alone, but the two together slide onto the axis (#4030).
+    let first_movable = first.iter().any(|f| !ent_locked(sk, rep, *f));
+    if first_movable && !second_locked {
         let mut trial = sk.clone();
         if solve_with(&mut trial, &Hold::default(), None, Analysis::StatusOnly, None).ok() {
             *sk = trial;

@@ -387,13 +387,13 @@ fn rectangle_and_axis(dimension_left: bool) -> (Session, Vec<String>) {
     (s, sides)
 }
 
-/// Both sides keep their 10 mm height and their ends mirror in x about `axis_x`.
-fn assert_sides_mirror_with_height(s: &Session, left: &str, right: &str, axis_x: f64) {
+/// Both sides keep their `height` and their ends mirror in x about `axis_x`.
+fn assert_sides_mirror_with_height(s: &Session, left: &str, right: &str, axis_x: f64, height: f64) {
     let sk = sketch(s);
     let at = |r: String| sk.point(sk.resolve_point(&r).unwrap()).unwrap();
     for side in [left, right] {
         let (a, b) = (at(format!("{side}.start")), at(format!("{side}.end")));
-        assert!((a.y - b.y).abs() > 9.999 && (a.y - b.y).abs() < 10.001, "{side} height {:?} {:?}", a, b);
+        assert!(((a.y - b.y).abs() - height).abs() < 1e-3, "{side} height {:?} {:?}", a, b);
         assert!((a.x - b.x).abs() < 1e-7, "{side} not vertical: {:?} {:?}", a, b);
     }
     let (l, r) = (at(format!("{left}.start")), at(format!("{right}.start")));
@@ -406,7 +406,7 @@ fn symmetry_of_rectangle_sides_keeps_their_height() {
     // by index forced both heights to 0.
     let (mut s, sides) = rectangle_and_axis(false);
     run(&mut s, "sketch.constraint.symmetry", json!({"a": sides[3], "b": sides[1], "line": "axis"}));
-    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], -20.0);
+    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], -20.0, 10.0);
 }
 
 #[test]
@@ -414,14 +414,14 @@ fn symmetry_of_a_dimensioned_rectangle_side_is_accepted() {
     // #2961: with a length on a side, the same symmetry was refused as "neither entity can move".
     let (mut s, sides) = rectangle_and_axis(true);
     run(&mut s, "sketch.constraint.symmetry", json!({"a": sides[3], "b": sides[1], "line": "axis"}));
-    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], -20.0);
+    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], -20.0, 10.0);
 }
 
 #[test]
 fn symmetry_of_rectangle_sides_with_swapped_arguments() {
     let (mut s, sides) = rectangle_and_axis(true);
     run(&mut s, "sketch.constraint.symmetry", json!({"a": sides[1], "b": sides[3], "line": "axis"}));
-    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], -20.0);
+    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], -20.0, 10.0);
 }
 
 #[test]
@@ -431,7 +431,24 @@ fn symmetry_of_rectangle_sides_about_the_y_axis() {
     let sides = ids(&r["curves"]);
     run(&mut s, "sketch.dimension", json!({"entities": [sides[3].clone()], "value": 10}));
     run(&mut s, "sketch.constraint.symmetry", json!({"a": sides[3], "b": sides[1], "line": "y"}));
-    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], 0.0);
+    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], 0.0, 10.0);
+}
+
+#[test]
+fn symmetry_slides_a_rectangle_whose_width_is_dimensioned() {
+    // #4030: with the width fixed, the second side can't move on its own and the axis never
+    // moves, so the symmetry was refused as "neither entity can move". The whole rectangle slides
+    // sideways instead, keeping its 42 mm width.
+    let mut s = new_sketch();
+    let r = run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-19, -16], "p1": [23, 10], "construction": true}));
+    let sides = ids(&r["curves"]);
+    run(&mut s, "sketch.dimension", json!({"entities": [sides[0].clone()], "value": 42}));
+    run(&mut s, "sketch.constraint.symmetry", json!({"a": sides[3], "b": sides[1], "line": "y"}));
+    assert_sides_mirror_with_height(&s, &sides[3], &sides[1], 0.0, 26.0);
+    let sk = sketch(&s);
+    let at = |r: String| sk.point(sk.resolve_point(&r).unwrap()).unwrap();
+    let (l, r) = (at(format!("{}.start", sides[3])), at(format!("{}.start", sides[1])));
+    assert!((r.x - l.x - 42.0).abs() < 1e-6 && (l.x + 21.0).abs() < 1e-6, "sides at ±21: {l:?} {r:?}");
 }
 
 #[test]
