@@ -353,6 +353,7 @@ fn detect_in(dirs: &[PathBuf], home: Option<&Path>) -> Detection {
 }
 
 /// Query only the endpoint's origin; OpenAI-compatible paths such as `/v1` are unrelated.
+#[cfg(not(target_arch = "wasm32"))]
 fn api_origin(base_url: &str) -> Option<String> {
     let (scheme, rest) = base_url.trim().split_once("://")?;
     if !matches!(scheme, "http" | "https") {
@@ -366,6 +367,7 @@ fn api_origin(base_url: &str) -> Option<String> {
 }
 
 /// Blocking, best-effort Ollama probe. Call only on a background thread, without API keys.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn ollama_tools(http: &super::backend::HttpFn, base_url: &str, model: &str, known_ollama: bool) -> Option<bool> {
     use super::backend::HttpRequest;
     let origin = api_origin(base_url)?;
@@ -392,6 +394,7 @@ pub(super) fn ollama_tools(http: &super::backend::HttpFn, base_url: &str, model:
 }
 
 /// Tool support is unknown unless Ollama returns a capabilities list of strings.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn tools_capability(value: &serde_json::Value) -> Option<bool> {
     let capabilities = value.get("capabilities")?.as_array()?;
     if capabilities.iter().any(|capability| !capability.is_string()) {
