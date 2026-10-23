@@ -265,6 +265,12 @@ pub struct Session {
     pub(crate) sketch_entry: Option<SketchEntry>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
+    /// `path`'s size and modification time when it was opened or last saved: a Save to it
+    /// finding them changed would replace another program's or computer's work (#5467).
+    pub disk: Option<solidcraft_io::design_lock::FileStamp>,
+    /// Opened read-only (`doc.open {read_only}`, the "open elsewhere" notice): saving to its own
+    /// file is refused; Save As to another file is how its changes are kept.
+    pub read_only: bool,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
     /// Interactive loaders may show it provisionally; it never becomes model state.
     pub open_preview: Option<Box<dyn Fn(solidcraft_io::DesignPreview) + Send + Sync>>,
@@ -449,6 +455,8 @@ impl Session {
             sketch_entry: None,
             selection: Vec::new(),
             path: None,
+            disk: None,
+            read_only: false,
             open_preview: None,
             log: Vec::new(),
             revision: 1,
@@ -1088,6 +1096,8 @@ impl Session {
             sketch_entry: None,
             selection: self.selection.clone(),
             path: None,
+            disk: self.disk,
+            read_only: self.read_only,
             open_preview: None,
             saved: self.saved.clone(),
             log: Vec::new(),
