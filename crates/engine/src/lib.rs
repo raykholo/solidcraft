@@ -263,6 +263,8 @@ pub struct Session {
     pub active_sketch: Option<u64>,
     /// The design as it was when the open sketch was entered, for Cancel Sketch.
     pub(crate) sketch_entry: Option<SketchEntry>,
+    /// Sketch temporarily shown while editing a feature that consumes it. View state only.
+    pub feature_edit_sketch: Option<u64>,
     pub selection: Vec<Sel>,
     pub path: Option<String>,
     /// One-shot display-only notification during doc.open, before authoritative evaluation.
@@ -447,6 +449,7 @@ impl Session {
             redo: Vec::new(),
             active_sketch: None,
             sketch_entry: None,
+            feature_edit_sketch: None,
             selection: Vec::new(),
             path: None,
             open_preview: None,
@@ -1086,6 +1089,7 @@ impl Session {
             redo: Vec::new(),
             active_sketch: self.active_sketch,
             sketch_entry: None,
+            feature_edit_sketch: self.feature_edit_sketch,
             selection: self.selection.clone(),
             path: None,
             open_preview: None,
