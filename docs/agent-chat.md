@@ -231,6 +231,18 @@ model, with a limit of 128 entries. SolidCraft recognises Ollama through `/api/v
 endpoint's origin or the Ollama preset. Failed checks and older servers without a capabilities
 field show no warning. The check never blocks sending a message.
 
+### Local models
+
+Choose a model that supports native tool calling to read or change the design. With Ollama,
+look for `tools` in the model's capabilities; a model that only supports chat cannot operate
+SolidCraft. Other OpenAI-compatible endpoints also need a model with native tool support.
+
+If tools were available but a completed turn made no tool calls or changes, the panel shows a
+short notice when the reply was empty, or when an explicit edit request received only text.
+Ordinary answers to questions do not show it. Edit requests are recognised conservatively from
+English opening words such as “make”, “rename”, or “can you move”; other phrasing may stay quiet.
+Cancelled and failed turns keep their existing messages. Text describing a call is never run.
+
 ### An agent inside WSL (Windows)
 
 An agent installed inside WSL keeps its own settings, skills and sign-in there. Add it as a
