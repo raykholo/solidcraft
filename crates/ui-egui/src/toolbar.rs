@@ -1011,7 +1011,13 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                 let mut shown = crate::toolbar_custom::buttons(app, &tab, panel, &cmds, promote);
                 // Gallery cells are painted together after the large buttons, in reading order.
                 if tab == "SKETCH" && panel == "CONSTRAIN" {
-                    shown.sort_by_key(|c| crate::workspace::CONSTRAINT_GALLERY.iter().position(|id| *id == c.id).map(|i| i + 1).unwrap_or(0));
+                    shown.sort_by_key(|c| {
+                        if app.toolbar_custom.in_gallery(&tab, panel, c.id) {
+                            crate::workspace::CONSTRAINT_GALLERY.iter().position(|id| *id == c.id).map(|i| i + 1).unwrap_or(0)
+                        } else {
+                            0
+                        }
+                    });
                 }
                 (panel, cmds, shown)
             })
@@ -1021,7 +1027,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             .map(|(panel, _, shown)| {
                 let mut widths: Vec<_> = shown
                     .iter()
-                    .filter(|c| !(tab == "SKETCH" && *panel == "CONSTRAIN" && crate::workspace::CONSTRAINT_GALLERY.contains(&c.id)))
+                    .filter(|c| !app.toolbar_custom.in_gallery(&tab, panel, c.id))
                     .map(|c| {
                         let family = crate::sketch_families::family(c.id)
                             .filter(|f| tab == "SKETCH" && *panel == "CREATE" && f.commands.first().copied() == Some(c.id));
@@ -1034,7 +1040,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         }
                     })
                     .collect();
-                if tab == "SKETCH" && *panel == "CONSTRAIN" && shown.iter().any(|c| crate::workspace::CONSTRAINT_GALLERY.contains(&c.id)) {
+                if shown.iter().any(|c| app.toolbar_custom.in_gallery(&tab, panel, c.id)) {
                     widths.push(ButtonSize { width: gallery_width, min_width: gallery_width });
                 }
                 PanelSize { buttons: widths }
@@ -1077,11 +1083,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
             let popup_id = ui.id().with(("panel_menu", &tab, panel));
             // Dropped on the panel's free space (all of a collapsed panel): the button goes to
             // its end.
-            let gallery: Vec<_> = shown
-                .iter()
-                .copied()
-                .filter(|c| tab == "SKETCH" && *panel == "CONSTRAIN" && crate::workspace::CONSTRAINT_GALLERY.contains(&c.id))
-                .collect();
+            let gallery: Vec<_> = shown.iter().copied().filter(|c| app.toolbar_custom.in_gallery(&tab, panel, c.id)).collect();
             let large: Vec<_> = shown.iter().copied().filter(|c| !gallery.iter().any(|g| g.id == c.id)).collect();
             let drawn = if collapsed { 0 } else { plan.shown.min(button_widths.len()) };
             // Buttons narrower than the panel's minimum width (a one-button panel) are centred.
@@ -1216,8 +1218,7 @@ pub fn toolbar(app: &mut SolveApp, ui: &mut egui::Ui) {
                         Stroke::new(1.0, t.toolbar.lerp_to_gamma(t.border, 0.5)),
                     );
                 }
-                for c in &gallery {
-                    let index = crate::workspace::CONSTRAINT_GALLERY.iter().position(|id| *id == c.id).unwrap_or(0);
+                for (index, c) in gallery.iter().enumerate() {
                     let columns = if labels { 3 } else { 6 };
                     let cell = Rect::from_min_size(
                         pos2(button_x + (index % columns) as f32 * 27.0, top + 6.0 + (index / columns) as f32 * 23.0),
@@ -2747,6 +2748,57 @@ mod ribbon_label_tests {
 mod ribbon_gallery_tests {
     use super::*;
     use crate::scenario::{Harness, rect_of};
+
+    #[test]
+    fn dragged_constraint_becomes_full_button_and_reset_restores_gallery() {
+        let mut h = Harness::new();
+        h.call("ui.resize", json!({"width":1800,"height":900}));
+        h.app.run("sketch.create", json!({"plane":"XY"})).unwrap();
+        h.frames(3);
+        let id = crate::workspace::CONSTRAINT_GALLERY[0];
+        let cell_handle = format!("ribbon:constraint:{id}");
+        let button_handle = format!("toolbar:{id}");
+        let button = format!("button:{id}");
+        let cell = rect_of(&cell_handle).unwrap();
+        let count = || crate::scenario::handles("ribbon:constraint:").len();
+        let original_count = count();
+        h.step(&json!({"drag":[{"handle":button_handle},{"handle":"toolbar:sketch.dimension"}]})).unwrap();
+        h.frames(3);
+        assert!(rect_of(&cell_handle).is_none());
+        let full = rect_of(&button).unwrap();
+        assert!(full.height() > cell.height());
+        assert!(full.left() < rect_of("button:sketch.dimension").unwrap().left());
+        assert_eq!(count(), original_count - 1);
+        let next = format!("ribbon:constraint:{}", crate::workspace::CONSTRAINT_GALLERY[1]);
+        assert_eq!(rect_of(&next).unwrap().top(), cell.top());
+        h.step(&json!({"drag":[{"handle":button_handle},{"handle":next}]})).unwrap();
+        h.frames(3);
+        assert_eq!(rect_of(&cell_handle), Some(cell));
+        assert_eq!(count(), original_count);
+        h.step(&json!({"drag":[{"handle":button_handle},{"handle":"toolbar:sketch.dimension"}]})).unwrap();
+        h.frames(3);
+        assert!(rect_of(&cell_handle).is_none());
+        let saved = crate::toolbar_custom::export(&h.app);
+        crate::toolbar_custom::reset(&mut h.app, "SKETCH");
+        crate::toolbar_custom::import(&mut h.app, &saved).unwrap();
+        h.frames(3);
+        assert!(rect_of(&cell_handle).is_none());
+        assert_eq!(rect_of(&button).unwrap().height(), full.height());
+        // Settings saved before the gallery could change load with the default gallery.
+        let mut older = h.app.toolbar_custom.prefs();
+        older.as_object_mut().unwrap().remove("gallery_buttons");
+        let mut loaded = crate::toolbar_custom::ToolbarCustom::default();
+        loaded.load(&older);
+        assert_eq!(loaded.panels, h.app.toolbar_custom.panels);
+        assert!(loaded.in_gallery("SKETCH", "CONSTRAIN", id));
+        crate::toolbar_custom::reset(&mut h.app, "MODEL");
+        h.frames(2);
+        assert!(rect_of(&cell_handle).is_none());
+        crate::toolbar_custom::reset(&mut h.app, "SKETCH");
+        h.frames(3);
+        assert_eq!(rect_of(&cell_handle), Some(cell));
+        assert_eq!(count(), original_count);
+    }
 
     #[test]
     fn constraint_gallery_preserves_button_handles_order_and_pin_actions() {
