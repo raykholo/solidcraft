@@ -8,6 +8,7 @@
   "A Single hole snaps to the middle of its face and to the centres of its round edges": "A Single hole snaps to the middle of its face and to the centres of its round edges",
   "A new configuration, a copy of the active one": "A new configuration, a copy of the active one",
   "A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out": "A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out",
+  "A short title for the problem (optional)": "A short title for the problem (optional)",
   "ARRANGE": "ARRANGE",
   "About SolidCraft": "About SolidCraft",
   "Acceleration": "Acceleration",

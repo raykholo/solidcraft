@@ -8,6 +8,7 @@
   "A Single hole snaps to the middle of its face and to the centres of its round edges": "単一の穴を面の中心と丸いエッジの中心にスナップします",
   "A new configuration, a copy of the active one": "アクティブな構成をコピーして新しい構成を作成",
   "A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out": "配置した単一の穴にドラッグ用のハンドルを付け、面をもう一度選ぶと穴を削除せずにそこへ移動します",
+  "A short title for the problem (optional)": "問題の短いタイトル（省略可）",
   "ARRANGE": "配置",
   "About SolidCraft": "SolidCraft について",
   "Acceleration": "加速度",

@@ -8,6 +8,7 @@
   "A Single hole snaps to the middle of its face and to the centres of its round edges": "单个孔捕捉到其所在面的中心和圆形边的中心",
   "A new configuration, a copy of the active one": "新建配置，为当前配置的副本",
   "A placed Single hole has a handle to drag it, and picking its face again moves the hole there instead of taking it out": "已放置的单个孔带有可拖动的控点，再次选择该面会将孔移到该处而不是删除它",
+  "A short title for the problem (optional)": "问题的简短标题（可选）",
   "ARRANGE": "排列",
   "About SolidCraft": "关于 SolidCraft",
   "Acceleration": "加速度",
