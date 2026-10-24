@@ -1543,13 +1543,30 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
         let Some(mode) = m.as_str().and_then(agents::Mode::parse) else { return Err("permissions must be ask, edits or all".into()) };
         app.preferences.ai_permissions = mode;
     }
-    // Add an agent (as the Add agent dialog does), for tests and screenshots: {id?, name, kind, command | base_url + model}.
+    // Add an agent: {id?, name, kind, command | base_url + model, api_key?}.
+    // API keys are stored only in the system keychain.
     if let Some(a) = p.get("add_agent") {
         let mut c: agents::AgentConfig = serde_json::from_value(a.clone()).map_err(|e| format!("add_agent: {e}"))?;
         if c.id.is_empty() {
             c.id = agents::new_id(&app.preferences, if c.kind.is_api() { c.kind.id() } else { "custom" });
         }
         c.key = false;
+        if let Some(key) = a.get("api_key") {
+            let key = key
+                .as_str()
+                .filter(|k| !k.trim().is_empty() && k.len() <= 4096 && !k.contains(['\r', '\n', '\0']))
+                .ok_or("add_agent: api_key must be a nonempty string of at most 4096 bytes without line breaks")?;
+            if !c.kind.is_api() {
+                return Err("add_agent: api_key requires an API endpoint".into());
+            }
+            c.base_url = agents::normalize_url(&c.base_url)?;
+            if !agents::key_safe_for(&c.base_url) {
+                return Err("add_agent: api_key requires HTTPS or a loopback endpoint".into());
+            }
+            let store = app.services.secrets.as_ref().ok_or("add_agent: system keychain unavailable")?;
+            store.set(&c.id, key).map_err(|_| "add_agent: could not store API key in system keychain")?;
+            c.key = true;
+        }
         app.preferences.agents.retain(|x| x.id != c.id);
         app.preferences.agents.push(c);
     }
@@ -1710,6 +1727,10 @@ pub fn status(app: &SolveApp) -> Value {
     });
     #[cfg(target_arch = "wasm32")]
     let detection: Option<Value> = None;
+    #[cfg(not(target_arch = "wasm32"))]
+    let detecting = c.detecting.is_some();
+    #[cfg(target_arch = "wasm32")]
+    let detecting = false;
     let pid = c.backend.as_ref().and_then(|b| b.pid());
     json!({
         "features": app.preferences.ai_features,
@@ -1742,6 +1763,7 @@ pub fn status(app: &SolveApp) -> Value {
         "stopped": c.stopped,
         "turn": c.turn.as_ref().map(|t| json!({"changes": t.changes, "requests": t.requests})),
         "detection": detection,
+        "detecting": detecting,
         "items": items,
     })
 }

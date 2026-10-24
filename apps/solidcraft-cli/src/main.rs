@@ -6,7 +6,7 @@
 //! solidcraft-cli script <design.solidcraft> [--out script.json]     the design's history as a command script
 //! solidcraft-cli bench-open <design.solidcraft | part.step> [--parse-only] [--save OUT.solidcraft] [--display LEVEL [--edit NAME EXPR]] [--ops script.json] loading timings as JSON lines
 //! solidcraft-cli bench-agent [--scale F] [--save F] [--script-out F] a ~1,300-body design built command by command, timed
-//! solidcraft-cli bench-assistant --connect 127.0.0.1:PORT [--token T] --base-url URL --model NAME [--tasks 1,2,5] [--repeat N]
+//! solidcraft-cli bench-assistant --connect 127.0.0.1:PORT [--token T] (--base-url URL --model NAME [--kind openai|anthropic] [--key-env VAR] | --agent ID) [--tasks 1,2,5] [--repeat N]
 //!                                 [--timeout-s 300] [--json out.json] [--markdown out.md]
 //!                                                             the standard Assistant model test (#4851) on a running app
 //! solidcraft-cli snapshot <script|design> [--in design|part.step] --out shot.png [--width W] [--height H] [--view iso|front|top|…|NAME | --camera JSON] [--no-grid] [--no-axes]
@@ -61,7 +61,7 @@ const USAGE: &str = "usage:
       (--ops: after opening, run each command of the script and undo it, timing the command, the
        evaluations it caused and the view it leaves: placing and meshing what changed)
   solidcraft-cli bench-agent [--scale F] [--save design.solidcraft] [--script-out script.json]
-  solidcraft-cli bench-assistant --connect 127.0.0.1:PORT [--token T] --base-url URL --model NAME [--tasks 1,2,5] [--repeat N] [--timeout-s 300] [--json out.json] [--markdown out.md]
+  solidcraft-cli bench-assistant --connect 127.0.0.1:PORT [--token T] (--base-url URL --model NAME [--kind openai|anthropic] [--key-env VAR] | --agent ID) [--tasks 1,2,5] [--repeat N] [--timeout-s 300] [--json out.json] [--markdown out.md]
   solidcraft-cli snapshot <script|design> [--in design.solidcraft|part.step] --out shot.png [--width W] [--height H] [--view NAME | --camera JSON] [--no-grid] [--no-axes]
       [--body NAME:opacity=0.3,color=#rrggbb]... [--tool NAME]... [--section z=27]
   solidcraft-cli snapshot --in <design.solidcraft|part.step> --out shot.png ...

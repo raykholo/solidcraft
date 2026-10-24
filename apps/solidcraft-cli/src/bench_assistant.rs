@@ -3,13 +3,14 @@
 //! The app is already running with `--control PORT`; everything goes through its control channel
 //! (`docs/control-protocol.md`), so the command needs no window code of its own. For each task it
 //! starts a new design, runs the task's prescribed setup (a box, for some), adds the endpoint as an
-//! API agent with All permissions, starts a new chat, sends the prompt once and waits for the turn
+//! API agent (or selects an installed coding agent) with All permissions, starts a new chat, sends the prompt once and waits for the turn
 //! to end. The result is checked on the design (`document.inspect` with measurements), never on
 //! what the model says, except for the one question whose answer is the reply. A failed task is
 //! put in one of the issue's failure categories from the conversation's items.
 //!
 //! ```text
 //! solidcraft-cli bench-assistant --connect 127.0.0.1:PORT --base-url URL --model NAME
+//!     [--kind openai|anthropic] [--key-env VAR] (or --agent ID instead of API options)
 //!     [--token T] [--tasks 1,2,5] [--repeat N] [--timeout-s 300]
 //!     [--json out.json] [--markdown out.md]
 //! ```
@@ -347,6 +348,9 @@ struct Options<'a> {
     token: Option<&'a str>,
     base_url: &'a str,
     model: &'a str,
+    kind: &'a str,
+    agent: Option<&'a str>,
+    key: Option<String>,
     tasks: Vec<usize>,
     repeat: u64,
     timeout: Duration,
@@ -355,11 +359,28 @@ struct Options<'a> {
 }
 
 fn options(args: &[String]) -> Result<Options<'_>, String> {
-    const FLAGS: [&str; 9] = ["--connect", "--token", "--base-url", "--model", "--tasks", "--repeat", "--timeout-s", "--json", "--markdown"];
+    options_with_env(args, |name| std::env::var(name).ok())
+}
+
+fn options_with_env(args: &[String], env: impl Fn(&str) -> Option<String>) -> Result<Options<'_>, String> {
+    const FLAGS: [&str; 12] = [
+        "--connect",
+        "--token",
+        "--base-url",
+        "--model",
+        "--kind",
+        "--key-env",
+        "--agent",
+        "--tasks",
+        "--repeat",
+        "--timeout-s",
+        "--json",
+        "--markdown",
+    ];
     let mut given = std::collections::BTreeMap::new();
     let mut args = args.iter();
     while let Some(flag) = args.next() {
-        let Some(flag) = FLAGS.iter().find(|f| **f == flag.as_str()) else { return Err(format!("unknown bench-assistant option: {flag}")) };
+        let Some(flag) = FLAGS.iter().find(|f| **f == flag.as_str()) else { return Err("unknown bench-assistant option".into()) };
         let value = args
             .next()
             .filter(|v| !v.starts_with("--") && !v.is_empty() && v.len() <= 4096)
@@ -393,11 +414,33 @@ fn options(args: &[String]) -> Result<Options<'_>, String> {
             tasks
         }
     };
+    let agent = given.get("--agent").copied();
+    if agent.is_some() && ["--base-url", "--model", "--kind", "--key-env"].iter().any(|f| given.contains_key(f)) {
+        return Err("--agent cannot be combined with --base-url, --model, --kind, or --key-env".into());
+    }
+    let kind = given.get("--kind").copied().unwrap_or("openai");
+    if !matches!(kind, "openai" | "anthropic") {
+        return Err("--kind must be openai or anthropic".into());
+    }
+    let key = given
+        .get("--key-env")
+        .map(|name| {
+            if !name.bytes().enumerate().all(|(i, b)| b == b'_' || b.is_ascii_alphabetic() || (i > 0 && b.is_ascii_digit())) {
+                return Err("--key-env needs an environment variable name".to_string());
+            }
+            env(name)
+                .filter(|k| !k.trim().is_empty() && k.len() <= 4096 && !k.contains(['\r', '\n', '\0']))
+                .ok_or_else(|| "--key-env variable is missing, empty, or invalid (at most 4096 bytes)".to_string())
+        })
+        .transpose()?;
     Ok(Options {
         connect: required("--connect")?,
         token: given.get("--token").copied(),
-        base_url: required("--base-url")?,
-        model: required("--model")?,
+        base_url: if agent.is_none() { required("--base-url")? } else { "" },
+        model: if agent.is_none() { required("--model")? } else { "" },
+        kind,
+        agent,
+        key,
         tasks,
         repeat: number("--repeat", 1, 100)?,
         timeout: Duration::from_secs(number("--timeout-s", 300, 3600)?),
@@ -431,22 +474,99 @@ fn wait_for_turn(control: &mut Control, mut chat: Value, began: Instant, end: In
     }
 }
 
+impl Options<'_> {
+    fn setup(&self) -> Value {
+        if self.agent.is_some() {
+            json!({"features": true, "refresh": true})
+        } else {
+            let mut add = json!({"id": AGENT_ID, "name": AGENT_NAME, "kind": if self.kind == "openai" { "api" } else { "anthropic" }, "base_url": self.base_url, "model": self.model});
+            if let Some(key) = &self.key {
+                add["api_key"] = json!(key);
+            }
+            json!({"features": true, "add_agent": add})
+        }
+    }
+
+    fn route(&self, config: &Value) -> Result<Value, String> {
+        match self.agent {
+            Some(id) => {
+                let entry = config["agents"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|a| a["id"] == id && a["kind"] == "acp" && a["found"] == true)
+                    .ok_or("--agent was not found among installed coding agents")?;
+                Ok(
+                    json!({"agent": id, "version": entry["version"].as_str().filter(|v| !v.is_empty() && v.len() <= 256), "note": "Coding agents bring their own prompt; results are not directly comparable with API runs."}),
+                )
+            }
+            None => Ok(json!({"kind": self.kind, "model": self.model})),
+        }
+    }
+}
+
+fn route_label(route: &Value) -> String {
+    if let Some(id) = route["agent"].as_str() {
+        format!("agent {id} (version {}) — {}", route["version"].as_str().unwrap_or("unknown"), route["note"].as_str().unwrap_or_default())
+    } else {
+        format!("{} API, model {}", route["kind"].as_str().unwrap_or_default(), route["model"].as_str().unwrap_or_default())
+    }
+}
+
+// Redact even echoed credentials in endpoint errors and conversation exports.
+fn redact(text: &str, key: Option<&str>) -> String {
+    match key {
+        Some(key) => {
+            let escaped = json!(key).to_string();
+            let escaped = escaped.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(key);
+            text.replace(escaped, "[redacted]").replace(key, "[redacted]")
+        }
+        None => text.to_string(),
+    }
+}
+
+fn redact_value(value: &mut Value, key: Option<&str>) {
+    match value {
+        Value::String(text) => *text = redact(text, key),
+        Value::Array(items) => items.iter_mut().for_each(|v| redact_value(v, key)),
+        Value::Object(fields) => {
+            *fields = std::mem::take(fields)
+                .into_iter()
+                .map(|(name, mut value)| {
+                    redact_value(&mut value, key);
+                    (redact(&name, key), value)
+                })
+                .collect();
+        }
+        _ => {}
+    }
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
     let o = options(args)?;
+    run_with_options(&o).map_err(|e| redact(&e, o.key.as_deref()))
+}
+
+fn run_with_options(o: &Options) -> Result<(), String> {
     let tasks = tasks()?;
     let mut control = Control::connect(o.connect, o.token)?;
     let help = control.call("ui.help", json!({}), Instant::now() + REQUEST_TIMEOUT)?;
     let version = help["version"].as_str().filter(|s| !s.is_empty() && s.len() <= 256).ok_or("the app reported no version")?.to_string();
-    let config = control.chat(json!({
-        "features": true,
-        "add_agent": {"id": AGENT_ID, "name": AGENT_NAME, "kind": "api", "base_url": o.base_url, "model": o.model},
-    }))?;
-    if !config["agents"].as_array().into_iter().flatten().any(|a| a["id"] == AGENT_ID) {
+    // Setup errors can contain endpoint replies; the outer call redacts credentials.
+    let mut config = control.chat(o.setup())?;
+    if o.agent.is_some() {
+        let end = Instant::now() + REQUEST_TIMEOUT;
+        while config["detection"].is_null() || config["detecting"] == true {
+            std::thread::sleep(POLL);
+            config = control.call("ui.agent_chat", json!({}), end)?;
+        }
+    } else if !config["agents"].as_array().into_iter().flatten().any(|a| a["id"] == AGENT_ID) {
         return Err("the app did not add the benchmark's agent".into());
     }
+    let route = o.route(&config)?;
     // Put the user's permission setting back afterwards.
     let permissions = config["permissions"].as_str().map(str::to_string);
-    let result = run_tasks(&mut control, &o, &tasks, &version);
+    let result = run_tasks(&mut control, o, &tasks, &version, &route);
     let _ = control.chat(json!({"stop": true}));
     if let Some(p) = permissions {
         let _ = control.chat(json!({"permissions": p}));
@@ -454,12 +574,12 @@ pub fn run(args: &[String]) -> Result<(), String> {
     result
 }
 
-fn run_tasks(control: &mut Control, o: &Options, tasks: &[Value], version: &str) -> Result<(), String> {
+fn run_tasks(control: &mut Control, o: &Options, tasks: &[Value], version: &str, route: &Value) -> Result<(), String> {
     let mut results: Vec<Value> = Vec::new();
     let mut kept = 0;
     let mut stdout = std::io::stdout().lock();
-    let mut say = |line: String| writeln!(stdout, "{line}").map_err(|e| format!("stdout: {e}"));
-    say(format!("bench-assistant v1: {} on SolidCraft {version}", o.model))?;
+    let mut say = |line: String| writeln!(stdout, "{}", redact(&line, o.key.as_deref())).map_err(|e| format!("stdout: {e}"));
+    say(format!("bench-assistant v1: {} on SolidCraft {version}", route_label(route)))?;
     say("| run | # | task | pass/fail | how it failed | seconds |\n|---|---|---|---|---|---|".into())?;
     for run in 1..=o.repeat {
         for &n in &o.tasks {
@@ -470,7 +590,7 @@ fn run_tasks(control: &mut Control, o: &Options, tasks: &[Value], version: &str)
             for step in task["setup"].as_array().into_iter().flatten() {
                 control.execute(step["command"].as_str().ok_or("embedded setup without a command")?, step["params"].clone())?;
             }
-            control.chat(json!({"agent": AGENT_ID, "permissions": "all", "new_chat": true, "attach_view": false}))?;
+            control.chat(json!({"agent": o.agent.unwrap_or(AGENT_ID), "permissions": "all", "new_chat": true, "attach_view": false}))?;
             let before = control.inspect()?;
             let began = Instant::now();
             let end = began + o.timeout;
@@ -509,11 +629,16 @@ fn run_tasks(control: &mut Control, o: &Options, tasks: &[Value], version: &str)
             results.push(result);
             // Written after every task, so an interrupted run keeps what it measured.
             if let Some(path) = o.json {
-                let all = json!({"test": "v1", "model": o.model, "base_url": o.base_url, "solidcraft": version, "results": results});
+                let mut all =
+                    json!({"test": "v1", "model": o.model, "base_url": o.base_url, "route": route, "solidcraft": version, "results": results});
+                redact_value(&mut all, o.key.as_deref());
                 write(path, &serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?)?;
             }
             if let Some(path) = o.markdown {
-                write(path, &(1..=run).map(|r| markdown(o.model, version, &results, r)).collect::<Vec<_>>().join("\n"))?;
+                write(
+                    path,
+                    &redact(&(1..=run).map(|r| markdown(&route_label(route), version, &results, r)).collect::<Vec<_>>().join("\n"), o.key.as_deref()),
+                )?;
             }
         }
     }
@@ -670,6 +795,77 @@ mod tests {
         let partial = markdown("m|x", "v", &rows[..1], 1);
         assert!(partial.starts_with("### m x ("));
         assert!(partial.contains("Result: 1/11") && partial.contains("| 2 | | not run |") && partial.contains("partial run"));
+    }
+
+    #[test]
+    fn options_support_api_kinds_and_installed_agents() {
+        let parse = |args: &[&str]| options(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).map(|_| ());
+        assert!(
+            parse(&["--connect", "127.0.0.1:9", "--kind", "anthropic", "--base-url", "https://api.anthropic.com", "--model", "claude-haiku-5-5"])
+                .is_ok()
+        );
+        assert!(parse(&["--connect", "127.0.0.1:9", "--agent", "claude"]).is_ok());
+        for args in [&["--agent"][..], &["--kind"], &["--key-env"], &["--api-key", "synthetic-secret"]] {
+            let error = options(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>()).err().unwrap();
+            assert!(!error.contains("synthetic-secret"));
+        }
+        for flag in ["--base-url", "--model", "--kind", "--key-env"] {
+            assert!(parse(&["--connect", "127.0.0.1:9", "--agent", "claude", flag, "value"]).is_err());
+        }
+        assert!(parse(&["--connect", "127.0.0.1:9", "--kind", "other", "--base-url", "u", "--model", "m"]).is_err());
+        let args: Vec<String> = ["--connect", "127.0.0.1:9", "--kind", "anthropic", "--base-url", "https://example.com", "--model", "m"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let o = options(&args).unwrap();
+        assert_eq!(o.setup()["add_agent"]["kind"], "anthropic");
+        assert_eq!(o.route(&json!({})).unwrap(), json!({"kind": "anthropic", "model": "m"}));
+    }
+
+    #[test]
+    fn options_validate_key_environment_without_echoing_values() {
+        let args: Vec<String> = ["--connect", "127.0.0.1:9", "--base-url", "https://example.com", "--model", "m", "--key-env", "BENCH_TEST_KEY"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let too_long = "x".repeat(4097);
+        for value in [None, Some(""), Some("secret\nvalue"), Some(too_long.as_str())] {
+            let error = options_with_env(&args, |_| value.map(str::to_string)).err().unwrap();
+            assert!(error.contains("--key-env"));
+            assert!(!error.contains("secret"));
+        }
+        let secret = "synthetic-credential-\"quoted\"";
+        let o = options_with_env(&args, |_| Some(secret.into())).unwrap();
+        assert_eq!(o.kind, "openai");
+        assert_eq!(o.setup()["add_agent"]["kind"], "api");
+        assert_eq!(o.setup()["add_agent"]["api_key"], secret);
+        let route = o.route(&json!({})).unwrap();
+        let mut exported = json!({"route": route, "items": [{"notice": secret}]});
+        redact_value(&mut exported, o.key.as_deref());
+        let serialized = serde_json::to_string(&exported).unwrap();
+        assert!(!serialized.contains("synthetic-credential"));
+        assert!(serde_json::from_str::<Value>(&serialized).is_ok());
+
+        assert!(!route.to_string().contains(secret));
+        for output in [route_label(&route), markdown(&route_label(&route), "1", &[], 1), format!("error: {secret}")] {
+            let clean = redact(&output, o.key.as_deref());
+            assert!(!clean.contains(secret));
+            assert!(!clean.contains("synthetic-credential"));
+        }
+    }
+
+    #[test]
+    fn options_record_installed_agent_version_and_prompt() {
+        let args: Vec<String> = ["--connect", "127.0.0.1:9", "--agent", "claude"].iter().map(|s| s.to_string()).collect();
+        let o = options(&args).unwrap();
+        assert!(o.setup().get("add_agent").is_none());
+        assert!(o.route(&json!({"agents": []})).is_err());
+        let route = o.route(&json!({"agents": [{"id": "claude", "kind": "acp", "found": true, "version": "1.2.3"}]})).unwrap();
+        assert_eq!(route["agent"], "claude");
+        assert_eq!(route["version"], "1.2.3");
+        let label = route_label(&route);
+        assert!(label.contains("claude") && label.contains("1.2.3") && label.contains("own prompt"));
+        assert!(markdown(&label, "1", &[], 1).contains("own prompt"));
     }
 
     #[test]
