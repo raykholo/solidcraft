@@ -28,23 +28,24 @@ The modelling skills are written for SolidCraft 0.8 and later; `solidcraft-mecha
 
 ## Install
 
-Claude Code, for all projects:
+The modelling skills, for Claude Code in all projects:
 
 ```sh
 git clone --depth 1 https://github.com/tangency-labs/solidcraft
-cp -r solidcraft/skills/solidcraft-* ~/.claude/skills/
+cp -r solidcraft/skills/solidcraft-{modeling,editing,checking,mechanisms} ~/.claude/skills/
 ```
 
 Windows (PowerShell):
 
 ```powershell
 git clone --depth 1 https://github.com/tangency-labs/solidcraft
-Copy-Item -Recurse solidcraft\skills\solidcraft-* $HOME\.claude\skills\
+foreach ($s in 'modeling','editing','checking','mechanisms') { Copy-Item -Recurse solidcraft\skills\solidcraft-$s $HOME\.claude\skills\ }
 ```
 
 - **One project only:** copy the folders into that project's `.claude/skills/` instead.
 - **Other agents:** for agents that read the Agent Skills format, copy the folders into the skills directory their documentation names.
 - **Updating:** copy the folders again after you update SolidCraft.
+- **Contributing:** `solidcraft-contributing` needs no install. Tell your assistant: "I want to contribute to SolidCraft. Read https://github.com/tangency-labs/solidcraft/blob/main/skills/solidcraft-contributing/SKILL.md and help me get started."
 
 ## Maintaining
 
