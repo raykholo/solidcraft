@@ -373,8 +373,13 @@ solidcraft-cli bench-assistant --connect 127.0.0.1:9271 \
 
 Use an installed agent id from the Assistant's `ui.agent_chat` status (`agents`). `--agent`
 cannot be combined with `--base-url`, `--model`, `--kind`, or `--key-env`. The selected agent
-uses its configured model and sign-in. Console, Markdown, and JSON reports identify the API
-kind and model, or the installed agent id and version (unknown if unavailable). Coding agents
+uses its own sign-in. Add `--agent-model ID` to select one of the models the agent advertises;
+an unknown model fails before any task runs and lists the available model ids. Without this
+option, the agent uses its configured model. Each session starts in a fresh empty temporary
+directory, which is removed after the task, so relative shell commands do not inspect the
+caller's working directory. Console, Markdown, and JSON reports identify the API kind and model,
+or the installed agent and adapter version (unknown if unavailable). Agent JSON and Markdown
+also record the model reported by the session. Coding agents
 bring their own prompt alongside SolidCraft's tools, so their results are not directly
 comparable with API runs.
 

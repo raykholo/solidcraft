@@ -379,6 +379,8 @@ pub struct AgentChat {
     /// The models the agent offers (none: no picker), and the current one.
     pub models: Vec<acp::ModelInfo>,
     pub model: String,
+    /// Explicit workspace for a control-channel session; never persisted.
+    cwd: Option<std::path::PathBuf>,
     /// An API endpoint's models, kept per endpoint (its base URL) for the next connection.
     models_cache: std::collections::HashMap<String, Vec<acp::ModelInfo>>,
     /// The running API agent's endpoint (empty for other agents).
@@ -750,7 +752,9 @@ fn working_dir() -> std::path::PathBuf {
 /// Start the agent: the chat's control endpoint for its MCP bridge if needed, the process.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
+    let cwd = app.agent_chat.cwd.take();
     disconnect(app);
+    app.agent_chat.cwd = cwd;
     let Some(entry) = agents::current(app) else {
         app.agent_chat.notice(tr("ui.agent_chat_none_found"), true);
         return;
@@ -788,7 +792,12 @@ pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let bridge = cli.zip(chat.tools_port).map(|(cli, port)| acp::McpBridge { cli, port });
     let wake = ctx.clone();
-    let start = backend::StartContext { cwd: working_dir(), bridge, tools: chat.tools_tx.clone(), wake: Box::new(move || wake.request_repaint()) };
+    let start = backend::StartContext {
+        cwd: chat.cwd.clone().unwrap_or_else(working_dir),
+        bridge,
+        tools: chat.tools_tx.clone(),
+        wake: Box::new(move || wake.request_repaint()),
+    };
     let started: Result<Box<dyn ChatBackend>, String> = match entry.kind {
         agents::Kind::Acp if entry.argv.is_empty() => Err(tr("ui.agent_chat_none_found").to_string()),
         agents::Kind::Acp => acp_client::AcpBackend::start(&entry.argv, start).map(|b| Box::new(b) as Box<dyn ChatBackend>),
@@ -842,7 +851,9 @@ pub fn connect(app: &mut SolveApp, ctx: &egui::Context) {
 pub fn disconnect(app: &mut SolveApp) {
     end_turn(app);
     let chat = &mut app.agent_chat;
-    chat.stop_backend(false);
+    // A control caller may remove its workspace as soon as Stop returns.
+    chat.stop_backend(chat.cwd.is_some());
+    chat.cwd = None;
     if chat.state.is_some() {
         chat.state = Some(State::Off);
     }
@@ -1733,6 +1744,16 @@ pub fn control(app: &mut SolveApp, ctx: &egui::Context, p: &Value) -> Result<Val
     if let Some(pick) = p.get("picker").and_then(Value::as_bool) {
         app.agent_chat.picking = Some(pick);
     }
+    if let Some(cwd) = p.get("cwd").and_then(Value::as_str) {
+        let path = std::path::PathBuf::from(cwd);
+        if !path.is_absolute() || !path.is_dir() {
+            return Err("cwd must be an existing absolute directory".into());
+        }
+        if app.agent_chat.backend.is_some() {
+            return Err("stop the agent before changing cwd".into());
+        }
+        app.agent_chat.cwd = Some(path);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         if p.get("refresh").and_then(Value::as_bool) == Some(true) {
@@ -1824,6 +1845,8 @@ pub fn status(app: &SolveApp) -> Value {
         "currentAgent": agents::current(app).map(|e| e.id),
         "models": c.models.iter().map(|m| json!({"id": m.id, "name": m.name, "description": m.description})).collect::<Vec<_>>(),
         "model": c.model,
+        "modelPending": c.backend.as_ref().is_some_and(|b| b.model_pending()),
+        "cwd": c.cwd.as_ref().and_then(|path| path.to_str()),
         "modes": c.modes.iter().map(|(id, name)| json!({"id": id, "name": name})).collect::<Vec<_>>(),
         "mode": c.mode,
         "open": c.open,
