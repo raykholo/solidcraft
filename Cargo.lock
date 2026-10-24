@@ -4454,6 +4454,7 @@ dependencies = [
  "serde_json",
  "solidcraft-engine",
  "solidcraft-ui-egui",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

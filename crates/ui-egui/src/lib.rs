@@ -382,6 +382,8 @@ pub struct Services {
 }
 
 pub struct SolveApp {
+    /// Compact browser embed: retain model panels and joint controls without application chrome.
+    pub embedded: bool,
     pub session: Session,
     pub ui: UiState,
     pub(crate) shell: shell::State,
@@ -655,6 +657,7 @@ impl SolveApp {
             fitted: false,
             pending_fit: None,
             flat_view: Default::default(),
+            embedded: false,
             home: home::HomeState::default(),
             space_mouse: Default::default(),
             file_load: file_load::FileLoad::default(),
@@ -1693,7 +1696,9 @@ impl SolveApp {
             if !keymap::capturing(self) {
                 expression_complete::begin_frame(ctx);
             }
-            toolbar::shortcuts(self, ctx);
+            if !self.embedded {
+                toolbar::shortcuts(self, ctx);
+            }
         }
         recovery_ui::tick(self);
         open_elsewhere::tick(self, ctx);
@@ -1795,11 +1800,19 @@ impl SolveApp {
     }
 
     fn cad_ui(&mut self, ui: &mut egui::Ui, report_input: &mut Option<issue_report::CadInput>) {
+        if self.embedded {
+            self.ui.layout = shell::LayoutMode::Docked;
+            self.home.open = false;
+            self.ui.show_browser = true;
+            self.ui.show_timeline = true;
+        }
         self.ui.layout.publish(ui.ctx());
         scenario::clear_handles();
         self.poll_deferred(ui.ctx());
         self.poll_delete_check(ui.ctx());
-        toolbar::app_bar(self, ui);
+        if !self.embedded {
+            toolbar::app_bar(self, ui);
+        }
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
         open_meshing::show(self, ui.ctx());
@@ -1826,7 +1839,7 @@ impl SolveApp {
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
         let left_timeline = show_timeline && self.preferences.timeline_left;
         timeline_left::animate_folds(self, ui.ctx());
-        if !floating {
+        if !floating && !self.embedded {
             toolbar::toolbar(self, ui);
         }
         theme::TabAccent::publish(self, ui.ctx());

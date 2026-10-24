@@ -3131,6 +3131,9 @@
   "update.up_to_date": "SolidCraft is up to date.",
   "update.update_now": "Update now",
   "update.you_have": "You have {version}.",
+  "web.open_full": "Open in SolidCraft",
+  "web.open_link": "Open linked design?",
+  "web.open_link_confirm": "There are unsaved changes. Open the linked design in a new tab?",
   "↑ ↓ choose · Enter / Tab complete · Esc dismiss": "↑ ↓ choose · Enter / Tab complete · Esc dismiss",
   "↑ ↓ choose · Enter applies what you typed · Esc dismiss": "↑ ↓ choose · Enter applies what you typed · Esc dismiss"
 }
