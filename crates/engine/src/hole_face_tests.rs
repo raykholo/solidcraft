@@ -436,3 +436,17 @@ fn a_hole_position_off_every_face_is_refused() {
     assert!(volume(&mut s) < v0, "a hole on the face drills");
     assert!(!solid_at(&s, 20.0, 15.0, 15.0));
 }
+
+#[test]
+fn a_hole_may_start_over_the_mouth_of_an_existing_bore() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20}));
+    run(&mut s, "solid.hole", json!({"position": [20, 15, 20], "diameter": 8, "depth": 10, "type": "drilled", "tip_angle": 118}));
+    // A counterbore centred on the bore starts in its mouth, which is in the top face's plane.
+    let v1 = volume(&mut s);
+    run(&mut s, "solid.hole", json!({"position": [20, 15, 20], "diameter": 12, "depth": 3, "type": "drilled", "tip_angle": 118}));
+    assert!(volume(&mut s) < v1, "the wider hole cuts round the bore");
+    // Past the face's edge is still off the face.
+    let e = s.execute("solid.hole", &json!({"position": [-1, 15, 20], "diameter": 8})).unwrap_err().to_string();
+    assert!(e.contains("is not on a face of a body"), "{e}");
+}
