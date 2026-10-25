@@ -664,8 +664,10 @@ enum Thing {
     Sketch(u64),
     /// An origin or construction plane, by name.
     Plane(String),
-    /// An origin axis.
+    /// An origin or construction axis.
     Axis(String),
+    /// A construction point.
+    Point(String),
 }
 
 /// What the tree lights for the selection and the 3D view's pointer: each lit item's row (in
@@ -704,6 +706,7 @@ impl Lit {
                 }
                 Sel::Plane { name } => Thing::Plane(name.clone()),
                 Sel::Axis { name } => Thing::Axis(name.clone()),
+                Sel::ConstructionPoint { name } => Thing::Point(name.clone()),
                 Sel::Occurrence { .. } => continue,
             });
         }
@@ -714,6 +717,7 @@ impl Lit {
             ) => Some(Thing::Sketch(*sketch)),
             Some(Hit::Plane { name, .. }) => Some(Thing::Plane(name.clone())),
             Some(Hit::Axis { name }) => Some(Thing::Axis(name.clone())),
+            Some(Hit::ConstructionPoint { name }) => Some(Thing::Point(name.clone())),
             None => None,
         };
         let doc = app.session.doc.clone();
@@ -728,10 +732,20 @@ impl Lit {
                 Thing::Sketch(id) => {
                     components.extend(doc.features.iter().find(|f| f.id == *id && matches!(f.kind, FeatureKind::Sketch { .. })).map(|f| f.component))
                 }
-                Thing::Plane(name) => components.extend(
-                    doc.features.iter().find(|f| f.name == *name && matches!(f.kind, FeatureKind::ConstructionPlane { .. })).map(|f| f.component),
+                Thing::Plane(name) | Thing::Axis(name) | Thing::Point(name) => components.extend(
+                    doc.features
+                        .iter()
+                        .find(|f| {
+                            f.name == *name
+                                && matches!(
+                                    f.kind,
+                                    FeatureKind::ConstructionPlane { .. }
+                                        | FeatureKind::ConstructionAxis { .. }
+                                        | FeatureKind::ConstructionPoint { .. }
+                                )
+                        })
+                        .map(|f| f.component),
                 ),
-                Thing::Axis(_) => {}
             }
         }
         Lit { selected, hovered, paths, components }
@@ -1038,8 +1052,14 @@ fn model_feature_indices(app: &SolveApp, component: u64, sketches: bool) -> Vec<
             .iter()
             .enumerate()
             .filter_map(|(i, f)| {
-                let kind =
-                    if sketches { matches!(f.kind, FeatureKind::Sketch { .. }) } else { matches!(f.kind, FeatureKind::ConstructionPlane { .. }) };
+                let kind = if sketches {
+                    matches!(f.kind, FeatureKind::Sketch { .. })
+                } else {
+                    matches!(
+                        f.kind,
+                        FeatureKind::ConstructionPlane { .. } | FeatureKind::ConstructionAxis { .. } | FeatureKind::ConstructionPoint { .. }
+                    )
+                };
                 (f.component == component && kind).then_some(i)
             })
             .collect(),
@@ -1780,6 +1800,7 @@ fn pick_from_browser(app: &mut SolveApp, x: Sel) {
     let hit = match &x {
         Sel::Plane { name } => crate::viewport::Hit::Plane { name: name.clone(), point: solidcraft_engine::geom::Vec3::ZERO },
         Sel::Axis { name } => crate::viewport::Hit::Axis { name: name.clone() },
+        Sel::ConstructionPoint { name } => crate::viewport::Hit::ConstructionPoint { name: name.clone() },
         // The origin point goes only into a dialog input that takes it.
         Sel::Vertex { body, point } if body.is_empty() && app.dialog.is_some() => crate::viewport::Hit::Vertex { body: String::new(), point: *point },
         _ => return,
@@ -1864,18 +1885,24 @@ impl Entry {
     }
 
     fn plane(app: &SolveApp, f: &solidcraft_engine::doc::Feature) -> Self {
+        let sel = construction_sel(f);
+        let thing = match &sel {
+            Sel::Axis { name } => Thing::Axis(name.clone()),
+            Sel::ConstructionPoint { name } => Thing::Point(name.clone()),
+            _ => Thing::Plane(f.name.clone()),
+        };
         Self {
             key: f.id.to_string(),
             row_key: format!("p:{}", f.id),
-            thing: Thing::Plane(f.name.clone()),
+            thing,
             patterns: None,
             label: f.name.clone(),
             icon: crate::timeline::icon_of(&f.kind),
             visible: !app.session.visibility.hidden_origin.contains(&f.name),
-            selected: app.session.selection.iter().any(|s| matches!(s, Sel::Plane { name } if name == &f.name)),
+            selected: app.session.selection.contains(&sel),
             color: None,
             locked: false,
-            sel: Some(Sel::Plane { name: f.name.clone() }),
+            sel: Some(sel),
             target: Some(Target::Plane { id: f.id }),
             bodies: Vec::new(),
         }
@@ -1918,6 +1945,15 @@ fn entries(app: &SolveApp, comp: u64, folder: &str) -> Vec<Entry> {
             .collect(),
         "sketches" => model_feature_indices(app, comp, true).into_iter().filter_map(|i| doc.features.get(i)).map(|f| Entry::sketch(app, f)).collect(),
         _ => model_feature_indices(app, comp, false).into_iter().filter_map(|i| doc.features.get(i)).map(|f| Entry::plane(app, f)).collect(),
+    }
+}
+
+fn construction_sel(f: &solidcraft_engine::doc::Feature) -> Sel {
+    let name = f.name.clone();
+    match f.kind {
+        FeatureKind::ConstructionPoint { .. } => Sel::ConstructionPoint { name },
+        FeatureKind::ConstructionAxis { .. } => Sel::Axis { name },
+        _ => Sel::Plane { name },
     }
 }
 

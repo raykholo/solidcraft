@@ -150,6 +150,10 @@ pub enum Sel {
     Plane {
         name: String,
     },
+    /// A construction point, by feature name.
+    ConstructionPoint {
+        name: String,
+    },
     /// An origin axis (X, Y, Z) or a construction axis (by feature name).
     Axis {
         name: String,
