@@ -124,6 +124,7 @@ impl Default for AgentConfig {
             command: String::new(),
             base_url: String::new(),
             model: String::new(),
+            ollama: false,
             key: false,
             request_timeout_s: DEFAULT_REQUEST_TIMEOUT_S,
         }
