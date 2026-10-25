@@ -535,6 +535,8 @@ preference_settings! {
     show_frame_rate: bool = false, PAGE_GRAPHICS => check_id("ui.frame_rate");
     /// With the frame rate: a frame-time graph, a histogram and what the GPU drew (#2548).
     frame_rate_details: bool = false, PAGE_GRAPHICS;
+    /// Draw a wider rim under finished sketch curves to improve contrast on shaded faces.
+    sketch_halo: bool = false, PAGE_GRAPHICS => check("Halo under sketch curves");
     /// Show world X/Y/Z component dimensions beside the total distance in Measure.
     measure_axis_distances: bool = true, PAGE_GRAPHICS => check_id("settings.measure_axis_distances");
     /// Decimals shown for lengths and angles.
@@ -3481,6 +3483,19 @@ mod tests {
         assert_eq!(super::lenient(&json!({"display_quality": "ultra"})).display_quality, "ultra");
         super::defaults(&mut app, super::PAGE_GRAPHICS);
         assert_eq!(app.preferences.display_quality, "normal");
+    }
+
+    #[test]
+    fn sketch_halo_is_off_by_default_saved_and_restored() {
+        use serde_json::json;
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        assert_eq!(serde_json::to_value(&app.preferences).unwrap()["sketch_halo"], false);
+        assert_eq!(serde_json::to_value(super::lenient(&json!({}))).unwrap()["sketch_halo"], false);
+        let saved = super::set(&mut app, &json!({"sketch_halo": true})).unwrap();
+        assert_eq!(saved["sketch_halo"], true);
+        assert_eq!(serde_json::to_value(super::lenient(&saved)).unwrap()["sketch_halo"], true);
+        super::defaults(&mut app, super::PAGE_GRAPHICS);
+        assert_eq!(serde_json::to_value(&app.preferences).unwrap()["sketch_halo"], false);
     }
 
     /// Supersampling (#1288): off by default, adaptive, set by factor and checked.

@@ -517,6 +517,7 @@ const NO_MEANING: &[(&str, &str)] = &[
     ("origin_point", "the origin, alone"),
     ("construction_plane", "a plane"),
     ("body_edge", "the model's edges"),
+    ("sketch_halo", "neutral rim beneath sketch curves; the curves carry the state colours"),
     ("grid", "the grid"),
     ("grid_major", "the grid"),
     ("profile_fill", "a closed profile's tint"),

@@ -674,6 +674,8 @@ pub struct Tokens {
     /// Sketch curves: under-constrained, fully constrained (and finished sketches).
     pub sketch: Color32,
     pub sketch_fixed: Color32,
+    /// Wider rim beneath sketch curves to separate them from shaded faces.
+    pub sketch_halo: Color32,
     /// Fixed (locked) sketch geometry.
     pub sketch_locked: Color32,
     /// Sketch dimensions: driving, driven (reference).
