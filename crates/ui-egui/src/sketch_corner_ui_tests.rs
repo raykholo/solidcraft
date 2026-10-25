@@ -585,7 +585,7 @@ fn chamfer_window_cuts_the_corner_between_two_picked_lines() {
     assert!(sk.curve_index("left").is_some(), "the third line stays");
 }
 
-/// Corner previews draw new curves when a corner is picked, just like Mirror and Offset do.
+/// Corner previews draw the new corner curve and the two shortened sides when a corner is picked.
 /// This tests that `previews()` for Corner produces sketch preview curves visible in the viewport.
 #[test]
 fn fillet_chamfer_corner_preview_draws_curves() {
@@ -602,8 +602,8 @@ fn fillet_chamfer_corner_preview_draws_curves() {
     h.step(&json!({"click":{"world":[0.0,10.0,0.0]}})).unwrap();
     h.frames(3);
 
-    // The preview should have drawn new curves (fillet arcs at picked corners).
-    h.step(&json!({"until":{"count":{"name":"sketch_preview_curves","value":1}}})).unwrap();
+    // Show the fillet arc and both shortened sides, whose ids stay the same.
+    h.step(&json!({"until":{"count":{"name":"sketch_preview_curves","value":3}}})).unwrap();
 
     // Verify the sketch itself hasn't been modified yet.
     let sid = h.app.session.active_sketch.unwrap();
@@ -618,8 +618,8 @@ fn fillet_chamfer_corner_preview_draws_curves() {
     h.step(&json!({"click":{"world":[0.0,10.0,0.0]}})).unwrap();
     h.frames(3);
 
-    // Chamfer preview should also produce curves.
-    h.step(&json!({"until":{"count":{"name":"sketch_preview_curves","value":1}}})).unwrap();
+    // Show the chamfer line and both shortened sides too.
+    h.step(&json!({"until":{"count":{"name":"sketch_preview_curves","value":3}}})).unwrap();
 
     let sk = h.app.session.world_state().sketch(sid).unwrap().sketch.clone();
     assert_eq!(sk.curves.len(), 2, "chamfer preview must not modify the sketch");
