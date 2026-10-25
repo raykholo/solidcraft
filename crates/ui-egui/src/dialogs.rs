@@ -441,6 +441,10 @@ pub struct Dialog {
     pub profile_selection_changed: bool,
     /// Give the on-canvas value box the keyboard (and select its text) on the next frame.
     pub focus: bool,
+    /// Last focused value editor, shared by the form and its on-canvas value box.
+    value_focus: Option<egui::Id>,
+    /// A viewport press or click returns the keyboard after selection and canvas updates.
+    pub(crate) restore_value_focus: bool,
     /// Folded to its header (the shared disclosure chevron).
     pub collapsed: bool,
     reset_scroll: bool,
@@ -639,6 +643,8 @@ impl Dialog {
             editing: None,
             profile_selection_changed: false,
             focus: true,
+            value_focus: None,
+            restore_value_focus: false,
             collapsed: false,
             reset_scroll: true,
             preview_enabled: true,
@@ -2552,6 +2558,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let mut apply_again = app.applying.is_some() && d.repeat_after_apply;
     let mut cancel = false;
     let mut enter = false;
+    let mut value_fields = Vec::new();
     let wide = matches!(&d.kind, Kind::Motion(k) if k.wide());
 
     let raw_title = title(&d.kind);
@@ -2642,7 +2649,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             let body = |ui: &mut egui::Ui| {
                 d.sync_fillet_chain(&app.session);
-                enter |= dense::rows(app, ctx, &mut d, ui);
+                let (accepted, fields) = crate::ui_kit::value_fields(ctx, || dense::rows(app, ctx, &mut d, ui));
+                enter |= accepted;
+                value_fields = fields;
                 d.sync_fillet_chain(&app.session);
                 if cell_enter {
                     ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -2685,6 +2694,31 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if let Some(r) = app.viewport.dialog_rect {
         crate::scenario::publish_rect("dialog:outer", r);
         crate::scenario::publish_target("dialog:card", r);
+    }
+    if let Some(field) = crate::ui_kit::canvas_value_focus(ctx) {
+        value_fields.push(field);
+    }
+    // The editor loses the keyboard while the click is still being handled, possibly in a later
+    // pass of the same frame, so give it back once the pointer is idle again.
+    let pointer_busy = ctx.input(|i| i.pointer.any_down() || i.pointer.any_pressed() || i.pointer.any_released());
+    if d.restore_value_focus && !pointer_busy {
+        d.restore_value_focus = false;
+        let target = value_fields.iter().find(|(id, _)| Some(*id) == d.value_focus).or_else(|| value_fields.first());
+        if let Some(&(id, length)) = target {
+            d.focus = false;
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            if let Some(mut state) = egui::text_edit::TextEditState::load(ctx, id) {
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text_selection::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(length))));
+                state.store(ctx, id);
+            }
+        }
+    }
+    if d.restore_value_focus {
+        ctx.request_repaint();
+    } else {
+        d.value_focus = ctx.memory(|memory| memory.focused()).filter(|id| value_fields.iter().any(|(field, _)| field == id));
     }
     // Keyboard: Enter applies (from a value field, or with nothing focused), Esc cancels.
     let (enter_free, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));

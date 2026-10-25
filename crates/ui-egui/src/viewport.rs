@@ -3398,6 +3398,15 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             && !held
             && app.dialog.is_none()
             && crate::dim_view::pick_reference(ui.ctx(), p, resp.double_clicked());
+        // Capture the press too: text editors lose focus before the click is released. A
+        // running tool keeps the keyboard for its own typed values.
+        if !held
+            && app.tool.is_none()
+            && (resp.clicked() || (resp.contains_pointer() && ui.input(|i| i.pointer.primary_pressed())))
+            && let Some(dialog) = app.dialog.as_mut()
+        {
+            dialog.restore_value_focus = true;
+        }
         if resp.clicked() && !held && !reference_pick {
             if app.tool.is_some() {
                 crate::tools::on_click(app, &proj, p, mods.shift);
