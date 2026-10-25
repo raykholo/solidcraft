@@ -1247,6 +1247,49 @@ fn equal_over_a_list_of_curves_makes_them_all_equal_in_one_step() {
     }
 }
 
+fn offset_lines(vertical: bool) -> Session {
+    let mut s = new_sketch();
+    let points = if vertical { json!([[0, 0], [0, 40]]) } else { json!([[0, 0], [40, 0]]) };
+    run(&mut s, "sketch.line", json!({"points": points, "ids": ["base"], "infer": false}));
+    run(&mut s, "sketch.constraint.fix", json!({"entity": "base"}));
+    let points = if vertical { json!([[10, 43], [10, 48]]) } else { json!([[43, 10], [48, 10]]) };
+    run(&mut s, "sketch.line", json!({"points": points, "ids": ["slider"], "infer": false, "connect": false}));
+    run(&mut s, "sketch.constraint.horizontal_vertical", json!({"line": "slider", "mode": if vertical { "vertical" } else { "horizontal" }}));
+    run(&mut s, "sketch.dimension", json!({"entities": ["slider"], "value": 5}));
+    run(
+        &mut s,
+        "sketch.dimension",
+        json!({"entities": ["base.end", "slider.start"], "type": if vertical { "horizontal" } else { "vertical" }, "value": 10}),
+    );
+    assert_eq!(run(&mut s, "sketch.inspect", json!({}))["dof"], 1);
+    s
+}
+
+#[test]
+fn component_dimensions_beside_a_perpendicular_dimension_solve() {
+    use solidcraft_sketch::ConstraintKind;
+    for vertical in [false, true] {
+        for ty in if vertical { ["vertical", "distance_y"] } else { ["horizontal", "distance_x"] } {
+            for value in [0.0, 0.5, 1.0] {
+                let mut s = offset_lines(vertical);
+                let out = run(&mut s, "sketch.dimension", json!({"entities": ["base.end", "slider.start"], "type": ty, "value": value}));
+                assert_eq!(out["sketch"]["dof"], 0, "{ty}, {value}: {out}");
+                let sk = sketch(&s);
+                let k = &sk.constraints.last().unwrap().kind;
+                assert!(
+                    if vertical { matches!(k, ConstraintKind::DistanceY { .. }) } else { matches!(k, ConstraintKind::DistanceX { .. }) },
+                    "{k:?}"
+                );
+                let a = sk.point(sk.resolve_point("base.end").unwrap()).unwrap();
+                let b = sk.point(sk.resolve_point("slider.start").unwrap()).unwrap();
+                let d = b - a;
+                assert!((if vertical { d.y } else { d.x }.abs() - value).abs() < 1e-6, "{d:?}");
+                assert!((if vertical { d.x } else { d.y }.abs() - 10.0).abs() < 1e-6, "{d:?}");
+            }
+        }
+    }
+}
+
 #[test]
 fn equal_over_a_list_refuses_bad_lists_and_conflicts_without_changing_the_sketch() {
     let mut s = four_circles();
@@ -1285,4 +1328,14 @@ fn midpoint_moves_the_point_whichever_is_picked_first() {
     run(&mut s, "sketch.constraint.fix", json!({"entities":["p"],"fixed":true}));
     run(&mut s, "sketch.constraint.midpoint", json!({"a":"p","b":"l1"}));
     assert!(line_midpoint(&sketch(&s), "l1").dist(Vec2::new(5.0, 5.0)) < 1e-6);
+}
+
+#[test]
+fn conflicting_component_dimension_is_still_refused() {
+    let mut s = offset_lines(false);
+    let before = serde_json::to_value(sketch(&s)).unwrap();
+    let error =
+        s.execute("sketch.dimension", &json!({"entities": ["base.end", "slider.start"], "type": "vertical", "value": 11})).unwrap_err().to_string();
+    assert!(error.contains("would over-constrain the sketch (conflicts with"), "{error}");
+    assert_eq!(serde_json::to_value(sketch(&s)).unwrap(), before);
 }
