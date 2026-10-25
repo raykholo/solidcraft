@@ -4451,6 +4451,7 @@ dependencies = [
  "egui",
  "js-sys",
  "log",
+ "percent-encoding",
  "serde_json",
  "solidcraft-engine",
  "solidcraft-ui-egui",
