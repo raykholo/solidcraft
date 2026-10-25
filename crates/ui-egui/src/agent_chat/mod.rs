@@ -895,7 +895,8 @@ pub(crate) fn leave_document(app: &mut SolveApp) {
         if let Some(at) = at.filter(|&at| matches!(chat.items.get(at), Some(Item::User { .. }))) {
             chat.items.remove(at);
         }
-        chat.pending.insert(0, Pending { text, image, files });
+        // The text already carries the selection, so there is no context to show again.
+        chat.pending.insert(0, Pending { text, image, context: Context::default(), files });
     }
     if !chat.pending.is_empty() {
         chat.stopped = true;

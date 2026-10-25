@@ -619,8 +619,9 @@ mod tests {
         h.call("ui.agent_cursor", json!({"show": true, "speed": 1}));
         assert!(crate::scenario::handle_at("toolbar:solid.box").is_none());
         assert!(button("solid.box").is_some(), "the closed group is the pointer's target");
-        let (tx, rx) = std::sync::mpsc::channel();
-        assert!(intercept(&mut h.app, "engine.execute", &json!({"command":"solid.box", "params":{"length":10,"width":10,"height":10}}), &tx));
+        let (req, rx) =
+            crate::control::ControlRequest::new("engine.execute", json!({"command":"solid.box", "params":{"length":10,"width":10,"height":10}}));
+        assert!(intercept(&mut h.app, &req));
         h.frames(3);
         assert!(h.widget("Box").is_some(), "the command must be identified before it executes");
         assert!(rx.try_recv().is_err());
@@ -637,12 +638,12 @@ mod tests {
         let mut h = crate::scenario::Harness::new();
         h.call("ui.agent_cursor", json!({"show": true, "speed": 1}));
         assert_eq!(button("solid.box"), button("solid.sphere"));
-        let (tx, rx) = std::sync::mpsc::channel();
         let params = json!({"commands":[
             {"command":"solid.box","params":{"length":10,"width":10,"height":10}},
             {"command":"solid.sphere","params":{"center":[30,0,0],"radius":3}}
         ]});
-        assert!(intercept(&mut h.app, "engine.batch", &params, &tx));
+        let (req, rx) = crate::control::ControlRequest::new("engine.batch", params);
+        assert!(intercept(&mut h.app, &req));
         let mut seen = Vec::new();
         for _ in 0..120 {
             h.frame();
