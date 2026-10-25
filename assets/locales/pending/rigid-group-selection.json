@@ -1,0 +1,14 @@
+{
+  "en": {
+    "joint.rigid_group_one_component": "These {count} bodies are all in one component (or in the design itself): use {command} first.",
+    "joint.rigid_group_select_components": "Select two or more components."
+  },
+  "ja": {
+    "joint.rigid_group_one_component": "これらの {count} 個のボディは、すべて 1 つのコンポーネント内（またはデザイン自体）にあります。先に「{command}」を使用してください。",
+    "joint.rigid_group_select_components": "2 つ以上のコンポーネントを選択してください。"
+  },
+  "zh": {
+    "joint.rigid_group_one_component": "这 {count} 个实体都位于同一组件中（或直接位于设计中）：请先使用“{command}”。",
+    "joint.rigid_group_select_components": "请选择两个或更多组件。"
+  }
+}

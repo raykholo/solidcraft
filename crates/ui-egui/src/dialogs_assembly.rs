@@ -973,9 +973,16 @@ pub fn commands(app: &SolveApp, k: &Asm, inputs: &[SelInput]) -> Result<Vec<(Str
             cmd("joint.origin", p)
         }
         Asm::RigidGroup => {
-            let occs = occurrences(s, sel_items(inputs, 0));
+            let items = sel_items(inputs, 0);
+            let occs = occurrences(s, items);
             if occs.len() < 2 {
-                return Err("select two or more components".into());
+                if occs.len() == 1 && items.len() > 1 && items.iter().all(|x| matches!(x, Sel::Body { .. })) {
+                    return Err(crate::i18n::format(
+                        "joint.rigid_group_one_component",
+                        &[("count", &items.len().to_string()), ("command", crate::i18n::tr("cmd.component_from_bodies"))],
+                    ));
+                }
+                return Err(crate::i18n::tr("joint.rigid_group_select_components").into());
             }
             cmd("joint.rigid_group", json!({ "occurrences": occs }))
         }
