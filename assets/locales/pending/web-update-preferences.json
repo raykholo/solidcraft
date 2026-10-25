@@ -1,0 +1,17 @@
+{
+  "en": {
+    "update.prefs_web": "Reload the page to get the latest web app. If the network is unavailable or the update cannot finish downloading in time, the saved version opens instead; a download in progress continues for the next reload."
+  },
+  "de": {
+    "update.prefs_web": "Laden Sie die Seite neu, um die neueste Web-App zu erhalten. Ist das Netzwerk nicht verfügbar oder kann das Update nicht rechtzeitig vollständig heruntergeladen werden, wird die gespeicherte Version geöffnet. Ein laufender Download wird für das nächste Neuladen fortgesetzt."
+  },
+  "ja": {
+    "update.prefs_web": "ページを再読み込みすると、最新のウェブアプリを取得します。ネットワークが利用できない場合や、更新のダウンロードが時間内に完了しない場合は、保存済みのバージョンを開きます。進行中のダウンロードは次回の再読み込みに向けて続行されます。"
+  },
+  "ko": {
+    "update.prefs_web": "페이지를 새로고침하면 최신 웹 앱을 가져옵니다. 네트워크를 사용할 수 없거나 업데이트 다운로드가 제한 시간 안에 완료되지 않으면 저장된 버전이 열립니다. 진행 중인 다운로드는 다음 새로고침을 위해 계속됩니다."
+  },
+  "zh": {
+    "update.prefs_web": "重新加载页面以获取最新的网页应用。如果网络不可用或更新无法及时下载完成，则打开已保存的版本；正在进行的下载会继续，供下次重新加载时使用。"
+  }
+}
