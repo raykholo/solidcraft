@@ -359,6 +359,8 @@ pub struct Services {
     pub graphics_path: Option<String>,
     /// Linux: the window system this run uses, `wayland` or `x11` (Preferences shows it, #3083).
     pub window_system: Option<&'static str>,
+    /// Adapter names and descriptive labels from the desktop renderer's chosen backends.
+    pub graphics_adapters: Vec<(String, String)>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
