@@ -3131,6 +3131,9 @@
   "update.up_to_date": "SolidCraft 已是最新版本。",
   "update.update_now": "立即更新",
   "update.you_have": "当前版本为 {version}。",
+  "web.open_full": "在 SolidCraft 中打开",
+  "web.open_link": "打开链接的设计？",
+  "web.open_link_confirm": "有未保存的更改。要在新标签页中打开链接的设计吗？",
   "↑ ↓ choose · Enter / Tab complete · Esc dismiss": "↑ ↓ 选择 · Enter / Tab 补全 · Esc 关闭",
   "↑ ↓ choose · Enter applies what you typed · Esc dismiss": "↑ ↓ 选择 · Enter 按原样应用 · Esc 关闭"
 }
