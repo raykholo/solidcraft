@@ -1,0 +1,5 @@
+{
+  "en": { "ui.agent_chat_model_no_tools": "{model} can't use SolidCraft's tools, so it can only chat. Pick a model with tool support." },
+  "ja": { "ui.agent_chat_model_no_tools": "{model} は SolidCraft のツールを使えず、チャットのみ可能です。ツール対応のモデルを選んでください。" },
+  "zh": { "ui.agent_chat_model_no_tools": "{model} 无法使用 SolidCraft 的工具，只能聊天。请选择支持工具的模型。" }
+}
