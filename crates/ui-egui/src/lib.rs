@@ -490,6 +490,8 @@ pub struct SolveApp {
     pub msaa_supported: Vec<u32>,
     /// The startup check selected 1x; Graphics explains the workaround.
     pub msaa_compatibility: bool,
+    /// Startup fallback diagnostic, also shown in Graphics preferences.
+    pub graphics_fallback: Option<String>,
     /// Settings put back at start because they kept SolidCraft from starting, one line each,
     /// shown until dismissed (`prefs::show_reset_notice`).
     pub settings_reset: Vec<prefs::SettingReset>,
@@ -639,6 +641,7 @@ impl SolveApp {
             stand_up_reason: false,
             msaa_supported: Vec::new(),
             msaa_compatibility: false,
+            graphics_fallback: None,
             settings_reset: Vec::new(),
             big_operation: false,
             autosave_minutes: 5.0,
