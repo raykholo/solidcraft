@@ -1,0 +1,11 @@
+{
+  "en": {
+    "prefs.anti_aliasing_amd_dx12": "Anti-aliasing uses 1× because the startup check drew nothing with multisampling and passed at 1×. You can choose another setting above; restart to apply it if the check passes."
+  },
+  "ja": {
+    "prefs.anti_aliasing_amd_dx12": "起動時のチェックでマルチサンプリングでは何も描画されず、1×では正常に描画されたため、アンチエイリアシングを1×に設定しました。上で別の設定を選択できます。再起動後のチェックに合格すると、その設定が適用されます。"
+  },
+  "zh": {
+    "prefs.anti_aliasing_amd_dx12": "由于启动检查在启用多重采样时未绘制任何内容，而在1×时通过了检查，抗锯齿已设为1×。您可以在上方选择其他设置；重启后若检查通过，该设置将生效。"
+  }
+}

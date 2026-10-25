@@ -1221,11 +1221,14 @@ fn save_graphics(app: &SolveApp) {
     }
 }
 
-/// At start, with the graphics device known: the saved anti-aliasing (`requested` samples, as
-/// the host read it) is more than the device supports. The window would not have opened with it,
-/// so the renderer fell back; put the setting back to its default (or the largest supported
-/// count below it) and tell the user what changed.
+/// At start, reflect a confirmed startup fallback in Graphics, or reset an unsupported
+/// saved count to the supported default. The compatibility hint keeps higher choices
+/// available for another try; a probe result alone does not overwrite the saved choice.
 pub fn check_msaa(app: &mut SolveApp, requested: u32) {
+    if app.msaa_compatibility {
+        app.preferences.msaa = 1;
+        return;
+    }
     let supported = &app.msaa_supported;
     if requested <= 1 || supported.is_empty() || supported.contains(&requested) {
         return;
@@ -3617,6 +3620,27 @@ mod tests {
         assert!(set(&mut app, &json!({"graphics_adapter":"x".repeat(1025)})).is_err());
         assert!(set(&mut app, &json!({"graphics_adapter":"card\nname"})).is_err());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_msaa_check_keeps_the_default_unless_fallback_is_confirmed() {
+        let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.msaa_supported = vec![1, 4, 8];
+        for requested in [1, 4, 8] {
+            app.preferences.msaa = requested;
+            app.msaa_compatibility = false;
+            check_msaa(&mut app, requested);
+            assert_eq!(app.preferences.msaa, requested, "a passing check preserves the choice, including the 4x default");
+            assert!(app.settings_reset.is_empty());
+        }
+        app.preferences.msaa = 4;
+        app.msaa_compatibility = true;
+        check_msaa(&mut app, 4);
+        assert_eq!(app.preferences.msaa, 1, "Graphics must show the confirmed fallback so it can be changed back");
+        assert!(app.msaa_supported.contains(&4), "the original choice stays available");
+        assert!(app.msaa_compatibility, "Graphics explains the fallback");
+        assert!(set(&mut app, &serde_json::json!({ "msaa": 4 })).is_ok());
+        assert_eq!(app.preferences.msaa, 4);
     }
 
     #[test]

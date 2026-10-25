@@ -17,7 +17,11 @@ use wgpu::util::DeviceExt;
 use crate::pbr;
 
 mod ao;
+#[cfg(not(target_arch = "wasm32"))]
+mod msaa_check;
 mod oit;
+#[cfg(not(target_arch = "wasm32"))]
+pub use msaa_check::MsaaCheck;
 
 /// Triangle vertex: position (3 × f32), normal (3 × f32), sRGB colour (4 × u8).
 pub const TRI_SIZE: usize = 28;
@@ -3479,6 +3483,38 @@ mod glass_tests {
         frame.product = true;
         let preview = middle(&render_frame(&mut r, &device, &queue, &frame, true));
         assert!(preview[2] > preview[0] + 60, "the preview shows its own blue square: {preview:?}");
+    }
+
+    #[test]
+    fn startup_msaa_check_passes_and_detects_a_blank_resolve() {
+        let (adapter, device, queue) = crate::open_headless().expect("software adapter required for the startup check");
+        let depth = crate::depth_format(&device, true);
+        for format in [wgpu::TextureFormat::Rgba8Unorm, wgpu::TextureFormat::Bgra8Unorm, wgpu::TextureFormat::Bgra8UnormSrgb] {
+            let window = GpuTarget { format, depth: None, samples: 1, tess: false };
+            for samples in [1, 4] {
+                if ![format, depth].iter().all(|f| adapter.get_texture_format_features(*f).flags.sample_count_supported(samples)) {
+                    continue;
+                }
+                let target = GpuTarget { depth: Some(depth), samples, ..window };
+                let mut renderer = Renderer::with_window_target(&device, target, window, None);
+                let start = std::time::Instant::now();
+                assert_eq!(renderer.check_msaa(&device, &queue).unwrap(), super::MsaaCheck::Passed);
+                eprintln!("startup check: {} {format:?} {samples}x: {:?}", adapter.get_info().name, start.elapsed());
+                assert!(
+                    renderer.model.key.is_none() && renderer.highlight.key.is_none() && renderer.ss.is_none(),
+                    "probe uploads must not replace the first real frame"
+                );
+                assert_eq!(renderer.target().samples, samples);
+                assert_eq!(renderer.check_msaa_with(&device, &queue, 1).unwrap(), super::MsaaCheck::FailedAtOne);
+                assert_eq!(renderer.target().samples, samples, "a blank 1x result must preserve the selected count");
+                assert_eq!(
+                    renderer.check_msaa_with(&device, &queue, 4).unwrap(),
+                    if samples > 1 { super::MsaaCheck::Fallback } else { super::MsaaCheck::Passed }
+                );
+                assert_eq!(renderer.target().samples, 1);
+                assert_eq!(renderer.check_msaa(&device, &queue).unwrap(), super::MsaaCheck::Passed);
+            }
+        }
     }
 
     /// Two see-through squares, one at z = 5 (near) and one at z = -5, in `near` and `far`
