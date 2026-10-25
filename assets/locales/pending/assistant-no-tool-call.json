@@ -1,0 +1,5 @@
+{
+  "en": { "ui.agent_chat_no_tool_call": "The model didn't use SolidCraft's tools, so the design wasn't changed. Choose a model that supports tool calling; see Local models in the agent chat guide." },
+  "ja": { "ui.agent_chat_no_tool_call": "モデルが SolidCraft のツールを使わなかったため、デザインは変更されませんでした。ツール呼び出しに対応したモデルを選んでください。エージェントチャットのガイドの「ローカルモデル」を参照してください。" },
+  "zh": { "ui.agent_chat_no_tool_call": "模型没有使用 SolidCraft 的工具，因此设计没有更改。请选择支持工具调用的模型；参见智能体聊天指南中的“本地模型”。" }
+}
