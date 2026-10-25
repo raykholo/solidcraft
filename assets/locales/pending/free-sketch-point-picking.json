@@ -1,0 +1,5 @@
+{
+  "en": { "prefs.prefer_free_sketch_points": "Prefer movable sketch points when points overlap" },
+  "ja": { "prefs.prefer_free_sketch_points": "スケッチ点が重なったときは移動可能な点を優先する" },
+  "zh": { "prefs.prefer_free_sketch_points": "草图点重合时优先选择可移动的点" }
+}
