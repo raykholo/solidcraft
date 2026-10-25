@@ -265,7 +265,7 @@ pub(crate) fn clipboard_buttons(app: &mut SolveApp, ui: &mut egui::Ui, id: u64) 
 pub(crate) fn status_text(name: &str, ty: &str, error: Option<&str>, warning: Option<&str>) -> String {
     let mut text = format!("{name}  ({ty})");
     if let Some(error) = error {
-        text.push_str(&format!("\nError: {error}"));
+        text.push_str(&format!("\nError: {}", crate::i18n::tr_diagnostic(error)));
     }
     if let Some(warning) = warning {
         text.push_str(&format!("\nWarning: {warning}"));

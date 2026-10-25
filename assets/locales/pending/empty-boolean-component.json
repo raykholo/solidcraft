@@ -1,0 +1,11 @@
+{
+  "en": {
+    "diagnostic.empty_boolean_component": "there is no body to cut or intersect in component '{component}'; the tool may overlap '{body}' in component '{other}' — activate that component or pick the body as a target"
+  },
+  "ja": {
+    "diagnostic.empty_boolean_component": "コンポーネント '{component}' に切り取りまたは交差の対象となるボディがありません。ツールはコンポーネント '{other}' の '{body}' と重なる可能性があります。そのコンポーネントをアクティブにするか、ボディを対象として選択してください"
+  },
+  "zh": {
+    "diagnostic.empty_boolean_component": "组件 '{component}' 中没有可供切除或求交的实体；工具可能与组件 '{other}' 中的 '{body}' 重叠 — 请激活该组件或选择该实体作为目标"
+  }
+}
