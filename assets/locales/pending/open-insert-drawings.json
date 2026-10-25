@@ -1,0 +1,17 @@
+{
+  "en": {
+    "file.open.drawing_filter": "Designs, CAD files, meshes and drawings",
+    "web.files.insert_drawings_hint": "CAD files, meshes, DXF or SVG into the open design",
+    "web.files.insert_stored_drawings_hint": "Into the open design (CAD files, meshes, DXF, SVG)"
+  },
+  "ja": {
+    "file.open.drawing_filter": "デザイン、CADファイル、メッシュ、図面",
+    "web.files.insert_drawings_hint": "CADファイル、メッシュ、DXF、SVGを開いているデザインに挿入",
+    "web.files.insert_stored_drawings_hint": "開いているデザインに挿入（CADファイル、メッシュ、DXF、SVG）"
+  },
+  "zh": {
+    "file.open.drawing_filter": "设计、CAD 文件、网格和图纸",
+    "web.files.insert_drawings_hint": "将 CAD 文件、网格、DXF 或 SVG 插入当前设计",
+    "web.files.insert_stored_drawings_hint": "插入当前设计（CAD 文件、网格、DXF、SVG）"
+  }
+}

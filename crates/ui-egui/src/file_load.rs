@@ -29,9 +29,9 @@ use crate::ui_kit;
 /// What a file operation does with its file.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Kind {
-    /// Open the design (or a STEP/mesh file as a new design) in a tab of its own.
+    /// Open the design (or a CAD, mesh or drawing file as a new design) in a tab of its own.
     Open,
-    /// Insert a STEP or mesh file's bodies into the active design.
+    /// Insert CAD bodies, meshes or sketch drawing geometry into the active design.
     Insert,
     /// Open a design an earlier run autosaved before it closed.
     Recover { id: String, dir: Option<String> },
@@ -71,7 +71,7 @@ impl Request {
         match &self.kind {
             Kind::Open => ("doc.open", self.params()),
             Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
-            Kind::Insert => ("file.insert_step", self.params()),
+            Kind::Insert => (insert_command(&self.path), self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
             Kind::ExportDxf => ("file.export_view_dxf", Value::Object(self.options.clone())),
             Kind::UpdateLinks => ("component.update_links", json!({})),
@@ -85,6 +85,12 @@ impl Request {
             });
         }
     }
+}
+
+/// Route drawing files to the same commands as the sketch's Insert DXF and Insert SVG.
+pub(crate) fn insert_command(path: &str) -> &'static str {
+    solidcraft_engine::cmd::drawing_import_command(path)
+        .unwrap_or_else(|| if solidcraft_engine::io::is_mesh_path(path) { "file.insert_mesh" } else { "file.insert_step" })
 }
 
 struct Made {
@@ -1063,6 +1069,58 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drawing_insert_and_drop_reuse_the_active_sketch_or_create_xy() {
+        let mut h = crate::scenario::Harness::new();
+        let dxf = solidcraft_engine::io::write_dxf(&[
+            solidcraft_engine::io::Geom2::Line(solidcraft_engine::geom::Vec2::ZERO, solidcraft_engine::geom::Vec2::new(10.0, 0.0)),
+            solidcraft_engine::io::Geom2::Arc {
+                c: solidcraft_engine::geom::Vec2::ZERO,
+                a: solidcraft_engine::geom::Vec2::new(5.0, 0.0),
+                b: solidcraft_engine::geom::Vec2::new(0.0, 5.0),
+            },
+        ]);
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0 L10 10"/></svg>"#;
+        for (file, text) in [("outline.DXF", dxf.as_str()), ("outline.SVG", svg)] {
+            h.app.run("file.new", json!({})).unwrap();
+            h.app.run("sketch.create", json!({"plane":"YZ"})).unwrap();
+            h.app.run("sketch.finish", json!({})).unwrap();
+            let path = h.dir.join(file).to_string_lossy().into_owned();
+            std::fs::write(&path, text).unwrap();
+            h.app.insert_path_async(&path);
+            let wait = |h: &mut crate::scenario::Harness| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                while h.app.file_load.busy() && std::time::Instant::now() < deadline {
+                    h.frames(1);
+                    std::thread::yield_now();
+                }
+                assert!(!h.app.file_load.busy());
+            };
+            wait(&mut h);
+            assert_eq!(h.app.session.doc.features.len(), 2, "{:?}", h.app.status);
+            let id = h.app.session.active_sketch.unwrap();
+            assert_eq!(h.app.session.model.state().sketch(id).unwrap().plane, solidcraft_engine::geom::Plane::XY);
+            assert_eq!(h.app.session.doc.sketch(id).unwrap().curves.len(), 2);
+            h.app.cam.set_view(solidcraft_engine::render::StandardView::Top);
+            h.app.fit_view();
+            h.run(&json!([{ "shot": format!("insert-{file}") }])).unwrap();
+            h.app.drop_path(&path);
+            wait(&mut h);
+            assert_eq!(h.app.session.active_sketch, Some(id));
+            assert_eq!(h.app.session.doc.features.len(), 2);
+            assert_eq!(h.app.session.doc.sketch(id).unwrap().curves.len(), 4);
+            h.app.run("sketch.finish", json!({})).unwrap();
+            h.app.drop_path(&path);
+            wait(&mut h);
+            assert_eq!(h.app.session.doc.features.len(), 3);
+            let new_id = h.app.session.active_sketch.unwrap();
+            assert_ne!(id, new_id);
+            assert_eq!(h.app.session.doc.sketch(new_id).unwrap().curves.len(), 2);
+            h.app.insert_path(&path);
+            assert_eq!(h.app.session.doc.sketch(new_id).unwrap().curves.len(), 4);
+        }
+    }
 
     #[test]
     fn dxf_export_progress_keeps_frames_alive_and_never_adopts_a_worker_document() {

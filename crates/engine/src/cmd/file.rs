@@ -1,4 +1,4 @@
-//! Documents and files: new, open (designs and STEP), insert STEP, save, export.
+//! Documents and files: new, open designs, CAD files and drawings, insert STEP, save, export.
 
 #[path = "file_thumbnail.rs"]
 mod thumbnail;
@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("open")
         .key("Ctrl+O")
         .noundo()
-        .params("path: .solidcraft design, or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); read_only?: bool (a design: saving to its own file is refused, file.save_as keeps the changes elsewhere) → open_elsewhere: {host, user, app, opened} when another SolidCraft has the design open (its lock file is fresh)"),
+        .params("path: .solidcraft design, .dxf/.svg drawing (opens as a new, unsaved design with an XY sketch, using sketch.insert_dxf/sketch.insert_svg units and defaults), or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); read_only?: bool (a design: saving to its own file is refused, file.save_as keeps the changes elsewhere) → open_elsewhere: {host, user, app, opened} when another SolidCraft has the design open (its lock file is fresh)"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -259,6 +259,18 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if !solidcraft_io::is_step_path(path) && !solidcraft_io::is_gltf_path(path) && p.get("up").is_some_and(|v| !v.is_null()) {
         return Err(bad("doc.open", "`up` applies to STEP, IGES and glTF files only"));
+    }
+    if let Some(command) = super::drawing_import_command(path) {
+        let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
+        let mut fresh = Session::new(Document::new(&stem));
+        let mut out = fresh.execute(command, &json!({"path": path}))?;
+        fresh.undo.clear();
+        s.replace_design(fresh);
+        out["path"] = json!(path);
+        out["name"] = json!(s.doc.name);
+        out["features"] = json!(s.doc.features.len());
+        out["errors"] = json!(s.model.results.iter().filter(|r| r.error.is_some()).count());
+        return Ok(out);
     }
     if solidcraft_io::is_step_path(path) || solidcraft_io::is_mesh_path(path) {
         // A new, unsaved design holding the file's bodies.
@@ -761,6 +773,35 @@ mod tests {
             assert!(e.contains("`quality` must be standard, fine or finest"), "{bad}: {e}");
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_drawing_files_creates_an_unsaved_xy_sketch() {
+        let dir = name_dir("drawing-open");
+        let dxf = "0\nSECTION\n2\nENTITIES\n0\nLINE\n10\n0\n20\n0\n11\n10\n21\n0\n0\nLINE\n10\n10\n20\n0\n11\n10\n21\n10\n0\nARC\n10\n0\n20\n0\n40\n5\n50\n0\n51\n90\n0\nENDSEC\n0\nEOF\n";
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 L10 0 L10 10"/><circle cx="5" cy="5" r="2"/></svg>"#;
+        for (file, text) in [("outline.DXF", dxf), ("outline.SVG", svg)] {
+            let path = dir.join(file);
+            std::fs::write(&path, text).unwrap();
+            let mut s = Session::default();
+            s.execute("sketch.create", &json!({"plane":"YZ"})).unwrap();
+            let result = s.execute("doc.open", &json!({"path":path})).unwrap();
+            assert_eq!(result["errors"], 0);
+            assert_eq!(s.doc.features.len(), 1);
+            let id = s.active_sketch.unwrap();
+            let sketch = s.doc.sketch(id).unwrap();
+            assert_eq!(s.model.state().sketch(id).unwrap().plane, solidcraft_geom::Plane::XY);
+            assert_eq!(sketch.curves.len(), 3);
+            assert_eq!(s.doc.name, "outline");
+            assert!(s.path.is_none(), "Save must ask for a design path");
+            assert!(s.is_dirty());
+            assert!(s.undo.is_empty());
+            let before = s.doc.clone();
+            std::fs::write(&path, "invalid drawing").unwrap();
+            assert!(s.execute("doc.open", &json!({"path":path})).is_err());
+            assert_eq!(s.doc, before, "a failed open preserves the current design");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// #3044: a save run on a scratch copy of the session (on a worker, so the window keeps

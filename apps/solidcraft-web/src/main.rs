@@ -330,7 +330,7 @@ mod web {
                             files::pick_from_disk(&self.files, Intent::Open);
                         }
                         if ui_kit::button(ui, "Insert from computer…", ui_kit::Button::Normal)
-                            .on_hover_text("STEP, 3MF or STL into the open design")
+                            .on_hover_text(solidcraft_ui_egui::i18n::tr("web.files.insert_drawings_hint"))
                             .clicked()
                         {
                             files::pick_from_disk(&self.files, Intent::Insert);
@@ -383,7 +383,7 @@ mod web {
                                     let design = solidcraft_engine::io::is_design_path(&e.name);
                                     if !design
                                         && ui_kit::button(ui, "Insert", ui_kit::Button::Small)
-                                            .on_hover_text("Into the open design (STEP, 3MF, STL)")
+                                            .on_hover_text(solidcraft_ui_egui::i18n::tr("web.files.insert_stored_drawings_hint"))
                                             .clicked()
                                     {
                                         act = Some(("insert", e.name.clone()));
@@ -707,14 +707,17 @@ mod web {
                         let (restorable, restorer) = (files.clone(), files.clone());
                         let services = if launch.embed { Services::default() } else { Services {
                             // Open shows the browser's open dialog for a design where it has one
-                            // (the file keeps its handle, so Save writes back to it); otherwise,
-                            // and for inserting STEP or meshes, the browser's files window.
-                            pick_open: Some(Box::new(move |exts: &[&str]| {
-                                if disk::handles_open(exts) {
-                                    return Box::pin(disk::pick_open(&opener));
+                            // (the file keeps its handle, so Save writes back to it), else the
+                            // browser's files window. A command that reads another kind of file
+                            // (Insert DXF or SVG, an image, a mesh, settings) gets a file dialog
+                            // offering that kind, and runs on the picked file.
+                            pick_open: Some(Box::new(move |exts: &[&str]| match disk::open_route(disk::supported(), exts) {
+                                disk::OpenRoute::Disk => Box::pin(disk::pick_open(&opener)),
+                                disk::OpenRoute::Upload => Box::pin(files::pick_upload(&opener, exts)),
+                                disk::OpenRoute::Panel => {
+                                    panel.panel.set(true);
+                                    Box::pin(std::future::ready(None))
                                 }
-                                panel.panel.set(true);
-                                Box::pin(std::future::ready(None))
                             })),
                             // A design is saved to a file the user picks, or kept in the browser
                             // where the browser can't pick one; everything else is downloaded.

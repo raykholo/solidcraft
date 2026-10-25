@@ -292,7 +292,9 @@ fn services(cc: &eframe::CreationContext<'_>) -> Services {
                 dialog = dialog.add_filter(label, &case_variants(first));
             }
             // The groups come from the format registry, so a new format joins this dialog by itself.
-            dialog = dialog.add_filter("Designs, CAD files and meshes", &case_variants(&io::formats::open_extensions(true)));
+            let mut everything = io::formats::open_extensions(true);
+            everything.extend(["dxf", "svg"]);
+            dialog = dialog.add_filter(solidcraft_ui_egui::i18n::tr("file.open.drawing_filter"), &case_variants(&everything));
             for (label, exts) in io::formats::import_filters(true) {
                 dialog = dialog.add_filter(label, &case_variants(&exts));
             }
