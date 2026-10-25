@@ -1,0 +1,14 @@
+{
+  "en": {
+    "Open bodies (no volume)": "Open bodies (no volume)",
+    "Open surface — no volume": "Open surface — no volume"
+  },
+  "ja": {
+    "Open bodies (no volume)": "開いたボディ（体積なし）",
+    "Open surface — no volume": "開いたサーフェス — 体積なし"
+  },
+  "zh": {
+    "Open bodies (no volume)": "未闭合实体（无体积）",
+    "Open surface — no volume": "未闭合曲面 — 无体积"
+  }
+}
