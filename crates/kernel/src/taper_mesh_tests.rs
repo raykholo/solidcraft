@@ -177,7 +177,7 @@ fn provisional_preview_bounds_the_same_arbitrary_pole() {
 }
 
 #[test]
-fn degenerate_boundary_constraints_are_refused_before_splitting() {
+fn degenerate_boundary_constraints_complete_with_bounded_splitting() {
     let boundary = [
         [1.0000000000000062, 2.0000000000000093],
         [4.000000000000008, 5.000000000000009],
@@ -187,7 +187,7 @@ fn degenerate_boundary_constraints_are_refused_before_splitting() {
         [2.0000000000000018, 3.0000000000000013],
     ];
     // A synthetic loop whose almost-collinear crossing reached spade's split assertion.
-    assert_eq!(truck_meshalgo::tessellation::loop_fill_test_hooks::boundary_constraints(&boundary), None);
+    assert!(truck_meshalgo::tessellation::loop_fill_test_hooks::boundary_constraints(&boundary).is_some());
 }
 
 #[test]

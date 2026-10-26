@@ -943,10 +943,6 @@ impl PolyBoundary {
             })?;
         if blocked.len() <= MAX_SPLIT_SEGMENTS {
             for (vi, vj) in blocked {
-                // Refuse a crossing that cannot be distinguished from a nearby vertex.
-                if ambiguous_constraint(triangulation, vi, vj) {
-                    return None;
-                }
                 add_split_constraint(triangulation, vi, vj);
             }
         }
@@ -1006,25 +1002,6 @@ fn add_split_constraint(triangulation: &mut Cdt, from: VertexId, to: VertexId) {
     if prev != to && triangulation.can_add_constraint(prev, to) {
         triangulation.add_constraint(prev, to);
     }
-}
-
-/// A vertex just off a segment is indistinguishable from an exact intersection at
-/// floating-point precision. Exact collinear vertices are handled by spade directly.
-fn ambiguous_constraint(cdt: &Cdt, from: VertexId, to: VertexId) -> bool {
-    let (a, b) = (cdt.vertex(from).position(), cdt.vertex(to).position());
-    let (dx, dy) = (b.x - a.x, b.y - a.y);
-    let length = dx.hypot(dy);
-    let tolerance = 64.0 * f64::EPSILON * a.x.abs().max(a.y.abs()).max(b.x.abs()).max(b.y.abs());
-    cdt.vertices().any(|v| {
-        if v.fix() == from || v.fix() == to {
-            return false;
-        }
-        let p = v.position();
-        let (x, y) = (p.x - a.x, p.y - a.y);
-        let cross = dx * y - dy * x;
-        let along = (x * dx + y * dy) / length;
-        cross != 0.0 && cross.abs() / length <= tolerance && along > 0.0 && along < length
-    })
 }
 
 /// SolidCraft: the (u, v) scale the triangulation works in, each parameter by the surface's mean
