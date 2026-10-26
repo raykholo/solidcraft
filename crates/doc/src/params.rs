@@ -78,6 +78,7 @@ impl FeatureKind {
         inputs.extend(placement);
         if let FeatureKind::Sketch { sketch, .. } = self {
             inputs.extend(sketch.patterns.iter().filter_map(|p| p.count_expression.as_deref()));
+            inputs.extend(sketch.patterns.iter().flat_map(|p| p.expressions.values().map(String::as_str)));
         }
         inputs
     }
@@ -704,7 +705,9 @@ impl Document {
                         out.push(ParamUser::Feature { feature: f.id, name: f.name.clone(), input: format!("{} Quantity", pattern.id) });
                     }
                 }
-                for (what, e) in sketch.text_exprs() {
+                for (what, e) in
+                    sketch.text_exprs().into_iter().chain(sketch.patterns.iter().flat_map(|p| p.expressions.iter().map(|(k, e)| (k.as_str(), e))))
+                {
                     if expr::references(e).iter().any(|r| r == name) {
                         out.push(ParamUser::Feature { feature: f.id, name: f.name.clone(), input: what.to_string() });
                     }
@@ -811,7 +814,7 @@ impl Document {
                         n += 1;
                     }
                 }
-                for e in sketch.patterns.iter_mut().filter_map(|p| p.count_expression.as_mut()) {
+                for e in sketch.patterns.iter_mut().flat_map(|p| p.count_expression.iter_mut().chain(p.expressions.values_mut())) {
                     let r = expr::rename_reference(e, old, new);
                     if r != *e {
                         *e = r;
@@ -905,6 +908,7 @@ impl Document {
             let mut names: BTreeSet<String> = f.param_names.iter().filter(|n| !n.is_empty()).cloned().collect();
             if let FeatureKind::Sketch { sketch, .. } = &f.kind {
                 names.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
+                names.extend(sketch.patterns.iter().flat_map(|p| p.expressions.values()).flat_map(|e| expr::references(e)));
                 names.extend(sketch.text_exprs().into_iter().flat_map(|(_, e)| expr::references(e)));
                 names.extend(sketch.patterns.iter().filter_map(|p| p.count_expression.as_deref()).flat_map(expr::references));
             }
@@ -947,6 +951,7 @@ impl Document {
             hit |= f.kind.expressions().iter().any(|e| expr::references(e).iter().any(|r| affected.contains(r)));
             if let FeatureKind::Sketch { sketch, .. } = &f.kind {
                 hit |= sketch.constraints.iter().any(|c| c.param.as_ref().is_some_and(|p| affected.contains(p)));
+                hit |= sketch.patterns.iter().flat_map(|p| p.expressions.values()).any(|e| expr::references(e).iter().any(|r| affected.contains(r)));
                 hit |= sketch.text_exprs().iter().any(|(_, e)| expr::references(e).iter().any(|r| affected.contains(r)));
             }
             if hit {

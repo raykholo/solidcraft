@@ -283,8 +283,8 @@ pub(super) fn edit_solved<T>(
 ) -> Result<(T, Option<SolveReport>)> {
     let mut doc = (*s.doc).clone();
     let mut sk = doc.sketch(id)?.clone();
-    if sk.patterns.iter().any(|p| p.count_expression.is_some()) {
-        doc.apply_pattern_quantities(&doc.param_values().0, &mut sk)?;
+    if sk.patterns.iter().any(|p| p.count_expression.is_some() || !p.expressions.is_empty()) {
+        doc.apply_pattern_values(&doc.param_values().0, &mut sk)?;
     }
     // The next frame of a live gesture on this sketch, nothing else run since the last one: its
     // links are as that frame projected them, from a model that hasn't changed (#3222).

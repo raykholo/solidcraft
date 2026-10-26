@@ -885,7 +885,9 @@ impl Session {
             .features
             .iter()
             .filter_map(|feature| match &feature.kind {
-                solidcraft_doc::FeatureKind::Sketch { sketch, .. } if sketch.patterns.iter().any(|p| p.count_expression.is_some()) => {
+                solidcraft_doc::FeatureKind::Sketch { sketch, .. }
+                    if sketch.patterns.iter().any(|p| p.count_expression.is_some() || !p.expressions.is_empty()) =>
+                {
                     Some((feature.id, sketch.clone()))
                 }
                 _ => None,
@@ -894,7 +896,7 @@ impl Session {
         if !updated.is_empty() {
             let (vals, _) = self.doc.param_values();
             for (_, sketch) in &mut updated {
-                self.doc.apply_pattern_quantities(&vals, sketch)?;
+                self.doc.apply_pattern_values(&vals, sketch)?;
             }
         }
         for (id, sketch) in updated {
@@ -1398,11 +1400,18 @@ pub(crate) type SketchValues = std::collections::BTreeMap<u64, std::collections:
 fn own_values(sk: &solidcraft_sketch::Sketch) -> std::collections::BTreeMap<String, f64> {
     let mut values: std::collections::BTreeMap<_, _> =
         sk.constraints.iter().filter(|c| c.param.is_some() && !c.driven).filter_map(|c| Some((c.id.clone(), c.kind.value()?))).collect();
-    for pattern in &sk.patterns {
-        if pattern.count_expression.is_some()
-            && let solidcraft_sketch::SketchPatternKind::Circular { count, .. } = pattern.kind
-        {
-            values.insert(format!("pattern:{}:count", pattern.id), count as f64);
+    for p in &sk.patterns {
+        use solidcraft_sketch::SketchPatternKind;
+        let inputs = match p.kind {
+            SketchPatternKind::Circular { count, angle, .. } => vec![("count", count as f64), ("angle", angle)],
+            SketchPatternKind::Rectangular { count, spacing, count2, spacing2, .. } => {
+                vec![("count", count as f64), ("spacing", spacing), ("count2", count2 as f64), ("spacing2", spacing2)]
+            }
+        };
+        for (key, value) in inputs {
+            if p.expressions.contains_key(key) || (key == "count" && p.count_expression.is_some()) {
+                values.insert(format!("{}.{}", p.id, key), value);
+            }
         }
     }
     values

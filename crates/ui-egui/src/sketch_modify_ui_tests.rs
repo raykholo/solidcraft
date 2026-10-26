@@ -523,7 +523,7 @@ fn rectangular_sections_flip_and_center_independently_and_restore_even_counts_wh
     assert_eq!(commands[0].1["alignment"], "center");
     assert_eq!(commands[0].1["alignment2"], "right");
     assert_eq!(commands[0].1["reversed2"], true);
-    assert_eq!(commands[0].1["count"], 4);
+    assert_eq!(commands[0].1["count"], "4");
     h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
     h.settle();
     assert!(h.app.dialog.is_none());
@@ -556,10 +556,10 @@ fn typed_counts_and_spacings_reach_the_command_with_the_second_direction() {
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].0, "sketch.pattern.rectangular");
     // The click tool could only ever send a count of 3 and no second count at all.
-    assert_eq!(cmds[0].1["count"], json!(5));
-    assert_eq!(cmds[0].1["spacing"], json!(20.0));
-    assert_eq!(cmds[0].1["count2"], json!(2));
-    assert_eq!(cmds[0].1["spacing2"], json!(15.0));
+    assert_eq!(cmds[0].1["count"], json!("5"));
+    assert_eq!(cmds[0].1["spacing"], json!("20"));
+    assert_eq!(cmds[0].1["count2"], json!("2"));
+    assert_eq!(cmds[0].1["spacing2"], json!("15 mm"));
     assert!(cmds[0].1.get("dir").is_none(), "an unpicked direction leaves the command's own default");
 }
 
@@ -624,18 +624,16 @@ fn an_axis_perpendicular_to_the_sketch_is_reported_not_silently_replaced() {
     assert!(e.contains("sketch plane"), "{e}");
 }
 
-/// Upstream #218 is the same shape: `solid.pattern.circular` took expressions in its axis origin
-/// and stored `[0, 0, 0]`. Rectangular sketch patterns still read `count` with `num`, which
-/// takes a JSON number only, so the window evaluates their count fields itself.
+/// Count expressions stay linked to parameters when sent to the command.
 #[test]
-fn a_count_expression_is_evaluated_rather_than_sent_as_a_string() {
+fn a_count_expression_reaches_the_command_as_text() {
     let (mut h, id) = open("sketch.pattern.rectangular");
     h.app.run("parameters.add", json!({"name": "n", "expression": "4", "unit": ""})).unwrap();
     h.app.dialog.as_mut().unwrap().inputs[0].items = vec![Sel::SketchCurve { id }];
     rect(&mut h, "n", "10", "1", "10");
     let d = h.app.dialog.clone().unwrap();
     let cmds = apply_commands(&h.app, &d).unwrap();
-    assert_eq!(cmds[0].1["count"], json!(4));
+    assert_eq!(cmds[0].1["count"], json!("n"));
 }
 
 #[test]
@@ -726,12 +724,12 @@ fn the_typed_count_and_total_angle_reach_the_command() {
     assert_eq!(cmds.len(), 1);
     assert_eq!(cmds[0].0, "sketch.pattern.circular");
     // The click flow could only ever send a count of 6, and never any angle.
-    assert_eq!(cmds[0].1["count"], json!(4));
-    assert_eq!(cmds[0].1["angle"], json!(180.0));
+    assert_eq!(cmds[0].1["count"], json!("4"));
+    assert_eq!(cmds[0].1["angle"], json!("180"));
     assert_eq!(cmds[0].1["center"], json!(centre), "the bare point id the command resolves");
     circ(&mut h, "4", "90 deg");
     let d = h.app.dialog.clone().unwrap();
-    assert_eq!(apply_commands(&h.app, &d).unwrap()[0].1["angle"], json!(90.0));
+    assert_eq!(apply_commands(&h.app, &d).unwrap()[0].1["angle"], json!("90 deg"));
 }
 
 #[test]
@@ -744,8 +742,8 @@ fn circular_flip_and_center_buttons_apply_and_reopen_the_saved_placement() {
     h.step(&json!({"click":{"handle":"dialog:Alignment:Flip direction"}})).unwrap();
     let d = h.app.dialog.clone().unwrap();
     let params = &apply_commands(&h.app, &d).unwrap()[0].1;
-    assert_eq!(params["count"], json!(6));
-    assert_eq!(params["angle"], json!(90.));
+    assert_eq!(params["count"], json!("6"));
+    assert_eq!(params["angle"], json!("90 deg"));
     assert_eq!(params["alignment"], json!("center"));
     assert_eq!(params["reversed"], json!(true));
     h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
@@ -769,17 +767,14 @@ fn circular_flip_and_center_buttons_apply_and_reopen_the_saved_placement() {
     assert_eq!(params["reversed"], json!(true));
 }
 
-/// The same lesson as upstream #218: `num` reads a JSON number only, and `sketch.pattern.circular`
-/// falls back to a full turn when `angle` is anything else. An expression has to be evaluated
-/// here or it disappears in silence.
+/// Angle expressions stay linked to parameters when sent to the command.
 #[test]
-fn an_angle_expression_is_evaluated_rather_than_sent_as_a_string() {
+fn an_angle_expression_reaches_the_command_as_text() {
     let (mut h, _) = open_circ();
     h.app.run("parameters.add", json!({"name": "sweep", "expression": "120", "unit": "deg"})).unwrap();
     circ(&mut h, "3", "sweep");
     let d = h.app.dialog.clone().unwrap();
-    let angle = apply_commands(&h.app, &d).unwrap()[0].1["angle"].as_f64().expect("a number, not the text `sweep`");
-    assert!((angle - 120.0).abs() < 1e-9, "{angle}");
+    assert_eq!(apply_commands(&h.app, &d).unwrap()[0].1["angle"], "sweep");
 }
 
 #[test]

@@ -1183,6 +1183,7 @@ fn param_names(f: &Feature) -> Vec<String> {
     let mut names: Vec<String> = f.kind.expressions().iter().flat_map(|e| expr::references(e)).collect();
     if let FeatureKind::Sketch { sketch, .. } = &f.kind {
         names.extend(sketch.constraints.iter().filter_map(|c| c.param.clone()));
+        names.extend(sketch.patterns.iter().flat_map(|p| p.expressions.values()).flat_map(|e| expr::references(e)));
         names.extend(sketch.text_exprs().into_iter().flat_map(|(_, e)| expr::references(e)));
     }
     names.sort();
@@ -1328,13 +1329,28 @@ fn feature_json(f: &Feature, steps: &StepDigests) -> String {
 /// constraints' values. Nothing else: what evaluation derives for its own copy (an offset's
 /// upgraded topology, refreshed links) stays out of the stored sketch. A `solved` that does not
 /// match `stored` entity for entity is not adopted.
-fn adopt_solution(stored: &mut solidcraft_sketch::Sketch, solved: &solidcraft_sketch::Sketch) {
+fn adopt_solution(stored: &mut solidcraft_sketch::Sketch, solved: &solidcraft_sketch::Sketch) -> bool {
+    if stored.patterns != solved.patterns {
+        // Rebuild authored copies without storing topology derived from links or offsets.
+        let mut updated = stored.clone();
+        for pattern in &solved.patterns {
+            let Some(index) = updated.patterns.iter().position(|p| p.id == pattern.id) else { return false };
+            if updated.update_pattern(index, pattern.kind.clone()).is_err() {
+                return false;
+            }
+        }
+        if updated.patterns != solved.patterns || !adopt_solution(&mut updated, solved) {
+            return false;
+        }
+        *stored = updated;
+        return true;
+    }
     if stored.points.len() != solved.points.len()
         || stored.curves.len() != solved.curves.len()
         || stored.constraints.len() != solved.constraints.len()
         || stored.constraints.iter().zip(&solved.constraints).any(|(a, b)| a.id != b.id)
     {
-        return;
+        return false;
     }
     for (p, q) in stored.points.iter_mut().zip(&solved.points) {
         p.pos = q.pos;
@@ -1356,6 +1372,7 @@ fn adopt_solution(stored: &mut solidcraft_sketch::Sketch, solved: &solidcraft_sk
             c.kind.set_value(v);
         }
     }
+    true
 }
 
 /// The values features are evaluated with: the parameters, and the design's length unit.
@@ -1862,6 +1879,7 @@ impl Model {
             s.report.keeps_orientation()
                 && doc.sketch(s.feature).is_ok_and(|stored| {
                     stored.driving_values() != s.sketch.driving_values()
+                        || stored.patterns != s.sketch.patterns
                         || s.sketch.points.iter().zip(&stored.points).any(|(p, q)| p.link.is_some() && p.id == q.id && p.pos != q.pos)
                 })
         })
