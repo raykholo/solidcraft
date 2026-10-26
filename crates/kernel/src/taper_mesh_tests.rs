@@ -175,3 +175,26 @@ fn provisional_preview_bounds_the_same_arbitrary_pole() {
     assert!(mesh.positions().iter().all(|p| p.x.is_finite() && p.y.is_finite() && p.z.is_finite()));
     assert!(mesh.uv_coords().iter().all(|p| (-1e-6..=1. + 1e-6).contains(&p.x) && (-1e-6..=1. + 1e-6).contains(&p.y)));
 }
+
+#[test]
+fn degenerate_boundary_constraints_are_refused_before_splitting() {
+    let boundary = [
+        [1.0000000000000062, 2.0000000000000093],
+        [4.000000000000008, 5.000000000000009],
+        [4.000000000000001, 1.0000000000000009],
+        [1.0000000000000042, 7.000000000000008],
+        [6.000000000000006, 7.00000000000001],
+        [2.0000000000000018, 3.0000000000000013],
+    ];
+    // A synthetic loop whose almost-collinear crossing reached spade's split assertion.
+    assert_eq!(truck_meshalgo::tessellation::loop_fill_test_hooks::boundary_constraints(&boundary), None);
+}
+
+#[test]
+fn boundary_constraints_keep_crossings_and_merge_roundoff_duplicates() {
+    let triangulate = truck_meshalgo::tessellation::loop_fill_test_hooks::boundary_constraints;
+    // An ordinary crossing still splits into a new vertex.
+    assert_eq!(triangulate(&[[0., 0.], [2., 2.], [0., 2.], [2., 0.]]), Some(5));
+    // Two representations of the closing vertex must not create a sliver.
+    assert_eq!(triangulate(&[[0., 0.], [2., 0.], [2., 2.], [0., 2.], [1e-15, 1e-15]]), Some(4));
+}

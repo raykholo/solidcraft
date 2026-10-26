@@ -59,6 +59,10 @@ pub(crate) struct Fill<'a> {
 /// vertices keep their indices; added points follow. Triangles are counter-clockwise in
 /// (u, v). `None` when a loop cannot be kept as constraints (it crosses itself or another).
 pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], fill: Fill) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
+    crate::guard("triangulate face", || Ok(triangulate_inner(boundary, loops, fill))).ok().flatten()
+}
+
+fn triangulate_inner(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>], fill: Fill) -> Option<(Vec<[f64; 2]>, Vec<[u32; 3]>)> {
     if boundary.iter().flatten().any(|x| !x.is_finite()) {
         return None;
     }
@@ -85,13 +89,12 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
             if a == b || cdt.exists_constraint(a, b) {
                 continue;
             }
-            if !cdt.can_add_constraint(a, b) {
+            if cdt.try_add_constraint(a, b).is_empty() {
                 if fill.lenient {
                     continue;
                 }
                 return None;
             }
-            cdt.add_constraint(a, b);
         }
     }
     for s in fill.seeds {
@@ -155,6 +158,10 @@ pub(crate) fn triangulate(boundary: &[[f64; 2]], loops: &[std::ops::Range<usize>
 /// outside). Distances in the metric `scale`. Triangles counter-clockwise in (u, v), indices
 /// into `points`; `None` when a constraint cannot be kept (the staircase meets the boundary).
 pub(crate) fn band(points: &[[f64; 2]], n: usize, loops: &[std::ops::Range<usize>], stairs: &[(u32, u32)], scale: [f64; 2]) -> Option<Vec<[u32; 3]>> {
+    crate::guard("triangulate face", || Ok(band_inner(points, n, loops, stairs, scale))).ok().flatten()
+}
+
+fn band_inner(points: &[[f64; 2]], n: usize, loops: &[std::ops::Range<usize>], stairs: &[(u32, u32)], scale: [f64; 2]) -> Option<Vec<[u32; 3]>> {
     let to = |p: &[f64; 2]| spade::mitigate_underflow(Point2::new(p[0] * scale[0], p[1] * scale[1]));
     let mut cdt = Cdt::new();
     let mut index: HashMap<FixedVertexHandle, u32> = HashMap::new();
@@ -191,10 +198,9 @@ pub(crate) fn band(points: &[[f64; 2]], n: usize, loops: &[std::ops::Range<usize
         if a == b || cdt.exists_constraint(a, b) {
             continue;
         }
-        if !cdt.can_add_constraint(a, b) {
+        if cdt.try_add_constraint(a, b).is_empty() {
             return None;
         }
-        cdt.add_constraint(a, b);
     }
     let region = region(&cdt);
     let mut tris = Vec::new();
