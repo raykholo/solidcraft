@@ -57,6 +57,7 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
             ui_kit::checkbox(ui, &single, &mut app.preferences.slicer_single_instance).on_hover_text(tip);
         });
     });
+    crate::webdav::settings(app, ui);
     ui_kit::settings_section(ui, "updates", app.tr("prefs.updates"), |ui| {
         ui_kit::settings_block(ui, app.tr("update.prefs_label"), labels, |ui| crate::update::prefs_rows(app, ui));
     });
