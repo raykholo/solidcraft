@@ -64,15 +64,15 @@ const FIXED_ARRAYS: &[(&str, &str)] = &[
     ("crates/doc/src/component_color.rs", "PALETTE"),        // Fixed 24-step hue-wheel algorithm.
     ("crates/doc/src/eval.rs", "ISO_COARSE"),                // ISO metric coarse diameter/pitch pairs.
     ("crates/doc/src/format.rs", "JSON_STEPS"),              // Frozen historical migrations; additions use format/pending.
-    ("crates/engine/src/cmd/features.rs", "TABLE"),
-    ("crates/ui-egui/src/dialogs_assembly.rs", "TYPES"),          // Joint types; TYPE_LABELS must stay the same length.
-    ("crates/ui-egui/src/dialogs_assembly.rs", "TYPE_LABELS"),    // Labels for TYPES, index for index.          // ISO 273 metric bolt clearance-hole dimensions.
+    ("crates/engine/src/cmd/features.rs", "TABLE"),          // ISO 273 metric bolt clearance-hole dimensions.
     ("crates/engine/src/cmd/parts.rs", "BEARINGS"),          // Standard deep-groove ball bearing dimensions.
     ("crates/engine/src/cmd/parts.rs", "HEX_BOLT"),          // ISO 4017 hex bolt dimensions.
     ("crates/engine/src/cmd/parts.rs", "HEX_NUT"),           // ISO 4032 hex nut dimensions.
     ("crates/engine/src/cmd/parts.rs", "METRIC"),            // Standard metric screw diameters and pitches.
     ("crates/engine/src/cmd/parts.rs", "SHCS"),              // ISO 4762 socket-head cap screw dimensions.
     ("crates/engine/src/cmd/parts.rs", "WASHER"),            // ISO 7089 plain washer dimensions.
+    ("crates/ui-egui/src/dialogs_assembly.rs", "TYPES"),     // Joint types; TYPE_LABELS must stay the same length.
+    ("crates/ui-egui/src/dialogs_assembly.rs", "TYPE_LABELS"), // Labels for TYPES, index for index.
     ("crates/ui-egui/src/space_mouse_calibration.rs", "STEP_PROMPTS"), // Labels for the twelve fixed calibration motions.
     ("crates/ui-egui/src/space_mouse_calibration.rs", "TRACKBALL_PROMPTS"), // Trackball labels indexed by the same twelve motions.
 ];
