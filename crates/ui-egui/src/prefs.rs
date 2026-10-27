@@ -562,6 +562,48 @@ fn same_orientation(a: Camera, b: Camera) -> bool {
     ar.dot(br) > near && au.dot(bu) > near && ab.dot(bb) > near
 }
 
+/// How the offer to stand a file up is made when its header names no program known to save Y up
+/// (Preferences: "For files from unknown programs", #7717). A file from SolidWorks is asked in the
+/// dialog (only the note when it already stands on Z, unless this is Ask); SolidCraft's own files
+/// are never offered.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StandUpUnknown {
+    /// The "Stand this part up?" dialog for every file from another program, without looking at
+    /// how it rests, as before #7717 (a SolidWorks file too).
+    Ask,
+    /// No offer: the context menu's Turn Up Axis still stands the file up.
+    Off,
+    /// A small note over the view, only when the file seems to lie on its back, that goes by
+    /// itself and never blocks input (the default). A saved value this version doesn't know reads
+    /// as this.
+    #[default]
+    #[serde(other)]
+    Note,
+}
+
+impl StandUpUnknown {
+    pub const ALL: [Self; 3] = [Self::Ask, Self::Note, Self::Off];
+
+    /// The choice as `ui.prefs` and the saved preferences spell it.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Note => "note",
+            Self::Off => "off",
+        }
+    }
+
+    /// The message id of the choice's label.
+    pub fn label_id(self) -> &'static str {
+        match self {
+            Self::Ask => "prefs.stand_up_unknown.ask",
+            Self::Note => "prefs.stand_up_unknown.note",
+            Self::Off => "prefs.stand_up_unknown.off",
+        }
+    }
+}
+
 /// Which program reads the 3D mouse on Linux when both spacenavd and the device itself (hidraw)
 /// are there (Preferences: "3D mouse driver"). Read by the app's reader, not by this crate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -930,6 +972,9 @@ preference_settings! {
     up_axis: String = "z".into(), PAGE_DESIGN;
     /// After a STEP or IGES file opens, offer to stand a Y-up part up (`stand_up`).
     offer_stand_up: bool = true, PAGE_DESIGN => check("Offer to stand up Y-up files", "After a STEP or IGES file opens with Z up, offer a quarter turn about X");
+    /// How the offer is made for a file whose header names no program known to save Y up: a note
+    /// over the view (the default), the dialog, or nothing (#7717).
+    stand_up_unknown: StandUpUnknown = StandUpUnknown::default(), PAGE_DESIGN;
     /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
     /// switches the extent to To Object (off: picks only add profiles, as before).
     extrude_auto_to_object: bool = false, PAGE_DESIGN => check("Extrude to a picked target", "In Extrude, with a profile picked, picking a face, vertex or parallel plane off its plane switches the extent to To Object");
@@ -2545,14 +2590,14 @@ fn button_job_picker(
 }
 
 /// The control channel's `ui.prefs`: `open` (a page name) opens the dialog there, `button`
-/// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer
-/// (`false` leaves the file as it is, like "Leave it"), `theme_import` (a theme file's JSON or
+/// presses OK, Cancel, Apply or Restore Defaults, `stand_up: true` answers the stand-up offer,
+/// dialog or note (`false` leaves the file as it is, like "Leave it"), `theme_import` (a theme file's JSON or
 /// text) adds a theme and turns it on, `theme_remove` (an id) removes an imported one and
 /// `theme_export: true` returns the theme on now as `theme_file`, `theme_follow` (a path, or
 /// `""` to stop) follows a theme file on the desktop (#7573); any other keys set preferences.
 /// `open: "Interface/Navigation bar"` opens Interface and scrolls to its bar editor.
-/// Returns them all, the open page, the offer, the theme ids and the followed file
-/// (`theme_followed`, `theme_follow_error`).
+/// Returns them all, the open page, the offer (and whether it is the note), the theme ids and the
+/// followed file (`theme_followed`, `theme_follow_error`).
 pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Value, String> {
     let mut rest = p.as_object().cloned().unwrap_or_default();
     if let Some(page) = rest.remove("open") {
@@ -2599,6 +2644,7 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
     if let Some(o) = out.as_object_mut() {
         o.insert("dialog".into(), json!(app.prefs_window.open.then(|| PAGES.get(app.prefs_window.section).copied().unwrap_or_default())));
         o.insert("stand_up_offer".into(), json!(app.stand_up));
+        o.insert("stand_up_note".into(), json!(app.stand_up.is_some() && app.stand_up_note));
         o.insert("dark".into(), json!(app.ui.dark));
         o.insert("viewport_dark".into(), json!(app.viewport_dark()));
         o.insert("theme_ids".into(), json!(theme_choices(app).into_iter().map(|(id, _)| id).collect::<Vec<_>>()));
@@ -2869,6 +2915,11 @@ pub fn set(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::Valu
     }
     if let Some(value) = p.get("navigation_bar") {
         crate::navigation_bar::validate(value)?;
+    }
+    if let Some(v) = p.get("stand_up_unknown")
+        && !StandUpUnknown::ALL.iter().any(|c| v.as_str() == Some(c.id()))
+    {
+        return Err("`stand_up_unknown` must be ask, note or off".into());
     }
     let new: Prefs = migrate(serde_json::from_value(cur).map_err(|e| e.to_string())?);
     if !UNITS.contains(&new.default_units.as_str()) {
@@ -5792,9 +5843,11 @@ mod tests {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         app.open_path(&path);
         assert!(app.stand_up.is_none(), "SolidCraft's own exports already have Z up");
-        // Another originating system keeps the offer.
+        // Another originating system is offered (asked in the dialog, without looking at how the
+        // flat box rests).
         let text = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, text.replace("'SolidCraft','SolidCraft'", "'SolidCraft','Example CAD'")).unwrap();
+        app.preferences.stand_up_unknown = StandUpUnknown::Ask;
         app.open_path(&path);
         let offered = app.stand_up.clone().unwrap_or_default();
         assert_eq!(offered.len(), 1, "the file's body is offered");

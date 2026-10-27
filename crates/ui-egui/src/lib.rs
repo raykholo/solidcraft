@@ -576,6 +576,14 @@ pub struct SolveApp {
     pub stand_up_occurrence: Option<u64>,
     /// The file's header names an exporter that saves Y up (SolidWorks): the offer says so.
     pub stand_up_reason: bool,
+    /// The file brought more than one body or a component tree: the offer says "assembly".
+    pub stand_up_assembly: bool,
+    /// The offer is the small note over the view, not the dialog (a file from a program not known
+    /// to save Y up, Preferences › Design, #7717).
+    pub stand_up_note: bool,
+    /// When the note was first drawn (the window's clock), or since the pointer was last on it; it
+    /// goes after `stand_up::NOTE_SECONDS`.
+    pub stand_up_note_since: Option<f64>,
     /// The anti-aliasing sample counts the scene colour/depth formats support (empty without a GPU).
     pub msaa_supported: Vec<u32>,
     /// The startup check selected 1x; Graphics explains the workaround.
@@ -745,6 +753,9 @@ impl SolveApp {
             stand_up: None,
             stand_up_occurrence: None,
             stand_up_reason: false,
+            stand_up_assembly: false,
+            stand_up_note: false,
+            stand_up_note_since: None,
             msaa_supported: Vec::new(),
             msaa_compatibility: false,
             graphics_fallback: None,

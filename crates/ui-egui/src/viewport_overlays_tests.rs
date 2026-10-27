@@ -408,7 +408,7 @@ fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
                 seen
             };
             run(vec![]);
-            let (card, _) = run(vec![]).unwrap_or_else(|| panic!("width {width}: no card"));
+            let (card, _, _) = run(vec![]).unwrap_or_else(|| panic!("width {width}: no card"));
             assert!(free.contains_rect(card), "width {width}: {card:?}");
             let mut hits = Vec::new();
             for step_x in 1..12 {
@@ -427,7 +427,7 @@ fn toast_buttons_wrap_inside_the_card_and_are_dead_behind_an_issue_report() {
                         pressed: false,
                         modifiers: Default::default(),
                     }]);
-                    if let Some((_, Some(index))) = clicked {
+                    if let Some((_, Some(index), _)) = clicked {
                         hits.push(index);
                     }
                 }

@@ -1,0 +1,72 @@
+{
+  "en": {
+    "Did this assembly open the wrong way up?": "Did this assembly open the wrong way up?",
+    "Did this part open the wrong way up?": "Did this part open the wrong way up?",
+    "Stand this assembly up?": "Stand this assembly up?",
+    "prefs.stand_up_unknown": "For files from unknown programs",
+    "prefs.stand_up_unknown.ask": "Ask in a dialog",
+    "prefs.stand_up_unknown.note": "Show a note",
+    "prefs.stand_up_unknown.off": "Don't offer",
+    "prefs.stand_up_unknown_note": "How the offer is made when the file's header names no program known to save Y up. A note is shown only when the file seems to lie on its back; Ask in a dialog asks about every such file, as before."
+  },
+  "de": {
+    "Did this assembly open the wrong way up?": "Wurde diese Baugruppe falsch herum geöffnet?",
+    "Did this part open the wrong way up?": "Wurde dieses Teil falsch herum geöffnet?",
+    "Stand this assembly up?": "Diese Baugruppe aufrichten?",
+    "prefs.stand_up_unknown": "Für Dateien aus unbekannten Programmen",
+    "prefs.stand_up_unknown.ask": "In einem Dialog fragen",
+    "prefs.stand_up_unknown.note": "Einen Hinweis zeigen",
+    "prefs.stand_up_unknown.off": "Nicht anbieten",
+    "prefs.stand_up_unknown_note": "Wie das Aufrichten angeboten wird, wenn der Dateikopf kein Programm nennt, das bekanntlich mit Y nach oben speichert. Ein Hinweis erscheint nur, wenn die Datei auf dem Rücken zu liegen scheint; „In einem Dialog fragen“ fragt wie bisher bei jeder solchen Datei."
+  },
+  "ar": {
+    "Did this assembly open the wrong way up?": "هل فُتحت هذه المجموعة مقلوبة الاتجاه؟",
+    "Did this part open the wrong way up?": "هل فُتحت هذه القطعة مقلوبة الاتجاه؟",
+    "Stand this assembly up?": "إيقاف هذه المجموعة قائمة؟",
+    "prefs.stand_up_unknown": "للملفات من برامج غير معروفة",
+    "prefs.stand_up_unknown.ask": "السؤال في مربع حوار",
+    "prefs.stand_up_unknown.note": "عرض ملاحظة",
+    "prefs.stand_up_unknown.off": "عدم العرض",
+    "prefs.stand_up_unknown_note": "طريقة العرض عندما لا يذكر رأس الملف برنامجًا معروفًا بحفظ المحور Y للأعلى. تظهر الملاحظة فقط عندما يبدو أن الملف ملقى على ظهره؛ أما «السؤال في مربع حوار» فيسأل عن كل ملف كهذا، كما كان سابقًا."
+  },
+  "he": {
+    "Did this assembly open the wrong way up?": "האם המכלול הזה נפתח הפוך?",
+    "Did this part open the wrong way up?": "האם החלק הזה נפתח הפוך?",
+    "Stand this assembly up?": "להעמיד את המכלול הזה?",
+    "prefs.stand_up_unknown": "לקבצים מתוכנות לא מוכרות",
+    "prefs.stand_up_unknown.ask": "לשאול בתיבת דו־שיח",
+    "prefs.stand_up_unknown.note": "להציג הערה",
+    "prefs.stand_up_unknown.off": "לא להציע",
+    "prefs.stand_up_unknown_note": "איך ההצעה מוצגת כשכותרת הקובץ לא מציינת תוכנה שידוע שהיא שומרת עם Y למעלה. הערה מוצגת רק כשנראה שהקובץ שוכב על גבו; ״לשאול בתיבת דו־שיח״ שואל על כל קובץ כזה, כמו קודם."
+  },
+  "ja": {
+    "Did this assembly open the wrong way up?": "このアセンブリは逆向きに開かれましたか？",
+    "Did this part open the wrong way up?": "このパーツは逆向きに開かれましたか？",
+    "Stand this assembly up?": "このアセンブリを正立させますか？",
+    "prefs.stand_up_unknown": "不明なプログラムのファイル",
+    "prefs.stand_up_unknown.ask": "ダイアログで確認",
+    "prefs.stand_up_unknown.note": "メモを表示",
+    "prefs.stand_up_unknown.off": "確認しない",
+    "prefs.stand_up_unknown_note": "ファイルのヘッダーに Y 上向きで保存することが知られているプログラム名がない場合の確認方法です。メモはファイルが横倒しに見える場合にのみ表示されます。「ダイアログで確認」は従来どおり、このようなファイルすべてについて確認します。"
+  },
+  "vi": {
+    "Did this assembly open the wrong way up?": "Cụm lắp ráp này có bị mở sai hướng không?",
+    "Did this part open the wrong way up?": "Chi tiết này có bị mở sai hướng không?",
+    "Stand this assembly up?": "Dựng đứng cụm lắp ráp này lên?",
+    "prefs.stand_up_unknown": "Với tệp từ chương trình không xác định",
+    "prefs.stand_up_unknown.ask": "Hỏi trong hộp thoại",
+    "prefs.stand_up_unknown.note": "Hiện ghi chú",
+    "prefs.stand_up_unknown.off": "Không gợi ý",
+    "prefs.stand_up_unknown_note": "Cách gợi ý khi phần đầu tệp không nêu chương trình nào được biết là lưu với trục Y hướng lên. Ghi chú chỉ hiện khi tệp có vẻ đang nằm ngửa; “Hỏi trong hộp thoại” sẽ hỏi với mọi tệp như vậy, như trước đây."
+  },
+  "zh": {
+    "Did this assembly open the wrong way up?": "此装配是否以错误的方向打开？",
+    "Did this part open the wrong way up?": "此零件是否以错误的方向打开？",
+    "Stand this assembly up?": "立起此装配？",
+    "prefs.stand_up_unknown": "来自未知程序的文件",
+    "prefs.stand_up_unknown.ask": "在对话框中询问",
+    "prefs.stand_up_unknown.note": "显示提示",
+    "prefs.stand_up_unknown.off": "不提供",
+    "prefs.stand_up_unknown_note": "当文件头未注明已知以 Y 轴向上保存的程序时，如何提供立起选项。仅当文件看起来平躺时才显示提示；“在对话框中询问”会像以前一样对每个此类文件进行询问。"
+  }
+}
