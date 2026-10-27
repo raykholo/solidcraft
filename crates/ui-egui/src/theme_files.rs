@@ -610,8 +610,8 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
     json!({"format": FORMAT, "name": name, "base": base, "colors": colors, "radii": radii, "borders": borders, "icon_palette": icon_palette})
 }
 
-/// The theme files that come with SolidCraft (original files; Gruvbox, Tokyo Night, Solarized, Nord, Nosferatu and Catppuccin map open-source palettes, MIT; Okibi and Akari map the Okibi design system; Clay and Clay Dark are original warm paper and charcoal palettes).
-const BUILTIN: [(&str, &str); 24] = [
+/// The theme files that come with SolidCraft (original files; Gruvbox, Tokyo Night, Solarized, Nord, Nosferatu and Catppuccin map open-source palettes, MIT; Okibi and Akari map the Okibi design system; Clay and Clay Dark are original warm paper and charcoal palettes; CGA keeps to the 16 colours of the IBM Color Graphics Adapter).
+const BUILTIN: [(&str, &str); 25] = [
     ("gruvbox-dark", include_str!("../../../assets/styles/ui/themes/gruvbox-dark.json")),
     ("gruvbox-dark-hard", include_str!("../../../assets/styles/ui/themes/gruvbox-dark-hard.json")),
     ("gruvbox-dark-soft", include_str!("../../../assets/styles/ui/themes/gruvbox-dark-soft.json")),
@@ -636,6 +636,7 @@ const BUILTIN: [(&str, &str); 24] = [
     ("akari", include_str!("../../../assets/styles/ui/themes/akari.json")),
     ("clay", include_str!("../../../assets/styles/ui/themes/clay.json")),
     ("clay-dark", include_str!("../../../assets/styles/ui/themes/clay-dark.json")),
+    ("cga", include_str!("../../../assets/styles/ui/themes/cga.json")),
 ];
 
 /// The built-in themes, read once (one that fails to read is left out; a test reads them all).
@@ -823,6 +824,35 @@ mod tests {
                 assert_eq!(t.base.is_dark(), t.id.contains("dark"), "{}", t.id);
             }
         }
+    }
+
+    /// CGA uses only the 16 colours of the IBM Color Graphics Adapter (alpha only on translucent
+    /// tokens) and sets every colour, so nothing falls back to Dark's palette.
+    #[test]
+    fn cga_uses_only_the_sixteen_cga_colours() {
+        const CGA: [&str; 16] = [
+            "000000", "0000aa", "00aa00", "00aaaa", "aa0000", "aa00aa", "aa5500", "aaaaaa", "555555", "5555ff", "55ff55", "55ffff", "ff5555",
+            "ff55ff", "ffff55", "ffffff",
+        ];
+        fn colours<'a>(v: &'a Value, out: &mut Vec<&'a str>) {
+            match v {
+                Value::String(s) if s.starts_with('#') => out.push(s),
+                Value::Array(a) => a.iter().for_each(|v| colours(v, out)),
+                Value::Object(o) => o.values().for_each(|v| colours(v, out)),
+                _ => {}
+            }
+        }
+        let text = BUILTIN.iter().find(|(id, _)| *id == "cga").map(|(_, text)| *text).unwrap();
+        let file: Value = serde_json::from_str(text).unwrap();
+        let mut found = Vec::new();
+        colours(&file, &mut found);
+        assert!(found.len() > keys().len(), "CGA sets every colour and its icon palette");
+        for c in found {
+            let rgb = c.get(1..7).unwrap_or_default().to_ascii_lowercase();
+            assert!(CGA.contains(&rgb.as_str()) && parse_color(c).is_some(), "{c} is not a CGA colour");
+        }
+        let theme = find("cga", &[]).unwrap();
+        assert_eq!((theme.name.as_str(), theme.colors.len()), ("CGA", keys().len()), "CGA sets every colour");
     }
 
     /// #4868: a theme that sets none of the File view's colours (all the built-in ones) gets them
