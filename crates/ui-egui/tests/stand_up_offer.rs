@@ -284,6 +284,13 @@ fn an_upright_file_from_an_unknown_exporter_gets_nothing() {
 }
 
 #[test]
+fn an_unclear_file_from_an_unknown_exporter_still_gets_the_note() {
+    // A cube says nothing about which way is up; a Y-up file is never left without an offer.
+    let h = opened_box([40.0, 40.0, 40.0], UNKNOWN, |_| {});
+    assert!(h.app.stand_up.is_some() && h.app.stand_up_note, "a cube gets the note");
+}
+
+#[test]
 fn which_way_is_up_weighs_flat_area_then_the_box() {
     use solidcraft_ui_egui::stand_up::{Upright, upright};
     assert_eq!(upright(1600.0, 400.0, [40.0, 10.0, 40.0]), Upright::Z, "a broad base facing down Z");

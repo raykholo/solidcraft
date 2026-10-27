@@ -170,13 +170,14 @@ pub fn offer(app: &mut SolveApp, path: &str, before: &[String], result: Option<&
     // A header naming a Y-up exporter asks in the dialog, with the reason, unless the bodies
     // clearly stand on Z already (it may have been saved Z up): then only the note. The file is
     // never turned without asking. Any other program gets what Preferences › Design says: the
-    // note only when the bodies seem to lie on their back, the dialog always, or nothing. Ask
-    // is the behaviour from before #7717 for every file: the dialog, without looking.
+    // note unless the bodies clearly stand on Z (an unclear shape still gets it, so a Y-up file
+    // is never left without an offer), the dialog always, or nothing. Ask is the behaviour from
+    // before #7717 for every file: the dialog, without looking.
     let known_y_up = text("exporter_up") == Some("y");
     let note = match app.preferences.stand_up_unknown {
         StandUpUnknown::Ask => false,
         _ if known_y_up => estimate(app, &bodies) == Upright::Z,
-        StandUpUnknown::Note if estimate(app, &bodies) == Upright::Y => true,
+        StandUpUnknown::Note if estimate(app, &bodies) != Upright::Z => true,
         StandUpUnknown::Note | StandUpUnknown::Off => return,
     };
     let subcomponents = result.and_then(|r| r.get("subcomponents")).and_then(serde_json::Value::as_u64).unwrap_or(0);
