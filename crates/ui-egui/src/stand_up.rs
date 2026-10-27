@@ -243,13 +243,14 @@ pub(crate) fn note_due(app: &mut SolveApp, ctx: &egui::Context) -> Option<String
     Some(crate::i18n::tr_label(text).to_string())
 }
 
-/// The handles of the note's buttons, in order: the quarter turn, then the dismissal. They are
-/// published for scripts; `stand_up:stand` is the dialog's handle too.
-pub const NOTE_HANDLES: [&str; 2] = ["stand_up:stand", "stand_up:dismiss"];
+/// The handles of the note's buttons, in order: the quarter turn, turning the offer off, then the
+/// dismissal. They are published for scripts; `stand_up:stand` and `stand_up:never` are the
+/// dialog's handles too.
+pub const NOTE_HANDLES: [&str; 3] = ["stand_up:stand", "stand_up:never", "stand_up:dismiss"];
 
 /// The note's button labels, in the order of `NOTE_HANDLES`.
-pub(crate) fn note_labels() -> [String; 2] {
-    [crate::i18n::tr_label("Stand it up").to_string(), crate::i18n::tr("ui.close").to_string()]
+pub(crate) fn note_labels() -> [String; 3] {
+    [crate::i18n::tr_label("Stand it up").to_string(), crate::i18n::tr_label("Don't ask again").to_string(), crate::i18n::tr("ui.close").to_string()]
 }
 
 /// The note was drawn at `rect`: a pointer on it keeps it from going.
@@ -266,6 +267,11 @@ pub(crate) fn note_act(app: &mut SolveApp, index: usize) {
             if let Err(e) = stand_up(app) {
                 app.set_status(e, true);
             }
+        }
+        // As the dialog's Don't ask again: Preferences › Design turns the offer back on.
+        1 => {
+            leave(app);
+            app.preferences.offer_stand_up = false;
         }
         _ => leave(app),
     }

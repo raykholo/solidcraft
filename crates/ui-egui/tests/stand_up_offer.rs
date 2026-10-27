@@ -2,7 +2,7 @@
 //! as `stand_up:stand`, `stand_up:leave` and `stand_up:never`, it stays up through a camera move
 //! and a command until answered, and `ui.prefs {"stand_up": false}` leaves the file as it is.
 //! A file from a program not known to save Y up gets a small note instead by default (#7717),
-//! with `stand_up:stand` and `stand_up:dismiss`; Preferences picks the dialog or nothing.
+//! with `stand_up:stand`, `stand_up:never` and `stand_up:dismiss`; Preferences picks the dialog or nothing.
 use serde_json::json;
 use solidcraft_ui_egui::prefs::StandUpUnknown;
 use solidcraft_ui_egui::scenario::Harness;
@@ -256,7 +256,7 @@ fn an_unknown_exporter_lying_on_its_back_gets_the_note_not_the_dialog() {
     assert!(h.app.stand_up_note, "as the note");
     assert!(painted(&h, "Did this part open the wrong way up?"));
     assert!(h.widget("Stand this part up?").is_none(), "no dialog");
-    for name in ["stand_up:stand", "stand_up:dismiss"] {
+    for name in ["stand_up:stand", "stand_up:never", "stand_up:dismiss"] {
         assert!(h.at(&json!({"handle": name})).is_ok(), "{name} is published");
     }
     assert!(h.at(&json!({"handle": "stand_up:leave"})).is_err(), "the dialog's buttons are not");
@@ -313,6 +313,16 @@ fn the_notes_stand_it_up_turns_once_and_undo_restores() {
     assert!((height(&h) - 10.0).abs() < 1e-6, "stood up: {}", height(&h));
     h.app.run("edit.undo", json!({})).unwrap();
     assert!((height(&h) - 40.0).abs() < 1e-6, "one undo step: {}", height(&h));
+}
+
+#[test]
+fn the_notes_dont_ask_again_turns_the_offer_off() {
+    let mut h = opened_box(ON_ITS_BACK, UNKNOWN, |_| {});
+    h.run(&json!([{"click": {"handle": "stand_up:never"}}])).unwrap();
+    h.frames(3);
+    assert!(h.app.stand_up.is_none(), "closed");
+    assert!(!h.app.preferences.offer_stand_up, "the offer is off, as the dialog's Don't ask again");
+    assert!((height(&h) - 40.0).abs() < 1e-6, "not turned: {}", height(&h));
 }
 
 #[test]

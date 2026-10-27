@@ -4686,7 +4686,8 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<
     // (#7717): the shared toast with its buttons, which go by themselves and never block input.
     if let Some(text) = crate::stand_up::note_due(app, ui.ctx()) {
         let labels = crate::stand_up::note_labels();
-        let actions = [(labels[0].as_str(), ToastKind::Primary), (labels[1].as_str(), ToastKind::Dismiss)];
+        let actions =
+            [(labels[0].as_str(), ToastKind::Primary), (labels[1].as_str(), ToastKind::Secondary), (labels[2].as_str(), ToastKind::Dismiss)];
         if let Some((r, clicked, buttons)) = paint_toast_with(ui, free, text, ToastLead::Dot(false), &actions) {
             crate::scenario::publish_rect("toast:stand_up", r);
             for (handle, button) in crate::stand_up::NOTE_HANDLES.iter().zip(&buttons) {
