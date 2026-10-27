@@ -313,7 +313,7 @@ theme_keys! {
         sketch_ink, sketch_soft, surface_fill, surface_ink, surface_soft, mesh_fill, mesh_ink, mesh_soft, form_fill, form_tab_ink, form_soft, sheet_fill, sheet_ink, sheet_soft, render_fill, render_ink, render_soft, tab_on_fill_dark,
         app_bar_separator, surface_accent, mesh_accent, form_accent, render_accent, on_accent, agent_ok, agent_busy, app_bar_hover_subtle,
         app_bar_hover_button, app_bar_hover_strong, app_bar_tab_active,
-        form_ink, form_dim, form_primary, form_error, form_error_fill, form_success, form_success_fill, dialog_body, dialog_footer, dialog_rule, control_fill, control_border, dialog_label, selected_ink, selected_bg,
+        form_ink, form_dim, form_primary, form_primary_fill, form_error, form_error_fill, form_success, form_success_fill, dialog_body, dialog_footer, dialog_rule, control_fill, control_border, dialog_label, selected_ink, selected_bg,
     ],
     many: [continuity, logo],
     icons: [highlight, agent, marker_halo],
@@ -487,6 +487,9 @@ pub fn resolve(theme: &ThemeFile) -> Tokens {
             s.copy_from_slice(&c);
         }
     }
+    if !theme.colors.contains_key("form_primary_fill") {
+        t.form_primary_fill = t.form_primary;
+    }
     for (key, value) in &theme.radii {
         if *value <= MAX_RADIUS
             && let Some(slot) = radius_slot(&mut t, key)
@@ -611,7 +614,7 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
 }
 
 /// The theme files that come with SolidCraft (original files; Gruvbox, Tokyo Night, Solarized, Nord, Nosferatu and Catppuccin map open-source palettes, MIT; Okibi and Akari map the Okibi design system; Clay and Clay Dark are original warm paper and charcoal palettes).
-const BUILTIN: [(&str, &str); 24] = [
+const BUILTIN: [(&str, &str); 25] = [
     ("gruvbox-dark", include_str!("../../../assets/styles/ui/themes/gruvbox-dark.json")),
     ("gruvbox-dark-hard", include_str!("../../../assets/styles/ui/themes/gruvbox-dark-hard.json")),
     ("gruvbox-dark-soft", include_str!("../../../assets/styles/ui/themes/gruvbox-dark-soft.json")),
@@ -619,6 +622,7 @@ const BUILTIN: [(&str, &str); 24] = [
     ("gruvbox-light-hard", include_str!("../../../assets/styles/ui/themes/gruvbox-light-hard.json")),
     ("gruvbox-light-soft", include_str!("../../../assets/styles/ui/themes/gruvbox-light-soft.json")),
     ("solidcraft-95", include_str!("../../../assets/styles/ui/themes/solidcraft-95.json")),
+    ("1-bit", include_str!("../../../assets/styles/ui/themes/1-bit.json")),
     ("platinum-9", include_str!("../../../assets/styles/ui/themes/platinum-9.json")),
     ("cupertino", include_str!("../../../assets/styles/ui/themes/cupertino.json")),
     ("green-phosphor", include_str!("../../../assets/styles/ui/themes/green-phosphor.json")),
@@ -803,14 +807,75 @@ mod tests {
         for file in builtin() {
             let t = resolve(file);
             assert!(t.icon_palette.is_some(), "{} has no icon palette", file.id);
+            // A two-colour theme (1-bit) can't give each workspace its own fill; it still has to
+            // keep every tab readable, below.
+            let two_colour = file.id == "1-bit";
             let mut fills = std::collections::HashSet::new();
             for tab in ["MODEL", "SURFACE", "MESH", "FORM", "SHEET METAL", "RENDER", "SKETCH"] {
                 let accent = TabAccent::for_tab(&t, tab);
-                assert!(fills.insert(accent.color), "{} repeats {tab}", file.id);
+                assert!(fills.insert(accent.color) || two_colour, "{} repeats {tab}", file.id);
                 assert!(contrast_ratio(accent.ink, accent.soft) >= 4.5, "{} {tab} soft text", file.id);
                 assert!(contrast_ratio(accent.on_fill(&t), accent.color) >= 4.5, "{} {tab} pill text", file.id);
             }
         }
+    }
+
+    #[test]
+    fn one_bit_is_complete_opaque_black_and_white() {
+        let file = find("1-bit", &[]).unwrap();
+        assert_eq!(file.name, "1-bit");
+        assert_eq!(file.base, Base::Light);
+        let t = resolve(file);
+        let exported = export(&file.name, file.base, &t);
+        let mut resolved = t;
+        for key in keys() {
+            for color in slot(&mut resolved, key).unwrap() {
+                let [r, g, b, _] = color.to_srgba_unmultiplied();
+                assert!(matches!([r, g, b], [0, 0, 0] | [255, 255, 255]), "{key}: {color:?}");
+            }
+            assert!(file.colors.contains_key(key), "missing {key}");
+        }
+        fn check(value: &Value) {
+            match value {
+                Value::String(color) if color.starts_with('#') => {
+                    assert!(matches!(color.as_str(), "#000000" | "#ffffff"), "{color}");
+                }
+                Value::Array(values) => values.iter().for_each(check),
+                Value::Object(values) => values.values().for_each(check),
+                _ => {}
+            }
+        }
+        check(&exported);
+        for role in crate::icon_svg::ROLE_NAMES.iter().filter(|role| **role != "gap") {
+            assert!(file.icon_palette.contains_key(*role), "missing icon role {role}");
+        }
+        for ramp in std::iter::once("solid").chain(crate::icon_svg::ACCENT_NAMES.iter().copied()) {
+            assert!(file.icon_palette.contains_key(ramp), "missing icon ramp {ramp}");
+        }
+        assert_eq!(radius_values(t), [0; 6]);
+    }
+
+    #[test]
+    fn one_bit_selection_and_viewport_tokens_have_full_contrast() {
+        let t = resolve(find("1-bit", &[]).unwrap());
+        for (ink, fill) in [
+            (t.text, t.panel),
+            (t.text_dim, t.field),
+            (t.icon, t.toolbar),
+            (t.app_bar_text, t.app_bar_tab_active),
+            (t.selected_ink, t.selected_bg),
+            (t.on_accent, t.hover),
+            (t.body_edge, t.body),
+            (t.sel_edge, t.body_selected),
+            (t.dimension, t.viewport_top),
+            (t.sketch, t.viewport_bottom),
+            (t.glyph_text, t.glyph_bg),
+            (t.dialog_label, t.dialog_body),
+        ] {
+            assert_eq!(crate::theme::contrast_ratio(ink, fill), 21.0);
+        }
+        assert_eq!((t.viewport_top, t.viewport_bottom, t.body), (Color32::WHITE, Color32::WHITE, Color32::WHITE));
+        assert_eq!((t.hover, t.selected_bg, t.body_selected), (Color32::BLACK, Color32::BLACK, Color32::BLACK));
     }
 
     #[test]

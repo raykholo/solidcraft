@@ -324,8 +324,27 @@ fn selection_field_has_three_distinct_looks_in_every_theme() {
         assert!(!accented(&filled), "{name}: a filled inactive input is not accented: {filled:?}");
         assert!(!accented(&empty), "{name}: an empty inactive input is not accented: {empty:?}");
         let outline = |l: &Look| l.0.last().copied().unwrap();
-        assert_ne!(outline(&filled).0, outline(&empty).0, "{name}: filled and empty fills differ");
-        assert_ne!(outline(&filled).1, outline(&empty).1, "{name}: filled and empty borders differ");
+        // Two colours can't give filled and empty their own fill and border on top of the accent;
+        // in 1-bit the text itself tells them apart (a count against the prompt).
+        if name == "1-bit" {
+            for look in [&active_filled, &active_empty, &filled, &empty] {
+                for &(fill, border) in &look.0 {
+                    for color in [fill, border] {
+                        assert!(matches!(color, egui::Color32::BLACK | egui::Color32::WHITE), "{name}: {look:?}");
+                    }
+                }
+            }
+            for look in [&active_filled, &active_empty] {
+                assert_eq!(outline(look).0, t.selected_bg);
+                assert_eq!(look.1, Some(t.selected_ink));
+            }
+            for look in [&filled, &empty] {
+                assert_eq!(outline(look), (egui::Color32::WHITE, egui::Color32::BLACK));
+            }
+        } else {
+            assert_ne!(outline(&filled).0, outline(&empty).0, "{name}: filled and empty fills differ");
+            assert_ne!(outline(&filled).1, outline(&empty).1, "{name}: filled and empty borders differ");
+        }
         assert_eq!(filled.1, Some(t.form_ink), "{name}: a filled input's count is in text colour");
         assert_eq!(empty.1, Some(t.form_dim), "{name}: an empty input's prompt is dim");
     }
