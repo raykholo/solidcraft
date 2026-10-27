@@ -1,0 +1,10 @@
+{
+  "en": {
+    "prefs.theme_follow": "Follow a theme file",
+    "prefs.theme_follow_error": "Not applied: {error}. The last good theme stays on.",
+    "prefs.theme_follow_launch": "Followed for this run only (--theme-file); reloaded whenever another tool rewrites it.",
+    "prefs.theme_follow_note": "Reloaded whenever another tool rewrites it. Choosing a theme stops following it.",
+    "prefs.theme_follow_off": "Off",
+    "prefs.theme_follow_stop": "Stop following"
+  }
+}
