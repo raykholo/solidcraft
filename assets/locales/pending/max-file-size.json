@@ -7,5 +7,248 @@
     "prefs.max_file_size_step": "STEP and import files",
     "prefs.max_file_size_web": "The web app opens STEP and import files up to 512 MB and designs up to 256 MB: a browser tab can't hold larger files. The desktop app can raise these limits.",
     "prefs.megabytes": "MB"
+  },
+  "ar": {
+    "prefs.max_file_size": "أكبر ملف يمكن فتحه",
+    "prefs.max_file_size_design": "ملفات التصميم",
+    "prefs.max_file_size_flag": "بدأ هذا التشغيل بالخيار --max-file-size {size}، ويسري حتى إغلاق SolidCraft. تسري هذه الإعدادات عند تشغيله دون هذا الخيار.",
+    "prefs.max_file_size_note": "القيم الافتراضية: 512 MB و256 MB؛ الحد الأقصى 16 GB. يتطلب فتح ملف ذاكرة تعادل حجمه عدة مرات. قد يحتاج التصميم الذي يحتفظ باستيراد كبير إلى حد أعلى لملف التصميم لحفظه وإعادة فتحه.",
+    "prefs.max_file_size_step": "ملفات STEP والاستيراد",
+    "prefs.max_file_size_web": "يفتح تطبيق الويب ملفات STEP والاستيراد حتى 512 MB والتصاميم حتى 256 MB؛ لا يتسع تبويب المتصفح لملفات أكبر. يمكن رفع هذه الحدود في تطبيق سطح المكتب.",
+    "prefs.megabytes": "MB"
+  },
+  "cs": {
+    "prefs.max_file_size": "Největší soubor k otevření",
+    "prefs.max_file_size_design": "Soubory návrhů",
+    "prefs.max_file_size_flag": "Toto spuštění používá --max-file-size {size} až do zavření SolidCraft. Tato nastavení platí při spuštění bez této volby.",
+    "prefs.max_file_size_note": "Výchozí: 512 MB a 256 MB; nejvýše 16 GB. Otevření souboru vyžaduje několikanásobek jeho velikosti v paměti. Návrh s velkým importem může pro uložení a opětovné otevření potřebovat vyšší limit souboru návrhu.",
+    "prefs.max_file_size_step": "Soubory STEP a importu",
+    "prefs.max_file_size_web": "Webová aplikace otevírá soubory STEP a importu do 512 MB a návrhy do 256 MB: karta prohlížeče větší soubory nepojme. V aplikaci pro počítač lze limity zvýšit.",
+    "prefs.megabytes": "MB"
+  },
+  "da": {
+    "prefs.max_file_size": "Største fil, der kan åbnes",
+    "prefs.max_file_size_design": "Designfiler",
+    "prefs.max_file_size_flag": "Denne kørsel blev startet med --max-file-size {size}, som gælder, indtil SolidCraft lukkes. Disse indstillinger gælder ved start uden denne valgmulighed.",
+    "prefs.max_file_size_note": "Standard: 512 MB og 256 MB; højst 16 GB. Åbning af en fil kræver flere gange dens størrelse i hukommelse. Et design med en stor import kan kræve en højere grænse for designfiler for at kunne gemmes og åbnes igen.",
+    "prefs.max_file_size_step": "STEP- og importfiler",
+    "prefs.max_file_size_web": "Webappen åbner STEP- og importfiler op til 512 MB og design op til 256 MB: en browserfane kan ikke rumme større filer. Grænserne kan hæves i skrivebordsappen.",
+    "prefs.megabytes": "MB"
+  },
+  "de": {
+    "prefs.max_file_size": "Maximale Dateigröße zum Öffnen",
+    "prefs.max_file_size_design": "Designdateien",
+    "prefs.max_file_size_flag": "Dieser Lauf wurde mit --max-file-size {size} gestartet. Der Wert gilt, bis SolidCraft geschlossen wird. Diese Einstellungen gelten beim Start ohne diese Option.",
+    "prefs.max_file_size_note": "Standard: 512 MB und 256 MB; höchstens 16 GB. Das Öffnen einer Datei benötigt ein Mehrfaches ihrer Größe im Arbeitsspeicher. Ein Design mit großem Import benötigt zum Speichern und erneuten Öffnen eventuell eine höhere Grenze für Designdateien.",
+    "prefs.max_file_size_step": "STEP- und Importdateien",
+    "prefs.max_file_size_web": "Die Web-App öffnet STEP- und Importdateien bis 512 MB und Designs bis 256 MB: Ein Browser-Tab kann keine größeren Dateien aufnehmen. In der Desktop-App lassen sich diese Grenzen erhöhen.",
+    "prefs.megabytes": "MB"
+  },
+  "es": {
+    "prefs.max_file_size": "Tamaño máximo de archivo al abrir",
+    "prefs.max_file_size_design": "Archivos de diseño",
+    "prefs.max_file_size_flag": "Esta ejecución se inició con --max-file-size {size}, que se aplica hasta cerrar SolidCraft. Estos ajustes se aplican al iniciar sin esa opción.",
+    "prefs.max_file_size_note": "Valores predeterminados: 512 MB y 256 MB; máximo 16 GB. Abrir un archivo requiere varias veces su tamaño en memoria. Un diseño que conserva una importación grande puede necesitar un límite mayor para guardarse y volver a abrirse.",
+    "prefs.max_file_size_step": "Archivos STEP y de importación",
+    "prefs.max_file_size_web": "La aplicación web abre archivos STEP y de importación de hasta 512 MB y diseños de hasta 256 MB: una pestaña del navegador no admite archivos mayores. La aplicación de escritorio permite aumentar estos límites.",
+    "prefs.megabytes": "MB"
+  },
+  "fr": {
+    "prefs.max_file_size": "Taille maximale à ouvrir",
+    "prefs.max_file_size_design": "Fichiers de conception",
+    "prefs.max_file_size_flag": "Ce lancement utilise --max-file-size {size} jusqu’à la fermeture de SolidCraft. Ces réglages s’appliquent au lancement sans cette option.",
+    "prefs.max_file_size_note": "Valeurs par défaut : 512 Mo et 256 Mo ; maximum 16 Go. Ouvrir un fichier exige plusieurs fois sa taille en mémoire. Une conception conservant une importation volumineuse peut nécessiter une limite supérieure pour être enregistrée et rouverte.",
+    "prefs.max_file_size_step": "Fichiers STEP et d’importation",
+    "prefs.max_file_size_web": "L’application web ouvre les fichiers STEP et d’importation jusqu’à 512 Mo et les conceptions jusqu’à 256 Mo : un onglet du navigateur ne peut pas contenir de fichiers plus volumineux. L’application de bureau permet de relever ces limites.",
+    "prefs.megabytes": "Mo"
+  },
+  "gl": {
+    "prefs.max_file_size": "Tamaño máximo de ficheiro ao abrir",
+    "prefs.max_file_size_design": "Ficheiros de deseño",
+    "prefs.max_file_size_flag": "Esta execución iniciouse con --max-file-size {size}, que se aplica ata pechar SolidCraft. Estes axustes aplícanse ao iniciar sen esa opción.",
+    "prefs.max_file_size_note": "Valores predeterminados: 512 MB e 256 MB; máximo 16 GB. Abrir un ficheiro require varias veces o seu tamaño en memoria. Un deseño que conserva unha importación grande pode precisar un límite maior para gardarse e abrirse de novo.",
+    "prefs.max_file_size_step": "Ficheiros STEP e de importación",
+    "prefs.max_file_size_web": "A aplicación web abre ficheiros STEP e de importación de ata 512 MB e deseños de ata 256 MB: unha lapela do navegador non admite ficheiros maiores. A aplicación de escritorio permite aumentar estes límites.",
+    "prefs.megabytes": "MB"
+  },
+  "he": {
+    "prefs.max_file_size": "גודל קובץ מרבי לפתיחה",
+    "prefs.max_file_size_design": "קובצי תכן",
+    "prefs.max_file_size_flag": "ההפעלה הנוכחית החלה עם --max-file-size {size}, שחל עד סגירת SolidCraft. הגדרות אלה חלות בהפעלה ללא אפשרות זו.",
+    "prefs.max_file_size_note": "ברירות מחדל: 512 MB ו־256 MB; לכל היותר 16 GB. פתיחת קובץ דורשת זיכרון בנפח גדול פי כמה מגודלו. תכן ששומר ייבוא גדול עשוי לדרוש מגבלה גבוהה יותר לקובצי תכן כדי לשמור ולפתוח אותו מחדש.",
+    "prefs.max_file_size_step": "קובצי STEP וייבוא",
+    "prefs.max_file_size_web": "יישום הדפדפן פותח קובצי STEP וייבוא עד 512 MB וקובצי תכן עד 256 MB: לשונית דפדפן אינה יכולה להכיל קבצים גדולים יותר. ביישום למחשב ניתן להעלות מגבלות אלה.",
+    "prefs.megabytes": "MB"
+  },
+  "hu": {
+    "prefs.max_file_size": "Megnyitható fájl legnagyobb mérete",
+    "prefs.max_file_size_design": "Tervfájlok",
+    "prefs.max_file_size_flag": "Ez a futtatás a --max-file-size {size} kapcsolóval indult, amely a SolidCraft bezárásáig érvényes. Ezek a beállítások a kapcsoló nélküli indításkor érvényesek.",
+    "prefs.max_file_size_note": "Alapértékek: 512 MB és 256 MB; legfeljebb 16 GB. Egy fájl megnyitásához a mérete többszörösének megfelelő memória kell. Nagy importot tároló terv mentéséhez és újbóli megnyitásához magasabb tervfájlkorlát lehet szükséges.",
+    "prefs.max_file_size_step": "STEP- és importfájlok",
+    "prefs.max_file_size_web": "A webalkalmazás legfeljebb 512 MB-os STEP- és importfájlokat, valamint 256 MB-os terveket nyit meg: egy böngészőlap nem tud nagyobb fájlokat tárolni. Az asztali alkalmazásban e korlátok növelhetők.",
+    "prefs.megabytes": "MB"
+  },
+  "id": {
+    "prefs.max_file_size": "Ukuran file maksimum untuk dibuka",
+    "prefs.max_file_size_design": "File desain",
+    "prefs.max_file_size_flag": "Sesi ini dimulai dengan --max-file-size {size}, yang berlaku hingga SolidCraft ditutup. Pengaturan ini berlaku saat dimulai tanpa opsi tersebut.",
+    "prefs.max_file_size_note": "Bawaan: 512 MB dan 256 MB; maksimum 16 GB. Membuka file memerlukan memori beberapa kali ukurannya. Desain yang menyimpan impor besar mungkin memerlukan batas file desain lebih tinggi agar dapat disimpan dan dibuka kembali.",
+    "prefs.max_file_size_step": "File STEP dan impor",
+    "prefs.max_file_size_web": "Aplikasi web membuka file STEP dan impor hingga 512 MB serta desain hingga 256 MB: tab peramban tidak dapat menampung file yang lebih besar. Aplikasi desktop dapat menaikkan batas ini.",
+    "prefs.megabytes": "MB"
+  },
+  "it": {
+    "prefs.max_file_size": "Dimensione massima dei file da aprire",
+    "prefs.max_file_size_design": "File di progettazione",
+    "prefs.max_file_size_flag": "Questo avvio usa --max-file-size {size}, valido fino alla chiusura di SolidCraft. Queste impostazioni si applicano all’avvio senza tale opzione.",
+    "prefs.max_file_size_note": "Valori predefiniti: 512 MB e 256 MB; massimo 16 GB. Aprire un file richiede memoria pari a più volte la sua dimensione. Un progetto che conserva un’importazione grande può richiedere un limite maggiore per essere salvato e riaperto.",
+    "prefs.max_file_size_step": "File STEP e di importazione",
+    "prefs.max_file_size_web": "L’app web apre file STEP e di importazione fino a 512 MB e progetti fino a 256 MB: una scheda del browser non può contenere file più grandi. L’app desktop permette di aumentare questi limiti.",
+    "prefs.megabytes": "MB"
+  },
+  "ja": {
+    "prefs.max_file_size": "開けるファイルの最大サイズ",
+    "prefs.max_file_size_design": "デザインファイル",
+    "prefs.max_file_size_flag": "今回は --max-file-size {size} を指定して起動したため、SolidCraft を閉じるまでその値が適用されます。この設定は、そのオプションなしで起動したときに適用されます。",
+    "prefs.max_file_size_note": "既定値は 512 MB と 256 MB、上限は 16 GB です。ファイルを開くには、サイズの数倍のメモリが必要です。大きなインポートを保持するデザインの保存と再読み込みには、デザインファイルの上限を上げる必要がある場合があります。",
+    "prefs.max_file_size_step": "STEP・インポートファイル",
+    "prefs.max_file_size_web": "ウェブ版で開けるのは STEP・インポートファイルが 512 MB、デザインが 256 MB までです。ブラウザーのタブはそれ以上のファイルを保持できません。デスクトップ版では上限を上げられます。",
+    "prefs.megabytes": "MB"
+  },
+  "ko": {
+    "prefs.max_file_size": "열 수 있는 최대 파일 크기",
+    "prefs.max_file_size_design": "디자인 파일",
+    "prefs.max_file_size_flag": "이번 실행은 --max-file-size {size}로 시작했으며 SolidCraft를 닫을 때까지 적용됩니다. 이 설정은 해당 옵션 없이 시작할 때 적용됩니다.",
+    "prefs.max_file_size_note": "기본값: 512 MB 및 256 MB, 최대 16 GB. 파일을 열려면 파일 크기의 몇 배에 달하는 메모리가 필요합니다. 큰 가져오기 데이터를 보관하는 디자인은 저장하고 다시 열기 위해 디자인 파일 한도를 높여야 할 수 있습니다.",
+    "prefs.max_file_size_step": "STEP 및 가져오기 파일",
+    "prefs.max_file_size_web": "웹 앱은 STEP 및 가져오기 파일을 512 MB까지, 디자인을 256 MB까지 엽니다. 브라우저 탭은 더 큰 파일을 담을 수 없습니다. 데스크톱 앱에서는 이 한도를 높일 수 있습니다.",
+    "prefs.megabytes": "MB"
+  },
+  "ms": {
+    "prefs.max_file_size": "Saiz fail maksimum untuk dibuka",
+    "prefs.max_file_size_design": "Fail reka bentuk",
+    "prefs.max_file_size_flag": "Pelaksanaan ini bermula dengan --max-file-size {size}, yang terpakai sehingga SolidCraft ditutup. Tetapan ini terpakai apabila dimulakan tanpa pilihan itu.",
+    "prefs.max_file_size_note": "Lalai: 512 MB dan 256 MB; maksimum 16 GB. Membuka fail memerlukan memori beberapa kali saiznya. Reka bentuk yang menyimpan import besar mungkin memerlukan had fail reka bentuk lebih tinggi untuk disimpan dan dibuka semula.",
+    "prefs.max_file_size_step": "Fail STEP dan import",
+    "prefs.max_file_size_web": "Aplikasi web membuka fail STEP dan import sehingga 512 MB serta reka bentuk sehingga 256 MB: tab pelayar tidak dapat memuatkan fail lebih besar. Aplikasi desktop boleh menaikkan had ini.",
+    "prefs.megabytes": "MB"
+  },
+  "nb": {
+    "prefs.max_file_size": "Største fil som kan åpnes",
+    "prefs.max_file_size_design": "Designfiler",
+    "prefs.max_file_size_flag": "Denne kjøringen startet med --max-file-size {size}, som gjelder til SolidCraft lukkes. Disse innstillingene gjelder ved oppstart uten dette valget.",
+    "prefs.max_file_size_note": "Standard: 512 MB og 256 MB; høyst 16 GB. Å åpne en fil krever flere ganger filstørrelsen i minne. Et design med en stor import kan trenge en høyere grense for designfiler for å kunne lagres og åpnes igjen.",
+    "prefs.max_file_size_step": "STEP- og importfiler",
+    "prefs.max_file_size_web": "Nettappen åpner STEP- og importfiler opptil 512 MB og design opptil 256 MB: en nettleserfane kan ikke romme større filer. Grensene kan økes i skrivebordsappen.",
+    "prefs.megabytes": "MB"
+  },
+  "nl": {
+    "prefs.max_file_size": "Maximale bestandsgrootte om te openen",
+    "prefs.max_file_size_design": "Ontwerpbestanden",
+    "prefs.max_file_size_flag": "Deze uitvoering is gestart met --max-file-size {size}, dat geldt totdat SolidCraft sluit. Deze instellingen gelden bij het starten zonder die optie.",
+    "prefs.max_file_size_note": "Standaard: 512 MB en 256 MB; maximaal 16 GB. Een bestand openen vereist meerdere keren de bestandsgrootte aan geheugen. Een ontwerp met een grote import kan een hogere limiet voor ontwerpbestanden nodig hebben om te worden opgeslagen en heropend.",
+    "prefs.max_file_size_step": "STEP- en importbestanden",
+    "prefs.max_file_size_web": "De webapp opent STEP- en importbestanden tot 512 MB en ontwerpen tot 256 MB: een browsertabblad kan geen grotere bestanden bevatten. In de desktopapp kunnen deze limieten worden verhoogd.",
+    "prefs.megabytes": "MB"
+  },
+  "pl": {
+    "prefs.max_file_size": "Maksymalny rozmiar otwieranego pliku",
+    "prefs.max_file_size_design": "Pliki projektów",
+    "prefs.max_file_size_flag": "To uruchomienie używa --max-file-size {size} aż do zamknięcia SolidCraft. Te ustawienia obowiązują przy uruchomieniu bez tej opcji.",
+    "prefs.max_file_size_note": "Domyślnie: 512 MB i 256 MB; maksymalnie 16 GB. Otwarcie pliku wymaga pamięci kilkakrotnie większej od jego rozmiaru. Projekt z dużym importem może wymagać wyższego limitu pliku projektu, aby go zapisać i ponownie otworzyć.",
+    "prefs.max_file_size_step": "Pliki STEP i importu",
+    "prefs.max_file_size_web": "Aplikacja internetowa otwiera pliki STEP i importu do 512 MB oraz projekty do 256 MB: karta przeglądarki nie pomieści większych plików. W aplikacji komputerowej można zwiększyć te limity.",
+    "prefs.megabytes": "MB"
+  },
+  "pt-BR": {
+    "prefs.max_file_size": "Tamanho máximo de arquivo a abrir",
+    "prefs.max_file_size_design": "Arquivos de projeto",
+    "prefs.max_file_size_flag": "Esta execução foi iniciada com --max-file-size {size}, que vale até fechar o SolidCraft. Estas configurações se aplicam ao iniciar sem essa opção.",
+    "prefs.max_file_size_note": "Padrões: 512 MB e 256 MB; máximo de 16 GB. Abrir um arquivo exige várias vezes seu tamanho em memória. Um projeto que mantém uma importação grande pode precisar de um limite maior para ser salvo e reaberto.",
+    "prefs.max_file_size_step": "Arquivos STEP e de importação",
+    "prefs.max_file_size_web": "O aplicativo web abre arquivos STEP e de importação de até 512 MB e projetos de até 256 MB: uma aba do navegador não comporta arquivos maiores. O aplicativo para desktop permite aumentar esses limites.",
+    "prefs.megabytes": "MB"
+  },
+  "ro": {
+    "prefs.max_file_size": "Dimensiunea maximă a fișierului de deschis",
+    "prefs.max_file_size_design": "Fișiere de proiect",
+    "prefs.max_file_size_flag": "Această rulare a pornit cu --max-file-size {size}, valabil până la închiderea SolidCraft. Aceste setări se aplică la pornirea fără această opțiune.",
+    "prefs.max_file_size_note": "Valori implicite: 512 MB și 256 MB; maximum 16 GB. Deschiderea unui fișier necesită memorie de câteva ori mai mare decât dimensiunea sa. Un proiect care păstrează un import mare poate necesita o limită mai mare pentru a fi salvat și redeschis.",
+    "prefs.max_file_size_step": "Fișiere STEP și de import",
+    "prefs.max_file_size_web": "Aplicația web deschide fișiere STEP și de import de până la 512 MB și proiecte de până la 256 MB: o filă de browser nu poate conține fișiere mai mari. Aplicația desktop permite creșterea acestor limite.",
+    "prefs.megabytes": "MB"
+  },
+  "ru": {
+    "prefs.max_file_size": "Максимальный размер открываемого файла",
+    "prefs.max_file_size_design": "Файлы дизайна",
+    "prefs.max_file_size_flag": "Этот запуск использует --max-file-size {size} до закрытия SolidCraft. Эти настройки действуют при запуске без этого параметра.",
+    "prefs.max_file_size_note": "По умолчанию: 512 МБ и 256 МБ; максимум 16 ГБ. Для открытия файла нужно в несколько раз больше памяти, чем его размер. Дизайну с большим импортом может потребоваться больший предел размера файла дизайна для сохранения и повторного открытия.",
+    "prefs.max_file_size_step": "Файлы STEP и импорта",
+    "prefs.max_file_size_web": "Веб-приложение открывает файлы STEP и импорта до 512 МБ и дизайны до 256 МБ: вкладка браузера не вмещает более крупные файлы. В настольном приложении эти пределы можно увеличить.",
+    "prefs.megabytes": "МБ"
+  },
+  "sv": {
+    "prefs.max_file_size": "Största fil som kan öppnas",
+    "prefs.max_file_size_design": "Konstruktionsfiler",
+    "prefs.max_file_size_flag": "Denna körning startades med --max-file-size {size}, som gäller tills SolidCraft stängs. Dessa inställningar gäller vid start utan det alternativet.",
+    "prefs.max_file_size_note": "Standard: 512 MB och 256 MB; högst 16 GB. Att öppna en fil kräver flera gånger dess storlek i minne. En konstruktion med en stor import kan behöva en högre gräns för konstruktionsfiler för att kunna sparas och öppnas igen.",
+    "prefs.max_file_size_step": "STEP- och importfiler",
+    "prefs.max_file_size_web": "Webbappen öppnar STEP- och importfiler upp till 512 MB och konstruktioner upp till 256 MB: en webbläsarflik kan inte rymma större filer. Gränserna kan höjas i skrivbordsappen.",
+    "prefs.megabytes": "MB"
+  },
+  "tr": {
+    "prefs.max_file_size": "Açılabilecek en büyük dosya",
+    "prefs.max_file_size_design": "Tasarım dosyaları",
+    "prefs.max_file_size_flag": "Bu çalıştırma --max-file-size {size} ile başlatıldı; SolidCraft kapanana kadar geçerlidir. Bu ayarlar, bu seçenek olmadan başlatıldığında uygulanır.",
+    "prefs.max_file_size_note": "Varsayılanlar: 512 MB ve 256 MB; en fazla 16 GB. Dosya açmak, boyutunun birkaç katı bellek gerektirir. Büyük bir içe aktarımı tutan tasarımın kaydedilip yeniden açılması için daha yüksek bir tasarım dosyası sınırı gerekebilir.",
+    "prefs.max_file_size_step": "STEP ve içe aktarma dosyaları",
+    "prefs.max_file_size_web": "Web uygulaması 512 MB’a kadar STEP ve içe aktarma dosyalarını, 256 MB’a kadar tasarımları açar: tarayıcı sekmesi daha büyük dosyaları barındıramaz. Masaüstü uygulamasında bu sınırlar artırılabilir.",
+    "prefs.megabytes": "MB"
+  },
+  "uk": {
+    "prefs.max_file_size": "Найбільший файл для відкриття",
+    "prefs.max_file_size_design": "Файли проєктів",
+    "prefs.max_file_size_flag": "Цей запуск використовує --max-file-size {size} до закриття SolidCraft. Ці налаштування діють під час запуску без цього параметра.",
+    "prefs.max_file_size_note": "Типово: 512 МБ і 256 МБ; щонайбільше 16 ГБ. Для відкриття файлу потрібно в кілька разів більше пам’яті, ніж його розмір. Проєкт із великим імпортом може потребувати вищої межі розміру файлу проєкту для збереження й повторного відкриття.",
+    "prefs.max_file_size_step": "Файли STEP та імпорту",
+    "prefs.max_file_size_web": "Вебзастосунок відкриває файли STEP та імпорту до 512 МБ і проєкти до 256 МБ: вкладка браузера не вміщує більші файли. У настільному застосунку ці межі можна збільшити.",
+    "prefs.megabytes": "МБ"
+  },
+  "vi": {
+    "prefs.max_file_size": "Kích thước tệp tối đa để mở",
+    "prefs.max_file_size_design": "Tệp thiết kế",
+    "prefs.max_file_size_flag": "Lần chạy này bắt đầu với --max-file-size {size}, có hiệu lực đến khi đóng SolidCraft. Các cài đặt này áp dụng khi khởi động không có tùy chọn đó.",
+    "prefs.max_file_size_note": "Mặc định: 512 MB và 256 MB; tối đa 16 GB. Mở tệp cần lượng bộ nhớ gấp nhiều lần kích thước tệp. Thiết kế giữ dữ liệu nhập lớn có thể cần giới hạn tệp thiết kế cao hơn để lưu và mở lại.",
+    "prefs.max_file_size_step": "Tệp STEP và tệp nhập",
+    "prefs.max_file_size_web": "Ứng dụng web mở tệp STEP và tệp nhập tối đa 512 MB, thiết kế tối đa 256 MB: thẻ trình duyệt không chứa được tệp lớn hơn. Ứng dụng máy tính cho phép tăng các giới hạn này.",
+    "prefs.megabytes": "MB"
+  },
+  "zh": {
+    "prefs.max_file_size": "可打开的最大文件",
+    "prefs.max_file_size_design": "设计文件",
+    "prefs.max_file_size_flag": "本次启动指定了 --max-file-size {size}，该值在关闭 SolidCraft 前有效。不带此选项启动时才会应用这些设置。",
+    "prefs.max_file_size_note": "默认值：512 MB 和 256 MB；上限为 16 GB。打开文件需要数倍于文件大小的内存。保留大型导入数据的设计可能需要提高设计文件上限，才能保存并重新打开。",
+    "prefs.max_file_size_step": "STEP 和导入文件",
+    "prefs.max_file_size_web": "网页版可打开最大 512 MB 的 STEP 和导入文件，以及最大 256 MB 的设计：浏览器标签页无法容纳更大的文件。桌面版可提高这些上限。",
+    "prefs.megabytes": "MB"
+  },
+  "zh-TW": {
+    "prefs.max_file_size": "可開啟的最大檔案",
+    "prefs.max_file_size_design": "設計檔案",
+    "prefs.max_file_size_flag": "本次啟動指定了 --max-file-size {size}，此值在關閉 SolidCraft 前有效。不帶此選項啟動時才會套用這些設定。",
+    "prefs.max_file_size_note": "預設值：512 MB 和 256 MB；上限為 16 GB。開啟檔案需要數倍於檔案大小的記憶體。保留大型匯入資料的設計可能需要提高設計檔案上限，才能儲存並重新開啟。",
+    "prefs.max_file_size_step": "STEP 和匯入檔案",
+    "prefs.max_file_size_web": "網頁版可開啟最大 512 MB 的 STEP 和匯入檔案，以及最大 256 MB 的設計：瀏覽器分頁無法容納更大的檔案。桌面版可提高這些上限。",
+    "prefs.megabytes": "MB"
+  },
+  "en-GB": {
+    "prefs.max_file_size": "Largest file to open",
+    "prefs.max_file_size_design": "Design files",
+    "prefs.max_file_size_flag": "This run started with --max-file-size {size}, which applies until SolidCraft closes. These settings apply when it starts without it.",
+    "prefs.max_file_size_note": "Defaults: 512 MB and 256 MB; at most 16 GB. Opening a file takes several times its size in memory. A design that keeps a large import may need a higher design file limit to save and reopen.",
+    "prefs.max_file_size_step": "STEP and import files",
+    "prefs.max_file_size_web": "The web app opens STEP and import files up to 512 MB and designs up to 256 MB: a browser tab can't hold larger files. The desktop app can raise these limits.",
+    "prefs.megabytes": "MB"
   }
 }
