@@ -68,6 +68,19 @@ impl Base {
     }
 }
 
+/// Optional decoration requested by a theme. Fixed limits are owned by the renderer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Background {
+    pub effect: BackgroundEffect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundEffect {
+    Rain,
+}
+
 /// A theme: its id (the `theme` preference's value), name, base, optional radii and colour overrides, each a
 /// `#rrggbb` / `#rrggbbaa` string or a list of them, keyed by [`keys`].
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -76,6 +89,8 @@ pub struct ThemeFile {
     pub name: String,
     pub base: Base,
     pub colors: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Background>,
     /// Optional corner radii in logical UI points. Missing entries keep the base values.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub radii: BTreeMap<String, u8>,
@@ -453,7 +468,14 @@ pub fn from_value(v: &Value) -> Result<ThemeFile, String> {
         Some(_) => return Err("`icon_palette` must be an object of SVG roles and ramps".into()),
     };
     parse_icon_palette(&icon_palette)?;
-    Ok(ThemeFile { id: slug(name), name: name.to_string(), base, colors: src.into_iter().collect(), radii, borders, icon_palette })
+    let background = match v.get("background") {
+        None => None,
+        Some(Value::Object(settings)) if settings.len() == 1 && settings.get("effect").and_then(Value::as_str) == Some("rain") => {
+            Some(Background { effect: BackgroundEffect::Rain })
+        }
+        Some(_) => return Err(crate::i18n::tr("theme.background_invalid").to_string()),
+    };
+    Ok(ThemeFile { id: slug(name), name: name.to_string(), base, colors: src.into_iter().collect(), background, radii, borders, icon_palette })
 }
 
 /// An id from a name: lower-case letters, digits and dashes.
@@ -843,6 +865,33 @@ mod tests {
             assert_eq!(custom_tokens.nav_tip_key_border, parse_color("#01020380").unwrap());
             assert_eq!(resolve(&from_value(&export("Custom", custom.base, &custom_tokens)).unwrap()), custom_tokens);
         }
+    }
+
+    #[test]
+    fn digital_rain_registers_and_background_input_is_bounded() {
+        let file = find("digital-rain", &[]).unwrap();
+        assert_eq!(file.name, "Digital Rain");
+        assert_eq!(file.background, Some(Background { effect: BackgroundEffect::Rain }));
+        let t = resolve(file);
+        assert_eq!(t.viewport_top, Color32::BLACK);
+        assert_eq!(t.panel, Color32::BLACK);
+        assert!(crate::theme::contrast_ratio(t.text, t.panel) >= 7.0);
+        let mut value = json!({"format": FORMAT, "name":"Test", "base":"dark"});
+        assert!(from_value(&value).unwrap().background.is_none());
+        for bad in [
+            json!({"effect":"unknown"}),
+            json!({"effect":"rain", "columns":1e100}),
+            json!({"effect":"rain", "fps":1e100}),
+            json!(null),
+            json!([]),
+            json!({"effect": ["rain"]}),
+        ] {
+            value["background"] = bad;
+            assert!(from_value(&value).is_err());
+        }
+        assert!(parse(&" ".repeat(MAX_BYTES + 1)).is_err());
+        let restored: ThemeFile = serde_json::from_value(serde_json::to_value(file).unwrap()).unwrap();
+        assert_eq!(restored.background, file.background);
     }
 
     #[test]

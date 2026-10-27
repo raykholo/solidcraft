@@ -206,6 +206,7 @@ pub mod preview;
 mod primitive_placement;
 #[cfg(test)]
 mod primitive_units_tests;
+mod rain;
 pub mod recovery_ui;
 pub mod ref_images;
 mod render_ui;

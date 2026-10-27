@@ -4447,7 +4447,9 @@ dependencies = [
  "toml",
  "ttf-parser",
  "unicode-bidi",
+ "web-sys",
  "web-time",
+ "windows",
  "winreg",
  "zip",
 ]

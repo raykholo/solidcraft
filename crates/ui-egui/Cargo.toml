@@ -42,6 +42,8 @@ nix = { workspace = true }
 # Updates: the folder the Windows installer recorded, so an install outside Program Files is still
 # updated by its installer (MIT; already in the tree as a build dependency).
 winreg = "0.56"
+# Safe access to the operating system animation preference (already used transitively).
+windows = { version = "0.62", features = ["UI_ViewManagement"] }
 
 [dev-dependencies]
 solidcraft-engine = { workspace = true, features = ["bundled-render-library"] }
@@ -64,3 +66,6 @@ pollster = { workspace = true }
 serde_json = { workspace = true }
 # Reads assets/icons/ui/design/palette.toml and aliases.toml into compiled tables.
 toml = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "MediaQueryList"] }

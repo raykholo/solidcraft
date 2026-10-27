@@ -906,6 +906,8 @@ preference_settings! {
     /// `dark`, `light` or `system` (follow the operating system), or a theme file's id: a
     /// built-in one (`gruvbox-dark`, …) or one of `custom_themes` (#2255).
     theme: String = "dark".into(), PAGE_INTERFACE;
+    /// Opt in to a theme's animated viewport decoration; exports remain still.
+    animated_background: bool = false, PAGE_INTERFACE => check_id("prefs.animated_background");
     /// The 3D view's colours: the theme's own, or the Light or Dark theme's whatever the window
     /// uses (#4146).
     viewport_theme: crate::theme::ViewportTheme = crate::theme::ViewportTheme::Theme, PAGE_INTERFACE;
@@ -2893,7 +2895,13 @@ fn current_theme_file(app: &SolveApp) -> serde_json::Value {
 fn theme_file(app: &SolveApp, id: &str, system_dark: bool) -> serde_json::Value {
     use crate::theme_files::{Base, export, find, resolve};
     match find(id, &app.preferences.custom_themes) {
-        Some(f) => export(&f.name, f.base, &resolve(f)),
+        Some(f) => {
+            let mut value = export(&f.name, f.base, &resolve(f));
+            if let Some(background) = f.background {
+                value["background"] = json!(background);
+            }
+            value
+        }
         None if id == "dark" || (id == "system" && system_dark) => export("Dark", Base::Dark, &crate::theme::Tokens::dark()),
         None => export("Light", Base::Light, &crate::theme::Tokens::light()),
     }
@@ -3494,6 +3502,22 @@ mod tests {
         let preview = crate::scenario::rect_of("prefs:navbar:preview").unwrap();
         let body = crate::scenario::rect_of("prefs:page_body").unwrap();
         assert!(body.contains(preview.center()), "the route reopens and scrolls to the section");
+    }
+
+    #[test]
+    fn animated_background_defaults_off_and_roundtrips_through_preferences() {
+        let mut h = crate::scenario::Harness::new();
+        assert!(!h.app.preferences.animated_background);
+        let old: super::Prefs = serde_json::from_value(serde_json::json!({"theme":"green-phosphor"})).unwrap();
+        assert!(!old.animated_background);
+        let out = h.call("ui.prefs", serde_json::json!({"theme":"digital-rain", "animated_background":true, "theme_export":true}));
+        assert_eq!(out["result"]["animated_background"], true, "{out}");
+        assert_eq!(out["result"]["theme_file"]["background"]["effect"], "rain");
+        let mut restored = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        restored.load_prefs(&h.app.prefs());
+        assert!(restored.preferences.animated_background);
+        h.call("ui.prefs", serde_json::json!({"animated_background":false}));
+        assert!(!h.app.preferences.animated_background);
     }
 
     #[test]

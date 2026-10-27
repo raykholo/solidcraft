@@ -53,6 +53,7 @@ pub struct ViewportState {
     pub(crate) insert_drag: Option<crate::insert_handles::Drag>,
     /// A drag on the handles of the Transform window's box.
     pub(crate) transform_drag: Option<crate::sketch_transform_ui::Drag>,
+    pub(crate) rain: crate::rain::State,
     /// The arrow turning the view that is still down (`navigation::step_key_hold`).
     pub(crate) key_hold: Option<crate::navigation::KeyHold>,
     /// A two-point drawing tool's first point was placed by a press (here) that became a drag:
@@ -3957,6 +3958,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     mesh.add_triangle(0, 2, 3);
     painter.add(Shape::mesh(mesh));
 
+    crate::rain::paint(app, ui.ctx(), &painter, rect, &t);
+
     // ---- model ----
     crate::frame_watch::step(app, "viewport before the model");
     update_refinement(app, ui.ctx(), &proj);
@@ -5728,6 +5731,39 @@ pub fn look_at_selection(app: &mut SolveApp) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rain_requires_both_opt_ins_and_stops_for_motion_focus_idle_and_capture() {
+        use crate::rain::{active, columns};
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(crate::rain::kde_motion("[KDE]\nAnimationDurationFactor=0\n"), Some(true));
+            assert_eq!(crate::rain::kde_motion("[KDE]\nAnimationDurationFactor=0.5\n"), Some(false));
+            assert_eq!(crate::rain::kde_motion("[Other]\nAnimationDurationFactor=0\n"), None);
+            assert_eq!(crate::rain::kde_motion("[KDE]\nAnimationDurationFactor=NaN\n"), None);
+            assert_eq!(crate::rain::kde_motion(&"x".repeat(64 * 1024 + 1)), None);
+        }
+        assert_eq!(columns(f32::MAX, 24.0), 96);
+        assert_eq!(columns(f32::NAN, 24.0), 0);
+        assert_eq!(columns(-1.0, 24.0), 0);
+        assert_eq!(columns(1000.0, 0.0), 0);
+        let mut state = crate::rain::State::default();
+        assert!(state.tick(0.0, active(true, true, true, false, 0.0, false)).unwrap() >= std::time::Duration::from_secs_f64(1.0 / 30.0));
+        assert!(state.tick(f64::NAN, true).is_none());
+        assert!(state.tick(f64::MAX, true).is_some());
+        assert!(state.tick(-f64::MAX, true).is_some(), "a clock reset cannot overflow a duration");
+        for (theme, setting, focus, reduced, idle, capture) in [
+            (false, true, true, false, 0.0, false),
+            (true, false, true, false, 0.0, false),
+            (true, true, false, false, 0.0, false),
+            (true, true, true, true, 0.0, false),
+            (true, true, true, false, 30.0, false),
+            (true, true, true, false, f64::NAN, false),
+            (true, true, true, false, 0.0, true),
+        ] {
+            assert!(state.tick(1.0, active(theme, setting, focus, reduced, idle, capture)).is_none(), "paused decoration must not request repaint");
+        }
+    }
+
     use super::*;
     use crate::navigation::*;
 

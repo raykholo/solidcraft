@@ -176,6 +176,17 @@ Clay Dark (warm ivory paper and warm charcoal, with a terracotta accent and roun
 1-bit and 1-bit Dark (pure black and white with square corners: black on white, or white on
 black, with selections drawn inverted).
 
+**Digital Rain** adds saturated green text and accents on pure black panels. Turn on
+Interface › Theme › **Animated background** to show falling glyphs behind the model.
+The option is off by default and only applies to themes that request an effect.
+The animation pauses after 30 seconds without input, while the window is unfocused,
+or when the system requests reduced motion. Screenshots and model snapshots omit it.
+
+Theme files can request this decoration with `"background": {"effect": "rain"}`.
+The object accepts only `effect`, and `rain` is the only supported value. Column,
+trail and frame rate limits are fixed by the application: at most 96 columns,
+14 glyphs per trail and 30 animation updates per second. No additional font is needed.
+
 A theme is a small JSON file that starts from the Dark or Light palette and changes any of its
 colours and corner radii by name:
 

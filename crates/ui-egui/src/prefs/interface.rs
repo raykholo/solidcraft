@@ -31,6 +31,7 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
     ui_kit::settings_heading(ui, app.tr("prefs.interface"), app.tr("prefs.interface_note"));
     ui_kit::settings_section(ui, "theme", app.tr("ui.theme"), |ui| {
         theme_row(app, ui);
+        setting::animated_background(app, ui).on_hover_text(app.tr("prefs.animated_background_note"));
         ui_kit::tab_accent_strip(ui);
         // The 3D view in the theme's colours, or the Light or Dark theme's (#4146).
         ui_kit::settings_form(ui, t.form_label_width + t.space_16 + t.space_6, |ui| {
