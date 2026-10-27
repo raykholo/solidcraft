@@ -877,7 +877,7 @@ mod tests {
         }
     }
 
-    /// `paper` is the theme's page (panels, viewport, bodies); `ink` its text, and its selection.
+    /// `paper` is the theme's page (panels, viewport, bodies, hover); `ink` its text, and its selection.
     fn one_bit_has_full_contrast(t: &Tokens, id: &str, paper: Color32, ink: Color32) {
         assert_eq!((t.text, t.panel), (ink, paper), "{id}");
         for (fg, bg) in [
@@ -886,7 +886,8 @@ mod tests {
             (t.icon, t.toolbar),
             (t.app_bar_text, t.app_bar_tab_active),
             (t.selected_ink, t.selected_bg),
-            (t.on_accent, t.hover),
+            (t.text, t.hover),
+            (t.app_bar_text, t.app_bar_hover),
             (t.body_edge, t.body),
             (t.sel_edge, t.body_selected),
             (t.dimension, t.viewport_top),
@@ -897,7 +898,11 @@ mod tests {
             assert_eq!(crate::theme::contrast_ratio(fg, bg), 21.0, "{id}: {fg:?} on {bg:?}");
         }
         assert_eq!((t.viewport_top, t.viewport_bottom, t.body), (paper, paper, paper), "{id}");
-        assert_eq!((t.hover, t.selected_bg, t.body_selected), (ink, ink, ink), "{id}");
+        assert_eq!((t.selected_bg, t.body_selected), (ink, ink), "{id}");
+        // Hover fills are the paper, so a hovered row, card or tab never swallows its ink label.
+        for hover in [t.hover, t.app_bar_hover, t.app_bar_hover_subtle, t.app_bar_hover_button, t.app_bar_hover_strong] {
+            assert_eq!(hover, paper, "{id}: hover fill");
+        }
         assert_eq!((t.body_edge, t.selected_ink), (ink, paper), "{id}");
         // Thumbnails and other pictures keep their own pixels: the tint stays neutral white.
         assert_eq!(t.file_image_tint, Color32::WHITE, "{id}");
