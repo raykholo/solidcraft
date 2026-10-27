@@ -141,9 +141,11 @@ Interface › **Theme** lists Dark, Light and System (follows the operating syst
 themes and any themes you have imported. A choice applies at once. Under the themes, **Viewport** draws the 3D view in the Light or Dark theme's colours whatever the window uses, for example the model on a light view in a dark window (**Follow theme**, the default, keeps the theme's own). The built-in themes are Gruvbox
 (dark and light, each in hard, normal and soft contrast), SolidCraft 95, Platinum 9, Cupertino,
 Green Phosphor, Amber Phosphor, Blueprint, One Dark, Tokyo Night, Solarized Light, Nord, High
-Contrast, Graphite, Nosferatu, Catppuccin Mocha, and Okibi and Akari (dark and light, from the
-[Okibi design system](https://kaievns.github.io/okibi-akiri-design-system-spec/)), and Clay and
-Clay Dark (warm ivory paper and warm charcoal, with a terracotta accent and rounded corners).
+Contrast, Graphite, Nosferatu, Catppuccin Mocha, Okibi and Akari (dark and light, from the
+[Okibi design system](https://kaievns.github.io/okibi-akiri-design-system-spec/)), Clay and
+Clay Dark (warm ivory paper and warm charcoal, with a terracotta accent and rounded corners), and
+1-bit and 1-bit Dark (pure black and white with square corners: black on white, or white on
+black, with selections drawn inverted).
 
 A theme is a small JSON file that starts from the Dark or Light palette and changes any of its
 colours and corner radii by name:
@@ -186,7 +188,7 @@ respectively. The first four style small accents through large surfaces; `contro
 styles form controls, and `sketch_mode_radius` styles sketch creation buttons. Themes own
 these settings, with matching shapes across light and dark variants. Dock joins remain
 square, circular controls remain circular, and control sizes and spacing stay the same.
-Platinum 9 and the phosphor themes use square corners, SolidCraft 95 uses subtle 3-point
+Platinum 9, 1-bit, 1-bit Dark, and the phosphor themes use square corners, SolidCraft 95 uses subtle 3-point
 corners, Blueprint uses the standard radii, Cupertino uses softer corners, and Clay and Clay Dark use rounded corners. Other built-in
 themes retain the defaults.
 
