@@ -21,7 +21,7 @@ pub const ADJUSTABLE: bool = cfg!(not(target_arch = "wasm32"));
 pub enum Kind {
     /// STEP, IGES and the other CAD files read as an Import feature.
     Step,
-    /// Design files (`.solidcraft`, JSON).
+    /// Design files (`.sc`, older `.solidcraft`, JSON).
     Design,
 }
 
