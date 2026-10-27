@@ -6,5 +6,221 @@
     "prefs.theme_follow_note": "Reloaded whenever another tool rewrites it. Choosing a theme stops following it.",
     "prefs.theme_follow_off": "Off",
     "prefs.theme_follow_stop": "Stop following"
+  },
+  "ar": {
+    "prefs.theme_follow": "اتباع ملف سمة",
+    "prefs.theme_follow_error": "لم يُطبّق: {error}. تبقى آخر سمة سليمة مفعّلة.",
+    "prefs.theme_follow_launch": "يُتّبع لهذه الجلسة فقط (--theme-file)؛ يُعاد تحميله كلما أعادت أداة أخرى كتابته.",
+    "prefs.theme_follow_note": "يُعاد تحميله كلما أعادت أداة أخرى كتابته. اختيار سمة يوقف اتباعه.",
+    "prefs.theme_follow_off": "إيقاف",
+    "prefs.theme_follow_stop": "إيقاف الاتباع"
+  },
+  "cs": {
+    "prefs.theme_follow": "Sledovat soubor motivu",
+    "prefs.theme_follow_error": "Nepoužito: {error}. Zůstává poslední funkční motiv.",
+    "prefs.theme_follow_launch": "Sledování jen pro toto spuštění (--theme-file); načte se znovu při každém přepsání jiným nástrojem.",
+    "prefs.theme_follow_note": "Načte se znovu při každém přepsání jiným nástrojem. Výběr motivu sledování ukončí.",
+    "prefs.theme_follow_off": "Vypnuto",
+    "prefs.theme_follow_stop": "Ukončit sledování"
+  },
+  "da": {
+    "prefs.theme_follow": "Følg en temafil",
+    "prefs.theme_follow_error": "Ikke anvendt: {error}. Det seneste gyldige tema bevares.",
+    "prefs.theme_follow_launch": "Følges kun denne gang (--theme-file); genindlæses, når et andet værktøj overskriver filen.",
+    "prefs.theme_follow_note": "Genindlæses, når et andet værktøj overskriver filen. Valg af et tema stopper dette.",
+    "prefs.theme_follow_off": "Fra",
+    "prefs.theme_follow_stop": "Stop med at følge"
+  },
+  "de": {
+    "prefs.theme_follow": "Einer Designdatei folgen",
+    "prefs.theme_follow_error": "Nicht angewendet: {error}. Das letzte gültige Design bleibt aktiv.",
+    "prefs.theme_follow_launch": "Nur für diesen Start (--theme-file); wird neu geladen, sobald ein anderes Werkzeug die Datei überschreibt.",
+    "prefs.theme_follow_note": "Wird neu geladen, sobald ein anderes Werkzeug die Datei überschreibt. Die Auswahl eines Designs beendet das Folgen.",
+    "prefs.theme_follow_off": "Aus",
+    "prefs.theme_follow_stop": "Nicht mehr folgen"
+  },
+  "es": {
+    "prefs.theme_follow": "Seguir un archivo de tema",
+    "prefs.theme_follow_error": "No aplicado: {error}. Se mantiene el último tema válido.",
+    "prefs.theme_follow_launch": "Solo en esta sesión (--theme-file); se recarga cada vez que otra herramienta reescribe el archivo.",
+    "prefs.theme_follow_note": "Se recarga cada vez que otra herramienta reescribe el archivo. Elegir un tema deja de seguirlo.",
+    "prefs.theme_follow_off": "Desactivado",
+    "prefs.theme_follow_stop": "Dejar de seguir"
+  },
+  "fr": {
+    "prefs.theme_follow": "Suivre un fichier de thème",
+    "prefs.theme_follow_error": "Non appliqué : {error}. Le dernier thème valide reste actif.",
+    "prefs.theme_follow_launch": "Suivi pour cette session uniquement (--theme-file) ; rechargé dès qu’un autre outil réécrit le fichier.",
+    "prefs.theme_follow_note": "Rechargé dès qu’un autre outil réécrit le fichier. Choisir un thème arrête le suivi.",
+    "prefs.theme_follow_off": "Désactivé",
+    "prefs.theme_follow_stop": "Arrêter le suivi"
+  },
+  "gl": {
+    "prefs.theme_follow": "Seguir un ficheiro de tema",
+    "prefs.theme_follow_error": "Non aplicado: {error}. Mantense o último tema válido.",
+    "prefs.theme_follow_launch": "Só nesta sesión (--theme-file); vólvese cargar cando outra ferramenta reescribe o ficheiro.",
+    "prefs.theme_follow_note": "Vólvese cargar cando outra ferramenta reescribe o ficheiro. Escoller un tema detén o seguimento.",
+    "prefs.theme_follow_off": "Desactivado",
+    "prefs.theme_follow_stop": "Deixar de seguir"
+  },
+  "he": {
+    "prefs.theme_follow": "מעקב אחר קובץ ערכת נושא",
+    "prefs.theme_follow_error": "לא הוחל: {error}. ערכת הנושא התקינה האחרונה נשארת פעילה.",
+    "prefs.theme_follow_launch": "מעקב להפעלה זו בלבד (--theme-file); נטען מחדש בכל פעם שכלי אחר משכתב את הקובץ.",
+    "prefs.theme_follow_note": "נטען מחדש בכל פעם שכלי אחר משכתב את הקובץ. בחירת ערכת נושא מפסיקה את המעקב.",
+    "prefs.theme_follow_off": "כבוי",
+    "prefs.theme_follow_stop": "הפסקת המעקב"
+  },
+  "hu": {
+    "prefs.theme_follow": "Témafájl követése",
+    "prefs.theme_follow_error": "Nem alkalmazható: {error}. Az utolsó érvényes téma marad aktív.",
+    "prefs.theme_follow_launch": "Követés csak erre a futásra (--theme-file); újratöltés, ha más eszköz felülírja a fájlt.",
+    "prefs.theme_follow_note": "Újratöltés, ha más eszköz felülírja a fájlt. Téma választása leállítja a követést.",
+    "prefs.theme_follow_off": "Ki",
+    "prefs.theme_follow_stop": "Követés leállítása"
+  },
+  "id": {
+    "prefs.theme_follow": "Ikuti file tema",
+    "prefs.theme_follow_error": "Tidak diterapkan: {error}. Tema valid terakhir tetap aktif.",
+    "prefs.theme_follow_launch": "Diikuti hanya untuk sesi ini (--theme-file); dimuat ulang setiap kali alat lain menulis ulang file.",
+    "prefs.theme_follow_note": "Dimuat ulang setiap kali alat lain menulis ulang file. Memilih tema menghentikan pengikutan.",
+    "prefs.theme_follow_off": "Nonaktif",
+    "prefs.theme_follow_stop": "Berhenti mengikuti"
+  },
+  "it": {
+    "prefs.theme_follow": "Segui un file di tema",
+    "prefs.theme_follow_error": "Non applicato: {error}. Resta attivo l’ultimo tema valido.",
+    "prefs.theme_follow_launch": "Seguito solo per questa sessione (--theme-file); ricaricato quando un altro strumento riscrive il file.",
+    "prefs.theme_follow_note": "Ricaricato quando un altro strumento riscrive il file. Scegliere un tema interrompe il monitoraggio.",
+    "prefs.theme_follow_off": "Disattivato",
+    "prefs.theme_follow_stop": "Smetti di seguire"
+  },
+  "ja": {
+    "prefs.theme_follow": "テーマファイルに従う",
+    "prefs.theme_follow_error": "適用できません: {error}。最後に正常に適用されたテーマを維持します。",
+    "prefs.theme_follow_launch": "今回の起動時のみ有効です (--theme-file)。別のツールがファイルを書き換えるたびに再読み込みします。",
+    "prefs.theme_follow_note": "別のツールがファイルを書き換えるたびに再読み込みします。テーマを選ぶと追従を停止します。",
+    "prefs.theme_follow_off": "オフ",
+    "prefs.theme_follow_stop": "追従を停止"
+  },
+  "ko": {
+    "prefs.theme_follow": "테마 파일 따르기",
+    "prefs.theme_follow_error": "적용되지 않음: {error}. 마지막으로 적용된 정상 테마를 유지합니다.",
+    "prefs.theme_follow_launch": "이번 실행에만 적용됩니다 (--theme-file). 다른 도구가 파일을 다시 쓸 때마다 다시 불러옵니다.",
+    "prefs.theme_follow_note": "다른 도구가 파일을 다시 쓸 때마다 다시 불러옵니다. 테마를 선택하면 따르기를 중지합니다.",
+    "prefs.theme_follow_off": "끄기",
+    "prefs.theme_follow_stop": "따르기 중지"
+  },
+  "ms": {
+    "prefs.theme_follow": "Ikut fail tema",
+    "prefs.theme_follow_error": "Tidak digunakan: {error}. Tema sah terakhir kekal aktif.",
+    "prefs.theme_follow_launch": "Diikuti untuk sesi ini sahaja (--theme-file); dimuat semula setiap kali alat lain menulis semula fail.",
+    "prefs.theme_follow_note": "Dimuat semula setiap kali alat lain menulis semula fail. Memilih tema menghentikan ikutan.",
+    "prefs.theme_follow_off": "Mati",
+    "prefs.theme_follow_stop": "Berhenti mengikuti"
+  },
+  "nb": {
+    "prefs.theme_follow": "Følg en temafil",
+    "prefs.theme_follow_error": "Ikke brukt: {error}. Det siste gyldige temaet forblir aktivt.",
+    "prefs.theme_follow_launch": "Følges bare denne kjøringen (--theme-file); lastes inn på nytt når et annet verktøy skriver om filen.",
+    "prefs.theme_follow_note": "Lastes inn på nytt når et annet verktøy skriver om filen. Valg av et tema stopper dette.",
+    "prefs.theme_follow_off": "Av",
+    "prefs.theme_follow_stop": "Slutt å følge"
+  },
+  "nl": {
+    "prefs.theme_follow": "Een themabestand volgen",
+    "prefs.theme_follow_error": "Niet toegepast: {error}. Het laatste geldige thema blijft actief.",
+    "prefs.theme_follow_launch": "Alleen deze sessie gevolgd (--theme-file); opnieuw geladen zodra een ander hulpmiddel het bestand overschrijft.",
+    "prefs.theme_follow_note": "Opnieuw geladen zodra een ander hulpmiddel het bestand overschrijft. Een thema kiezen stopt het volgen.",
+    "prefs.theme_follow_off": "Uit",
+    "prefs.theme_follow_stop": "Volgen stoppen"
+  },
+  "pl": {
+    "prefs.theme_follow": "Śledź plik motywu",
+    "prefs.theme_follow_error": "Nie zastosowano: {error}. Ostatni poprawny motyw pozostaje aktywny.",
+    "prefs.theme_follow_launch": "Śledzenie tylko w tej sesji (--theme-file); plik jest wczytywany ponownie po każdym nadpisaniu przez inne narzędzie.",
+    "prefs.theme_follow_note": "Plik jest wczytywany ponownie po każdym nadpisaniu przez inne narzędzie. Wybór motywu kończy śledzenie.",
+    "prefs.theme_follow_off": "Wyłączone",
+    "prefs.theme_follow_stop": "Zakończ śledzenie"
+  },
+  "pt-BR": {
+    "prefs.theme_follow": "Seguir um arquivo de tema",
+    "prefs.theme_follow_error": "Não aplicado: {error}. O último tema válido continua ativo.",
+    "prefs.theme_follow_launch": "Seguido apenas nesta sessão (--theme-file); recarregado sempre que outra ferramenta reescreve o arquivo.",
+    "prefs.theme_follow_note": "Recarregado sempre que outra ferramenta reescreve o arquivo. Escolher um tema interrompe o acompanhamento.",
+    "prefs.theme_follow_off": "Desativado",
+    "prefs.theme_follow_stop": "Parar de seguir"
+  },
+  "ro": {
+    "prefs.theme_follow": "Urmărește un fișier de temă",
+    "prefs.theme_follow_error": "Nu s-a aplicat: {error}. Ultima temă validă rămâne activă.",
+    "prefs.theme_follow_launch": "Urmărit doar în această sesiune (--theme-file); reîncărcat când alt instrument rescrie fișierul.",
+    "prefs.theme_follow_note": "Reîncărcat când alt instrument rescrie fișierul. Alegerea unei teme oprește urmărirea.",
+    "prefs.theme_follow_off": "Dezactivat",
+    "prefs.theme_follow_stop": "Oprește urmărirea"
+  },
+  "ru": {
+    "prefs.theme_follow": "Следить за файлом темы",
+    "prefs.theme_follow_error": "Не применено: {error}. Последняя рабочая тема остаётся активной.",
+    "prefs.theme_follow_launch": "Только для этого запуска (--theme-file); перезагружается, когда другой инструмент перезаписывает файл.",
+    "prefs.theme_follow_note": "Перезагружается, когда другой инструмент перезаписывает файл. Выбор темы прекращает отслеживание.",
+    "prefs.theme_follow_off": "Выкл.",
+    "prefs.theme_follow_stop": "Прекратить отслеживание"
+  },
+  "sv": {
+    "prefs.theme_follow": "Följ en temafil",
+    "prefs.theme_follow_error": "Inte tillämpat: {error}. Det senaste giltiga temat förblir aktivt.",
+    "prefs.theme_follow_launch": "Följs endast denna körning (--theme-file); läses in igen när ett annat verktyg skriver om filen.",
+    "prefs.theme_follow_note": "Läses in igen när ett annat verktyg skriver om filen. Att välja ett tema avslutar detta.",
+    "prefs.theme_follow_off": "Av",
+    "prefs.theme_follow_stop": "Sluta följa"
+  },
+  "tr": {
+    "prefs.theme_follow": "Bir tema dosyasını takip et",
+    "prefs.theme_follow_error": "Uygulanmadı: {error}. Son geçerli tema etkin kalır.",
+    "prefs.theme_follow_launch": "Yalnızca bu çalıştırmada takip edilir (--theme-file); başka bir araç dosyayı yeniden yazdığında yeniden yüklenir.",
+    "prefs.theme_follow_note": "Başka bir araç dosyayı yeniden yazdığında yeniden yüklenir. Tema seçmek takibi durdurur.",
+    "prefs.theme_follow_off": "Kapalı",
+    "prefs.theme_follow_stop": "Takibi durdur"
+  },
+  "uk": {
+    "prefs.theme_follow": "Стежити за файлом теми",
+    "prefs.theme_follow_error": "Не застосовано: {error}. Остання робоча тема залишається активною.",
+    "prefs.theme_follow_launch": "Лише для цього запуску (--theme-file); перезавантажується, коли інший інструмент перезаписує файл.",
+    "prefs.theme_follow_note": "Перезавантажується, коли інший інструмент перезаписує файл. Вибір теми припиняє відстеження.",
+    "prefs.theme_follow_off": "Вимк.",
+    "prefs.theme_follow_stop": "Припинити відстеження"
+  },
+  "vi": {
+    "prefs.theme_follow": "Theo dõi tệp chủ đề",
+    "prefs.theme_follow_error": "Chưa áp dụng: {error}. Chủ đề hợp lệ gần nhất vẫn được giữ.",
+    "prefs.theme_follow_launch": "Chỉ theo dõi trong lần chạy này (--theme-file); tải lại mỗi khi công cụ khác ghi lại tệp.",
+    "prefs.theme_follow_note": "Tải lại mỗi khi công cụ khác ghi lại tệp. Chọn chủ đề sẽ dừng theo dõi.",
+    "prefs.theme_follow_off": "Tắt",
+    "prefs.theme_follow_stop": "Dừng theo dõi"
+  },
+  "zh": {
+    "prefs.theme_follow": "跟随主题文件",
+    "prefs.theme_follow_error": "未应用：{error}。保留上次有效的主题。",
+    "prefs.theme_follow_launch": "仅本次运行跟随 (--theme-file)；其他工具改写文件时会重新加载。",
+    "prefs.theme_follow_note": "其他工具改写文件时会重新加载。选择主题将停止跟随。",
+    "prefs.theme_follow_off": "关闭",
+    "prefs.theme_follow_stop": "停止跟随"
+  },
+  "zh-TW": {
+    "prefs.theme_follow": "跟隨主題檔案",
+    "prefs.theme_follow_error": "未套用：{error}。保留上次有效的主題。",
+    "prefs.theme_follow_launch": "僅本次執行跟隨 (--theme-file)；其他工具改寫檔案時會重新載入。",
+    "prefs.theme_follow_note": "其他工具改寫檔案時會重新載入。選擇主題將停止跟隨。",
+    "prefs.theme_follow_off": "關閉",
+    "prefs.theme_follow_stop": "停止跟隨"
+  },
+  "en-GB": {
+    "prefs.theme_follow": "Follow a theme file",
+    "prefs.theme_follow_error": "Not applied: {error}. The last good theme stays on.",
+    "prefs.theme_follow_launch": "Followed for this run only (--theme-file); reloaded whenever another tool rewrites it.",
+    "prefs.theme_follow_note": "Reloaded whenever another tool rewrites it. Choosing a theme stops following it.",
+    "prefs.theme_follow_off": "Off",
+    "prefs.theme_follow_stop": "Stop following"
   }
 }
