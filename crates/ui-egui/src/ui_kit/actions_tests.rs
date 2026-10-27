@@ -151,27 +151,36 @@ fn one_bit_primary_actions_keep_inverted_labels_and_legacy_fills() {
         let t = crate::theme_files::resolve(&old);
         assert_eq!(t.form_primary_fill, t.form_primary);
     }
-    for theme in crate::theme_files::builtin().iter().filter(|theme| theme.id != "1-bit") {
+    for theme in crate::theme_files::builtin().iter().filter(|theme| !crate::theme_files::is_two_colour(&theme.id)) {
         let t = crate::theme_files::resolve(theme);
         assert_eq!(t.form_primary_fill, t.form_primary, "{} retains its primary fill", theme.id);
     }
-    let t = crate::theme_files::resolve(crate::theme_files::find("1-bit", &[]).unwrap());
-    let _restore = scoped_tokens(t);
-    assert_eq!(Tokens::get().form_primary_fill, Color32::BLACK);
-    let ctx = crate::fonts::test_context();
-    let mut rects = Vec::new();
-    let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-        ui.set_width(400.0);
-        scope(ui, |ui| {
-            rects.push(primary_button(ui, "Primary").rect);
-            rects.push(wide_primary_button(ui, "Wide").rect);
-            footer(ui, "OK", "Cancel", true, Footer::default());
-            rects.push(scenario::rect_of("dialog:ok").unwrap());
+    // 1-bit's primary actions are black with white labels; 1-bit Dark's the reverse.
+    for (id, fill, ink) in [("1-bit", Color32::BLACK, Color32::WHITE), ("1-bit-dark", Color32::WHITE, Color32::BLACK)] {
+        let t = crate::theme_files::resolve(crate::theme_files::find(id, &[]).unwrap());
+        let _restore = scoped_tokens(t);
+        assert_eq!(Tokens::get().form_primary_fill, fill, "{id}");
+        let ctx = crate::fonts::test_context();
+        let mut rects = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(400.0);
+            scope(ui, |ui| {
+                rects.push(primary_button(ui, "Primary").rect);
+                rects.push(wide_primary_button(ui, "Wide").rect);
+                footer(ui, "OK", "Cancel", true, Footer::default());
+                rects.push(scenario::rect_of("dialog:ok").unwrap());
+            });
         });
-    });
-    output.textures_delta.clear();
-    for rect in rects {
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Rect(r) if rect.contains_rect(r.rect) && r.fill == Color32::BLACK)));
-        assert!(output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Text(text) if rect.contains(text.pos) && text.galley.job.sections.iter().all(|section| section.format.color == Color32::WHITE))));
+        output.textures_delta.clear();
+        for rect in rects {
+            assert!(
+                output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Rect(r) if rect.contains_rect(r.rect) && r.fill == fill)),
+                "{id}: {rect:?} has its fill"
+            );
+            assert!(
+                output.shapes.iter().any(|shape| matches!(&shape.shape, Shape::Text(text) if rect.contains(text.pos) && text.galley.job.sections.iter().all(|section| section.format.color == ink))),
+                "{id}: {rect:?} has its label ink"
+            );
+        }
     }
 }
