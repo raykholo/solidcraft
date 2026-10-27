@@ -6526,7 +6526,7 @@ mod construct_ask_tests {
     use super::*;
     use crate::scenario::Harness;
 
-    const CONSTRUCT_PICK_COMMANDS: [&str; 15] = [
+    const CONSTRUCT_PICK_COMMANDS: &[&str] = &[
         "construct.axis.through_cylinder",
         "construct.axis.normal_to_face",
         "construct.axis.two_planes",

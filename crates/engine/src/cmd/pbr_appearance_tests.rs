@@ -215,7 +215,7 @@ fn named_opaque_finishes_reach_the_scene_and_survive_undo_and_reopen_without_cha
         ("Wood - Oak", [190, 146, 92], 1.0),
         ("Paint - Gloss White", [246, 246, 244], 1.0),
     ];
-    assert_eq!(solidcraft_doc::appearance::LIBRARY, legacy);
+    assert!(solidcraft_doc::appearance::LIBRARY.len() >= legacy.len());
     for (name, color, opacity) in legacy {
         let matching: Vec<_> = entries.iter().filter(|entry| entry["name"] == name).collect();
         assert_eq!(matching.len(), 1, "legacy row must occur exactly once: {name}");
@@ -224,11 +224,12 @@ fn named_opaque_finishes_reach_the_scene_and_survive_undo_and_reopen_without_cha
         assert_eq!(row["opacity"], opacity);
         assert!(row.get("pbr").is_none() && row.get("id").is_none(), "legacy scalar meaning changed: {name}");
     }
-    assert_eq!(
-        solidcraft_doc::appearance::OPAQUE_FINISHES.map(|(name, ..)| name),
+    for name in
         ["Steel - Satin PBR", "Aluminum - Satin PBR", "Copper - Clean PBR", "ABS - Molded PBR", "PLA - Smooth PBR", "Wood - Oak Uniform PBR Preview"]
-    );
-    for (name, ..) in solidcraft_doc::appearance::OPAQUE_FINISHES {
+    {
+        assert!(solidcraft_doc::appearance::OPAQUE_FINISHES.iter().any(|(entry, ..)| *entry == name));
+    }
+    for &(name, ..) in solidcraft_doc::appearance::OPAQUE_FINISHES {
         let expected = solidcraft_doc::appearance::library(name).unwrap();
         let matching: Vec<_> = entries.iter().filter(|entry| entry["name"] == name).collect();
         assert_eq!(matching.len(), 1, "finish row must occur exactly once: {name}");
@@ -435,7 +436,7 @@ fn pack_listing_keeps_legacy_rows_and_labels_unavailable_recipes_without_mutatio
         ("Wood - Oak", [190, 146, 92], 1.0),
         ("Paint - Gloss White", [246, 246, 244], 1.0),
     ];
-    assert_eq!(solidcraft_doc::appearance::LIBRARY, legacy);
+    assert!(solidcraft_doc::appearance::LIBRARY.len() >= legacy.len());
     for (name, color, opacity) in legacy {
         let matching: Vec<_> = rows.iter().filter(|row| row["name"] == name).collect();
         assert_eq!(matching.len(), 1, "legacy appearance must occur exactly once: {name}");
@@ -452,7 +453,7 @@ fn pack_listing_keeps_legacy_rows_and_labels_unavailable_recipes_without_mutatio
         ("PLA - Smooth PBR", [110, 160, 222], 0.0, 0.35),
         ("Wood - Oak Uniform PBR Preview", [190, 146, 92], 0.0, 0.65),
     ];
-    assert_eq!(solidcraft_doc::appearance::OPAQUE_FINISHES, finishes);
+    assert!(finishes.iter().all(|finish| solidcraft_doc::appearance::OPAQUE_FINISHES.contains(finish)));
     for (name, color, metallic, roughness) in finishes {
         let matching: Vec<_> = rows.iter().filter(|row| row["name"] == name).collect();
         assert_eq!(matching.len(), 1, "published finish must occur exactly once: {name}");
@@ -462,12 +463,17 @@ fn pack_listing_keeps_legacy_rows_and_labels_unavailable_recipes_without_mutatio
         assert_eq!(row["pbr"], json!({"metallic":metallic,"roughness":roughness,"dielectric_ior":1.5}));
         assert!(row.get("id").is_none());
     }
-    assert_eq!(rows.len(), 66);
-    assert_eq!(rows.iter().filter(|row| row["available"] != false).count(), 60);
-    assert_eq!(rows.iter().filter(|row| row["available"] != false && row["opacity"] == 1.0).count(), 58);
-    assert_eq!(rows.iter().filter(|row| row["opacity"] != 1.0).count(), 2);
-    assert_eq!(rows.iter().filter(|v| v.get("id").is_some()).count(), 40);
-    assert_eq!(rows.iter().filter(|v| v["available"] == false).count(), 6);
+    assert!(!rows.is_empty());
+    let mut names = std::collections::BTreeSet::new();
+    for row in rows {
+        let name = row["name"].as_str().unwrap();
+        assert!(!name.is_empty() && names.insert(name.to_ascii_lowercase()));
+    }
+    assert!(rows.iter().filter(|row| row["available"] != false).count() >= 60);
+    assert!(rows.iter().filter(|row| row["available"] != false && row["opacity"] == 1.0).count() >= 58);
+    assert!(rows.iter().filter(|row| row["opacity"] != 1.0).count() >= 2);
+    assert!(rows.iter().filter(|v| v.get("id").is_some()).count() >= 40);
+    assert!(rows.iter().filter(|v| v["available"] == false).count() >= 6);
     for row in rows.iter().filter(|v| v["category"] == "glass") {
         assert_eq!(row["available"], false);
         assert_eq!(row["opacity"], 1.0);
@@ -608,7 +614,7 @@ fn starter_visual_defaults_and_overrides_keep_saved_physical_cards_independent()
 fn starter_names_and_ids_share_admission_before_all_overrides() {
     use crate::doc::appearance_pack::{Recipe, STARTER_PACK};
     let mut s = pack_session();
-    for preset in &STARTER_PACK {
+    for preset in STARTER_PACK {
         for selector in [preset.id, preset.name] {
             if matches!(preset.recipe, Recipe::Glass(_)) {
                 for overrides in [

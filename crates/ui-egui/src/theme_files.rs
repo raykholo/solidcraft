@@ -614,36 +614,8 @@ pub fn export(name: &str, base: Base, t: &Tokens) -> Value {
     json!({"format": FORMAT, "name": name, "base": base, "colors": colors, "radii": radii, "borders": borders, "icon_palette": icon_palette})
 }
 
-/// The theme files that come with SolidCraft (original files; Gruvbox, Tokyo Night, Solarized, Nord, Nosferatu and Catppuccin map open-source palettes, MIT; Okibi and Akari map the Okibi design system; Clay and Clay Dark are original warm paper and charcoal palettes; CGA keeps to the 16 colours of the IBM Color Graphics Adapter; 1-bit and 1-bit Dark are original black-and-white palettes).
-const BUILTIN: [(&str, &str); 27] = [
-    ("gruvbox-dark", include_str!("../../../assets/styles/ui/themes/gruvbox-dark.json")),
-    ("gruvbox-dark-hard", include_str!("../../../assets/styles/ui/themes/gruvbox-dark-hard.json")),
-    ("gruvbox-dark-soft", include_str!("../../../assets/styles/ui/themes/gruvbox-dark-soft.json")),
-    ("gruvbox-light", include_str!("../../../assets/styles/ui/themes/gruvbox-light.json")),
-    ("gruvbox-light-hard", include_str!("../../../assets/styles/ui/themes/gruvbox-light-hard.json")),
-    ("gruvbox-light-soft", include_str!("../../../assets/styles/ui/themes/gruvbox-light-soft.json")),
-    ("solidcraft-95", include_str!("../../../assets/styles/ui/themes/solidcraft-95.json")),
-    ("1-bit", include_str!("../../../assets/styles/ui/themes/1-bit.json")),
-    ("1-bit-dark", include_str!("../../../assets/styles/ui/themes/1-bit-dark.json")),
-    ("platinum-9", include_str!("../../../assets/styles/ui/themes/platinum-9.json")),
-    ("cupertino", include_str!("../../../assets/styles/ui/themes/cupertino.json")),
-    ("green-phosphor", include_str!("../../../assets/styles/ui/themes/green-phosphor.json")),
-    ("amber-phosphor", include_str!("../../../assets/styles/ui/themes/amber-phosphor.json")),
-    ("blueprint", include_str!("../../../assets/styles/ui/themes/blueprint.json")),
-    ("one-dark", include_str!("../../../assets/styles/ui/themes/one-dark.json")),
-    ("tokyo-night", include_str!("../../../assets/styles/ui/themes/tokyo-night.json")),
-    ("solarized-light", include_str!("../../../assets/styles/ui/themes/solarized-light.json")),
-    ("nord", include_str!("../../../assets/styles/ui/themes/nord.json")),
-    ("high-contrast", include_str!("../../../assets/styles/ui/themes/high-contrast.json")),
-    ("graphite", include_str!("../../../assets/styles/ui/themes/graphite.json")),
-    ("nosferatu", include_str!("../../../assets/styles/ui/themes/nosferatu.json")),
-    ("catppuccin-mocha", include_str!("../../../assets/styles/ui/themes/catppuccin-mocha.json")),
-    ("okibi", include_str!("../../../assets/styles/ui/themes/okibi.json")),
-    ("akari", include_str!("../../../assets/styles/ui/themes/akari.json")),
-    ("clay", include_str!("../../../assets/styles/ui/themes/clay.json")),
-    ("clay-dark", include_str!("../../../assets/styles/ui/themes/clay-dark.json")),
-    ("cga", include_str!("../../../assets/styles/ui/themes/cga.json")),
-];
+// Theme sources are collected at build time; picker order is validated below.
+include!(concat!(env!("OUT_DIR"), "/builtin_themes.rs"));
 
 /// The two-colour built-in themes (1-bit and 1-bit Dark): pure black and white, so a few looks
 /// other themes tell apart by colour are told apart by text or shape instead.
@@ -652,21 +624,45 @@ pub(crate) fn is_two_colour(id: &str) -> bool {
     matches!(id, "1-bit" | "1-bit-dark")
 }
 
-/// The built-in themes, read once (one that fails to read is left out; a test reads them all).
+/// The built-in themes, validated and ordered once; a test checks every shipped file.
 pub fn builtin() -> &'static [ThemeFile] {
     static THEMES: OnceLock<Vec<ThemeFile>> = OnceLock::new();
-    THEMES.get_or_init(|| {
-        BUILTIN
-            .iter()
-            .filter_map(|(id, text)| match parse(text) {
-                Ok(t) => Some(ThemeFile { id: (*id).to_string(), ..t }),
-                Err(e) => {
-                    log::error!("built-in theme {id}: {e}");
-                    None
-                }
-            })
-            .collect()
+    THEMES.get_or_init(|| match read_builtin(BUILTIN) {
+        Ok(themes) => themes,
+        Err(e) => {
+            log::error!("built-in themes: {e}");
+            Vec::new()
+        }
     })
+}
+
+fn read_builtin(sources: &[(&str, &str)]) -> Result<Vec<ThemeFile>, String> {
+    let mut orders = std::collections::BTreeSet::new();
+    let mut ids = std::collections::BTreeSet::new();
+    let mut themes = Vec::new();
+    for &(id, text) in sources {
+        if !ids.insert(id) || id.is_empty() {
+            return Err(format!("empty or duplicate theme id: {id}"));
+        }
+        if text.len() > MAX_BYTES {
+            return Err(format!("theme {id} exceeds the file size limit"));
+        }
+        let value: Value = serde_json::from_str(text).map_err(|e| format!("theme {id}: {e}"))?;
+        let order = value.get("order").and_then(Value::as_u64).ok_or_else(|| format!("theme {id}: order must be a nonnegative integer"))?;
+        if !orders.insert(order) {
+            return Err(format!("theme {id}: duplicate order {order}"));
+        }
+        if value.get("provenance").and_then(Value::as_str).is_none_or(|s| s.trim().is_empty()) {
+            return Err(format!("theme {id}: missing provenance"));
+        }
+        let theme = from_value(&value).map_err(|e| format!("theme {id}: {e}"))?;
+        themes.push((order, ThemeFile { id: id.into(), ..theme }));
+    }
+    if themes.is_empty() {
+        return Err("no built-in themes".into());
+    }
+    themes.sort_by_key(|(order, _)| *order);
+    Ok(themes.into_iter().map(|(_, theme)| theme).collect())
 }
 
 /// The theme a `theme` preference names: built in, or imported. `None` for dark, light, system
@@ -1058,6 +1054,60 @@ mod tests {
         assert_eq!((t.body_edge, t.selected_ink), (ink, paper), "{id}");
         // Thumbnails and other pictures keep their own pixels: the tint stays neutral white.
         assert_eq!(t.file_image_tint, Color32::WHITE, "{id}");
+    }
+
+    #[test]
+    fn builtin_order_preserves_the_existing_picker_sequence() {
+        let original: &[&str] = &[
+            "gruvbox-dark",
+            "gruvbox-dark-hard",
+            "gruvbox-dark-soft",
+            "gruvbox-light",
+            "gruvbox-light-hard",
+            "gruvbox-light-soft",
+            "solidcraft-95",
+            "1-bit",
+            "1-bit-dark",
+            "platinum-9",
+            "cupertino",
+            "green-phosphor",
+            "amber-phosphor",
+            "blueprint",
+            "one-dark",
+            "tokyo-night",
+            "solarized-light",
+            "nord",
+            "high-contrast",
+            "graphite",
+            "nosferatu",
+            "catppuccin-mocha",
+            "okibi",
+            "akari",
+            "clay",
+            "clay-dark",
+            "cga",
+        ];
+        let themes = read_builtin(BUILTIN).unwrap();
+        let retained: Vec<_> = themes.iter().map(|t| t.id.as_str()).filter(|id| original.contains(id)).collect();
+        assert_eq!(retained, original);
+        assert!(BUILTIN.windows(2).all(|pair| pair[0].0 < pair[1].0), "source entries are sorted by id");
+    }
+
+    #[test]
+    fn builtin_metadata_rejects_missing_invalid_and_duplicate_order() {
+        let text =
+            |order: Value| json!({"format": FORMAT, "name": "Synthetic", "base": "dark", "provenance": "Original", "order": order}).to_string();
+        let good = text(json!(10));
+        assert!(read_builtin(&[("a", &good)]).is_ok());
+        let earlier = text(json!(5));
+        let ordered = read_builtin(&[("a", &good), ("b", &earlier)]).unwrap();
+        assert_eq!(ordered.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+        assert!(read_builtin(&[("a", &good), ("a", &earlier)]).is_err());
+        assert!(read_builtin(&[("a", &good), ("b", &good)]).is_err());
+        for order in [Value::Null, json!(-1), json!(1.5), json!("10")] {
+            assert!(read_builtin(&[("a", &text(order))]).is_err());
+        }
+        assert!(read_builtin(&[]).is_err());
     }
 
     #[test]

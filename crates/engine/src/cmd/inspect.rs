@@ -722,7 +722,7 @@ fn appearance_library(_s: &mut Session, _p: &Value) -> Result<Value> {
         value["category"] = json!(name.split(" - ").next().unwrap_or(name));
         Some(value)
     }));
-    for preset in &solidcraft_doc::appearance_pack::STARTER_PACK {
+    for preset in solidcraft_doc::appearance_pack::STARTER_PACK {
         let c = preset.preview_color();
         let pbr = preset.opaque_look().ok().and_then(|look| look.pbr);
         list.push(json!({"id":preset.id,"name":preset.name,"category":preset.category,"revision":preset.revision,

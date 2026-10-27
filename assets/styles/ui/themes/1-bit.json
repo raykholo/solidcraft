@@ -1,4 +1,6 @@
 {
+  "order": 75,
+  "provenance": "Original black-and-white palette",
   "base": "light",
   "colors": {
     "accent": "#000000",

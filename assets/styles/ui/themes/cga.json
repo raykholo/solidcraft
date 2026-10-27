@@ -1,4 +1,6 @@
 {
+  "order": 250,
+  "provenance": "Original mapping of the IBM Color Graphics Adapter palette",
   "base": "dark",
   "colors": {
     "accent": "#55ffff",

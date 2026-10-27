@@ -746,7 +746,7 @@ mod tests {
     #[test]
     fn navigation_preset_help_reaches_the_catalog() {
         let english = Locale::for_language("en");
-        for preset in &crate::prefs::NAV_PRESETS {
+        for preset in crate::prefs::NAV_PRESETS {
             let id = format!("nav.{}.help", preset.id);
             assert_eq!(english.text(&id), preset.help, "{id}");
         }

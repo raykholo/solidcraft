@@ -127,7 +127,7 @@ impl Kind {
 }
 
 /// Units a parameter or an expression may use: name, kind and size (mm or radians).
-pub const UNITS: [(&str, Kind, f64); 14] = [
+pub const UNITS: &[(&str, Kind, f64)] = &[
     ("mm", Kind::Length, 1.0),
     ("cm", Kind::Length, 10.0),
     ("m", Kind::Length, 1000.0),
@@ -145,7 +145,7 @@ pub const UNITS: [(&str, Kind, f64); 14] = [
 ];
 
 /// Functions an expression may call (name, signature) — for autocomplete and help.
-pub const FUNCTIONS: [(&str, &str); 23] = [
+pub const FUNCTIONS: &[(&str, &str)] = &[
     ("sin", "sin(angle)"),
     ("cos", "cos(angle)"),
     ("tan", "tan(angle)"),
@@ -172,7 +172,7 @@ pub const FUNCTIONS: [(&str, &str); 23] = [
 ];
 
 /// Constants an expression may use.
-pub const CONSTANTS: [&str; 2] = ["pi", "PI"];
+pub const CONSTANTS: &[&str] = &["pi", "PI"];
 
 /// Kind and size (mm or radians per unit) of a parameter's unit; empty means unit-less.
 pub fn unit_info(u: &str) -> Option<(Kind, f64)> {

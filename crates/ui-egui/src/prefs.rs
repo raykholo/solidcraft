@@ -33,7 +33,7 @@ use crate::tool_modifiers::ModifierCombo;
 use crate::ui_kit;
 use crate::viewport::NavMode;
 
-pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
+pub const UNITS: &[&str] = &["mm", "cm", "m", "in", "ft"];
 pub const OPENSCAD_NAV: &str = "openscad";
 pub const TOUCHPAD_NAV: &str = "touchpad";
 /// A mouse button that can drag the camera.
@@ -100,7 +100,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 10] = [
+pub const NAV_PRESETS: &[NavPreset] = &[
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -233,7 +233,7 @@ pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
 /// Stable control-channel names; presentation labels may be shorter.
-pub const PAGES: [&str; 9] = ["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins"];
+pub const PAGES: &[&str] = &["General", "Interface", "Design", "Navigation", "Keyboard Shortcuts", "Sketch", "Graphics", "AI", "Plugins"];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_INTERFACE: usize = 1;
 pub const PAGE_DESIGN: usize = 2;
@@ -243,7 +243,7 @@ pub const PAGE_SKETCH: usize = 5;
 pub const PAGE_GRAPHICS: usize = 6;
 pub const PAGE_AI: usize = 7;
 pub const PAGE_PLUGINS: usize = 8;
-const WINDOW_PAGES: [ui_kit::WindowPage<SolveApp>; 9] = [
+const WINDOW_PAGES: &[ui_kit::WindowPage<SolveApp>] = &[
     ui_kit::WindowPage { icon: "settings", label: "ui.general", group: None, handle: "prefs:page:General", scroll: true, draw: window_page::<0> },
     ui_kit::WindowPage {
         icon: "settings_palette",
@@ -434,7 +434,7 @@ fn window_page<const INDEX: usize>(ui: &mut egui::Ui, app: &mut SolveApp) {
     page(app, ui, &Tokens::get());
 }
 
-pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("system", "System")];
+pub const THEMES: &[(&str, &str)] = &[("dark", "Dark"), ("light", "Light"), ("system", "System")];
 pub const MSAA: [u32; 4] = [1, 2, 4, 8];
 /// Supersampling factors (#1288): off, 1.5× and 2× the viewport's pixels each way.
 pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
@@ -1759,7 +1759,7 @@ pub fn show_mm_bare(app: &SolveApp, v: f64) -> String {
 }
 
 /// The window system choices (`Prefs::window_system`, #3083).
-pub const WINDOW_SYSTEMS: [&str; 3] = ["auto", "wayland", "x11"];
+pub const WINDOW_SYSTEMS: &[&str] = &["auto", "wayland", "x11"];
 /// winit's issue for dropping files onto a window on native Wayland, which the note links to.
 pub const WAYLAND_DROP_ISSUE: &str = "https://github.com/rust-windowing/winit/issues/1881";
 
@@ -1770,11 +1770,12 @@ pub const WAYLAND_DROP_ISSUE: &str = "https://github.com/rust-windowing/winit/is
 fn window_system_row(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = Tokens::get();
     let label = |id: &str| crate::i18n::tr(&format!("ui.window_system_{id}")).to_string();
-    let labels = WINDOW_SYSTEMS.map(label);
+    let labels: Vec<_> = WINDOW_SYSTEMS.iter().copied().map(label).collect();
+    let labels: Vec<_> = labels.iter().map(String::as_str).collect();
     // The note below says that it applies after a restart, and which one runs now.
     let response = ui.allocate_ui_with_layout(egui::vec2(t.form_card_width, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
         let mut selected = WINDOW_SYSTEMS.iter().position(|id| *id == app.preferences.window_system).unwrap_or(0);
-        if ui_kit::segmented(ui, &mut selected, &labels.each_ref().map(String::as_str), ui_kit::Segments::default())
+        if ui_kit::segmented(ui, &mut selected, &labels, ui_kit::Segments::default())
             && let Some(id) = WINDOW_SYSTEMS.get(selected)
         {
             app.preferences.window_system = (*id).into();
@@ -1916,7 +1917,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .actions("OK", "Cancel", Some("Apply"));
     let window = if capturing { window.keep_open_on_escape() } else { window };
     let mut selected = app.prefs_window.section;
-    let (closed, action) = window.show_pages_with_header(ctx, &mut selected, &WINDOW_PAGES, app, search_header, clear_search, |ui| {
+    let (closed, action) = window.show_pages_with_header(ctx, &mut selected, WINDOW_PAGES, app, search_header, clear_search, |ui| {
         if ui_kit::button(ui, crate::i18n::tr("ui.restore_defaults"), ui_kit::Button::Normal)
             .on_hover_text(crate::i18n::tr("ui.reset_the_settings_on_this_page"))
             .clicked()
