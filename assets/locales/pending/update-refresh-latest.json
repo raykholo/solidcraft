@@ -1,0 +1,27 @@
+{
+  "en": {
+    "update.refresh_checking": "Checking for the newest release…",
+    "update.refresh_fallback": "Could not check for a newer release; updating to {version}, found earlier.",
+    "update.refresh_selected": "Updating to {version}."
+  },
+  "ja": {
+    "update.refresh_checking": "最新のリリースを確認中…",
+    "update.refresh_fallback": "新しいリリースを確認できませんでした。以前見つかった {version} に更新します。",
+    "update.refresh_selected": "{version} に更新中。"
+  },
+  "zh": {
+    "update.refresh_checking": "正在检查最新版本…",
+    "update.refresh_fallback": "无法检查更新的版本；将更新至先前找到的 {version}。",
+    "update.refresh_selected": "正在更新至 {version}。"
+  },
+  "de": {
+    "update.refresh_checking": "Neueste Version wird gesucht…",
+    "update.refresh_fallback": "Die Suche nach einer neueren Version ist fehlgeschlagen; die zuvor gefundene Version {version} wird installiert.",
+    "update.refresh_selected": "Version {version} wird installiert."
+  },
+  "ko": {
+    "update.refresh_checking": "최신 릴리스 확인 중…",
+    "update.refresh_fallback": "새 릴리스를 확인하지 못했습니다. 이전에 찾은 {version}(으)로 업데이트합니다.",
+    "update.refresh_selected": "{version}(으)로 업데이트 중."
+  }
+}
