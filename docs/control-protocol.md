@@ -329,6 +329,7 @@ labels; `prefs:measure_axis_distances` identifies the checkbox.
 One setting per line, sorted by name. A change that adds a setting adds its own line in order, so two such changes only meet when their settings are neighbours.
 
 - `angle_decimals`
+- `animated_background` (default false: the active theme's viewport decoration, such as Digital Rain's falling code; the theme must ask for it, and `ui.screenshot` and `ui.render` omit it)
 - `auto_operation` (default true: feature windows choose Join, New Body or Cut from what their material touches until one is picked; false: each keeps the operation it opens with, Extrude its own Join or Cut)
 - `browser_bodies_folders` (`several` (default): a component with one body and no groups lists it straight under the component in the browser, without a Bodies folder; `always`; `never`: components list their bodies and groups straight under them, and the folder's menu items are on the component's menu; the design's own Bodies folder, and one hidden with its eye, always show; #4217)
 - `check_updates` (default true; [updates](book/src/guide/updates.md))
@@ -396,6 +397,10 @@ Other `ui.prefs` parameters:
 `ui.workspace {workspace?: "design" | "render"}` reads or changes the active workspace.
 Entering Render requires finishing the current modelling operation; returning restores
 the Design camera. See [the integrated Render workspace](render-workspace.md).
+
+`ui.prefs {"animated_background": true}` opts in to the active theme's viewport decoration.
+The theme must request `"background": {"effect": "rain"}`; the setting defaults to false.
+`ui.screenshot` and `ui.render` omit the decoration.
 
 ### Sketch alignment guides
 
