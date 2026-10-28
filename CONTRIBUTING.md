@@ -300,7 +300,9 @@ and a fresh CI run:
 - **Design format**: one file per change, never an edit to a shared number (above).
 - **New UI strings and attribution rows**: one new file per change, `assets/locales/pending/<slug>.json`
   and `attribution/pending/<slug>.md`, instead of editing the catalogs or the ATTRIBUTION.md table;
-  `cargo xtask fold-pending` folds them on `main` (see the README in each folder).
+  `cargo xtask fold-pending` folds them on `main` (see the README in each folder). A new English
+  message also needs every catalog delivered complete (`COMPLETE` in `crates/ui-egui/src/i18n.rs`:
+  today ar, he, ja, vi, and zh) in the same pending file; `cargo xtask i18n --check` reports any gap.
 
 ## Sending a change
 
