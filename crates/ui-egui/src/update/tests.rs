@@ -685,6 +685,7 @@ fn an_unmanaged_install_updates_itself_as_before() {
     assert!(h.widget("Update now").is_some());
     assert!(h.widget("Download").is_some());
     assert!(h.widget("Update available: update SolidCraft in ArtCraft Launcher").is_none());
+}
 
 #[test]
 fn periodic_checks_refresh_the_offered_label() {
