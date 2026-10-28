@@ -5,17 +5,35 @@
     "prefs.theme_paste": "Paste theme",
     "prefs.theme_paste_none": "The clipboard holds no SolidCraft theme"
   },
+  "ar": {
+    "prefs.theme_file_or_paste": "ملف أو لصق",
+    "prefs.theme_import_hint": "انقر لاختيار ملف سمة، أو أفلت ملفًا هنا، أو اضغط Ctrl+V (Cmd+V على Mac) بعد نسخ سمة",
+    "prefs.theme_paste": "لصق السمة",
+    "prefs.theme_paste_none": "لا تحتوي الحافظة على سمة SolidCraft"
+  },
   "de": {
     "prefs.theme_file_or_paste": "Datei oder Einfügen",
     "prefs.theme_import_hint": "Klicken, um eine Designdatei zu wählen, eine hierher ziehen oder mit kopiertem Design Strg+V (Cmd+V auf dem Mac) drücken",
     "prefs.theme_paste": "Design einfügen",
     "prefs.theme_paste_none": "Die Zwischenablage enthält kein SolidCraft-Design"
   },
+  "he": {
+    "prefs.theme_file_or_paste": "קובץ או הדבקה",
+    "prefs.theme_import_hint": "לחצו כדי לבחור קובץ ערכת נושא, שחררו קובץ כאן, או הקישו Ctrl+V ‏(Cmd+V ב-Mac) אחרי שהעתקתם ערכת נושא",
+    "prefs.theme_paste": "הדבקת ערכת נושא",
+    "prefs.theme_paste_none": "בלוח אין ערכת נושא של SolidCraft"
+  },
   "ja": {
     "prefs.theme_file_or_paste": "ファイルまたは貼り付け",
     "prefs.theme_import_hint": "クリックしてテーマファイルを選ぶか、ここにドロップするか、テーマをコピーした状態で Ctrl+V（Mac では Cmd+V）を押します",
     "prefs.theme_paste": "テーマを貼り付け",
     "prefs.theme_paste_none": "クリップボードに SolidCraft のテーマがありません"
+  },
+  "vi": {
+    "prefs.theme_file_or_paste": "tệp hoặc dán",
+    "prefs.theme_import_hint": "Nhấp để chọn tệp giao diện, thả tệp vào đây, hoặc nhấn Ctrl+V (Cmd+V trên Mac) khi đã sao chép một giao diện",
+    "prefs.theme_paste": "Dán giao diện",
+    "prefs.theme_paste_none": "Bộ nhớ tạm không chứa giao diện SolidCraft nào"
   },
   "zh": {
     "prefs.theme_file_or_paste": "文件或粘贴",
