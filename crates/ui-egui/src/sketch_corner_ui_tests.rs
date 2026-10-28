@@ -748,6 +748,10 @@ fn centre_circle_clicked_through_a_line_end_stays_on_it() {
     let sid = h.app.session.active_sketch.unwrap();
     h.step(&json!({"start":"sketch.circle.center"})).unwrap();
     for at in [[20, 30, 0], [40, 30, 0]] {
+        // The line's end lands in the view's bottom-right corner, where notices stack and take clicks
+        // (#7893): this test is about the circle, so the transient status notice goes before each click.
+        h.app.status = None;
+        h.frame();
         h.step(&json!({"move":{"world":at}})).unwrap();
         h.step(&json!({"click":{"world":at}})).unwrap();
     }
