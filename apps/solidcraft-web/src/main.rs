@@ -271,6 +271,10 @@ mod web {
                 !companion
             });
             for (name, bytes, intent) in incoming {
+                if intent == Intent::Theme {
+                    solidcraft_ui_egui::prefs::import_theme_bytes(&mut self.app, bytes);
+                    continue;
+                }
                 let design = solidcraft_engine::io::is_design_path(&name);
                 let path = if design && intent == Intent::Open {
                     // A design from the computer is kept in the browser (a copy), so Save works.
@@ -287,7 +291,7 @@ mod web {
                 };
                 match intent {
                     Intent::Open => self.app.open_path(&path),
-                    Intent::Insert => self.app.drop_path(&path),
+                    Intent::Insert | Intent::Theme => self.app.drop_path(&path),
                 }
                 self.files.panel.set(false);
             }
@@ -632,7 +636,8 @@ mod web {
                 ctx.request_repaint_after(delay);
             }
             if self.launch.persists() {
-                files::take_drops(&self.files, raw);
+                let theme = solidcraft_ui_egui::prefs::theme_drop_target(&self.app, ctx);
+                files::take_drops(&self.files, raw, theme);
             } else {
                 raw.dropped_files.clear();
             }

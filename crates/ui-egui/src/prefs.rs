@@ -2758,18 +2758,41 @@ pub fn take_theme_paste(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Files dropped on the theme Import tile are themes to import, not designs to open (#8226).
 pub fn take_theme_drops(app: &mut SolveApp, ctx: &egui::Context) {
-    let Some(rect) = app.prefs_window.import_tile.filter(|_| app.prefs_window.open) else { return };
-    if !ctx.input(|i| !i.raw.dropped_files.is_empty() && i.pointer.latest_pos().is_some_and(|p| rect.contains(p))) {
+    if !theme_drop_target(app, ctx) || !ctx.input(|i| !i.raw.dropped_files.is_empty()) {
         return;
     }
     let files = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
     for f in files.iter().take(8) {
-        let text = f
-            .bytes()
-            .and_then(|b| if b.len() > crate::theme_files::MAX_BYTES { Err("the file is too large for a theme".into()) } else { Ok(b) })
-            .and_then(|b| String::from_utf8(b).map_err(|_| "not a theme file".to_string()));
-        import_theme_text(app, text);
+        // The browser reads dropped files only asynchronously: the web shell takes them first and
+        // hands a theme's bytes to `import_theme_bytes` (#8226), so none reach this on wasm.
+        #[cfg(not(target_arch = "wasm32"))]
+        match f.bytes() {
+            Ok(bytes) => import_theme_bytes(app, bytes),
+            Err(e) => import_theme_text(app, Err(e.to_string())),
+        }
+        #[cfg(target_arch = "wasm32")]
+        let _ = f;
     }
+}
+
+/// Whether files dropped now land on the Import tile: the Preferences window is open and the
+/// pointer was last seen over the tile.
+pub fn theme_drop_target(app: &SolveApp, ctx: &egui::Context) -> bool {
+    app.prefs_window
+        .import_tile
+        .filter(|_| app.prefs_window.open)
+        .is_some_and(|rect| ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.contains(p)))
+}
+
+/// A file dropped on the Import tile, as bytes: imported when it is a theme, refused with the reason
+/// otherwise.
+pub fn import_theme_bytes(app: &mut SolveApp, bytes: Vec<u8>) {
+    let text = if bytes.len() > crate::theme_files::MAX_BYTES {
+        Err("the file is too large for a theme".to_string())
+    } else {
+        String::from_utf8(bytes).map_err(|_| "not a theme file".to_string())
+    };
+    import_theme_text(app, text);
 }
 
 pub fn import_theme(app: &mut SolveApp, v: &serde_json::Value) -> Result<String, String> {
