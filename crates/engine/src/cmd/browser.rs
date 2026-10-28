@@ -56,7 +56,7 @@ pub static COMMANDS: &[CommandSpec] = &[
          Display only: open/closed rows are not saved in the design and are not an undo step → open, open_by_default, closed_by_default",
     ),
     CommandSpec::new("browser.collapse_all", "Collapse All", collapse_all).icon("folder").noundo().params(
-        "path?: [occurrence ids]; component?: id; omit both for the whole tree (the design row stays open so the first level remains visible). \
+        "path?: [occurrence ids]; component?: id; omit both for the whole tree. The row it starts from (the design row for the whole tree) stays open, so its first level remains visible. \
          Display only; not an undo step → open, open_by_default, closed_by_default",
     ),
 ];
@@ -562,8 +562,14 @@ fn fold_tree(s: &mut Session, p: &Value, open: bool, cmd: &str) -> Result<Value>
         FoldScope::Tree => walk_fold(s, &[], true, &mut keys, cmd)?,
         FoldScope::Occurrence(path) => walk_fold(s, path, false, &mut keys, cmd)?,
     }
-    if !open && matches!(scope, FoldScope::Tree) {
-        keys.open.remove("c0");
+    if !open {
+        // Collapse All folds what is under the clicked row; the row itself stays open.
+        let own = match &scope {
+            FoldScope::Tree => "c0".to_string(),
+            FoldScope::Component(id) => format!("c{id}"),
+            FoldScope::Occurrence(path) => occurrence_fold_key(path),
+        };
+        keys.open.remove(&own);
     }
     if keys.open.len().saturating_add(keys.closed.len()) > MAX_FOLD_KEYS {
         return Err(bad(cmd, "expand/collapse exceeds 10000 browser rows"));
@@ -1993,7 +1999,7 @@ mod tests {
 
         let below = run(&mut s, "browser.collapse_all", json!({"path": [occ]}));
         let open = strs(&below, "open_by_default");
-        assert!(open.contains(&format!("o:{occ}")), "{open:?}");
+        assert!(!open.contains(&format!("o:{occ}")), "the clicked row stays open: {open:?}");
         assert!(!open.contains(&"c0/bodies".into()), "{open:?}");
         assert!(strs(&below, "closed_by_default").iter().all(|k| !k.starts_with("c0") && k != "origin"), "{below}");
 
