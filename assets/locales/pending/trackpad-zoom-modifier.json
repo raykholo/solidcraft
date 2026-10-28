@@ -1,0 +1,66 @@
+{
+  "ar": {
+    "prefs.trackpad_zoom_modifier": "التكبير بالتمرير بإصبعين أثناء الضغط على",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "اضغط على هذا المفتاح فقط للتكبير عند المؤشر بالتمرير العمودي. يحافظ الإيقاف على سلوك التمرير الحالي.",
+    "prefs.trackpad_zoom_modifier.off": "إيقاف"
+  },
+  "de": {
+    "prefs.trackpad_zoom_modifier": "Mit zwei Fingern zoomen bei gedrückter Taste",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Strg",
+    "prefs.trackpad_zoom_modifier.help": "Nur diese Taste gedrückt halten, um durch vertikales Scrollen am Zeiger zu zoomen. Aus behält das bisherige Scrollverhalten bei.",
+    "prefs.trackpad_zoom_modifier.off": "Aus"
+  },
+  "en": {
+    "prefs.trackpad_zoom_modifier": "Zoom with two-finger scroll while holding",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "Hold only this key to zoom at the pointer with vertical scroll. Off keeps the existing scroll behaviour.",
+    "prefs.trackpad_zoom_modifier.off": "Off"
+  },
+  "he": {
+    "prefs.trackpad_zoom_modifier": "שינוי תקריב בגלילה בשתי אצבעות בזמן החזקת",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "יש להחזיק רק מקש זה כדי לשנות תקריב ליד המצביע בגלילה אנכית. כיבוי שומר על התנהגות הגלילה הקיימת.",
+    "prefs.trackpad_zoom_modifier.off": "כבוי"
+  },
+  "ja": {
+    "prefs.trackpad_zoom_modifier": "2本指スクロールでズームする修飾キー",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "このキーだけを押しながら縦にスクロールすると、ポインター位置を基準にズームします。オフでは従来のスクロール動作を維持します。",
+    "prefs.trackpad_zoom_modifier.off": "オフ"
+  },
+  "ko": {
+    "prefs.trackpad_zoom_modifier": "다음 키를 누른 채 두 손가락으로 스크롤하여 확대/축소",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "이 키만 누른 채 세로로 스크롤하면 포인터 위치를 기준으로 확대/축소합니다. 끄면 기존 스크롤 동작을 유지합니다.",
+    "prefs.trackpad_zoom_modifier.off": "끄기"
+  },
+  "vi": {
+    "prefs.trackpad_zoom_modifier": "Thu phóng bằng cuộn hai ngón tay khi giữ",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "Chỉ giữ phím này để thu phóng tại con trỏ bằng cuộn dọc. Tắt giữ nguyên hành vi cuộn hiện tại.",
+    "prefs.trackpad_zoom_modifier.off": "Tắt"
+  },
+  "zh": {
+    "prefs.trackpad_zoom_modifier": "按住以下按键时用双指滚动缩放",
+    "prefs.trackpad_zoom_modifier.alt": "⌥ / Alt",
+    "prefs.trackpad_zoom_modifier.cmd": "⌘",
+    "prefs.trackpad_zoom_modifier.ctrl": "Ctrl",
+    "prefs.trackpad_zoom_modifier.help": "仅按住此键并垂直滚动，即可以指针位置为中心缩放。关闭时保留现有滚动行为。",
+    "prefs.trackpad_zoom_modifier.off": "关闭"
+  }
+}

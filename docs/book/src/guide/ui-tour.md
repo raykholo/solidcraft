@@ -44,6 +44,7 @@
   off: scroll zooms like the wheel); mouse wheels zoom and the thumb wheel pans sideways.
   On Linux, pinch needs the native Wayland window system
   (see [Troubleshooting](troubleshooting.md)).
+  Hold **Cmd** (macOS) or **Ctrl** (Windows/Linux) to zoom with vertical two-finger scroll; Navigation › Zoom with two-finger scroll while holding lets you choose Alt, Control, or Off.
   With the **Fusion** preset and two-finger pan enabled, hold **Shift** while scrolling with
   two fingers to orbit freely instead of panning. No click is needed. Releasing Shift returns
   to panning, even during the same gesture. Shift does not snap this gesture to standard views;

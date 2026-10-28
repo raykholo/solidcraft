@@ -9323,6 +9323,129 @@ mod tests {
     }
 
     #[test]
+    fn trackpad_zoom_modifier_zooms_without_pan_or_tail() {
+        use crate::prefs::TrackpadZoomModifier as Z;
+        use egui::{Modifiers as M, MouseWheelUnit as U, TouchPhase as P};
+        for preset in ["fusion", crate::prefs::TOUCHPAD_NAV] {
+            for (chosen, held, zooms) in [
+                (Z::Cmd, M::COMMAND, true),
+                (Z::Off, M::COMMAND, false),
+                (Z::Alt, M::ALT, true),
+                (Z::Alt, M::COMMAND, false),
+                (Z::Ctrl, M::CTRL, true),
+            ] {
+                for bracket in [true, false] {
+                    for reverse in [false, true] {
+                        let mut h = crate::scenario::Harness::new();
+                        h.app.preferences.nav = preset.into();
+                        h.app.preferences.trackpad_zoom_modifier = chosen;
+                        h.app.preferences.zoom_reverse = reverse;
+                        h.app.preferences.zoom_to_cursor = false;
+                        h.call("ui.move", json!({"x":800,"y":500}));
+                        let before = h.app.cam;
+                        let event = |phase| egui::Event::MouseWheel { unit: U::Point, delta: vec2(60.0, 120.0), modifiers: held, phase };
+                        if bracket {
+                            h.app.synthetic.push(event(P::Start));
+                            h.frame();
+                        }
+                        h.app.synthetic.push(event(P::Move));
+                        h.frame();
+                        if bracket {
+                            h.app.synthetic.push(event(P::End));
+                            h.frame();
+                        }
+                        let expected =
+                            if zooms { before.half_height() * (-0.18 * crate::prefs::zoom_sign(&h.app)).exp() } else { before.half_height() };
+                        assert!((h.app.cam.half_height() - expected).abs() < 1e-6, "{preset}, {chosen:?}, {held:?}");
+                        assert_eq!(h.app.cam.target, before.target);
+                        assert_eq!(h.app.cam.back(), before.back());
+                        let after = h.app.cam;
+                        h.frames(30);
+                        assert_eq!(h.app.cam, after, "modifier scroll must not drift");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn trackpad_zoom_modifier_ignores_horizontal_only_scroll() {
+        for chosen in [crate::prefs::TrackpadZoomModifier::Cmd, crate::prefs::TrackpadZoomModifier::Alt] {
+            let mut h = crate::scenario::Harness::new();
+            h.app.preferences.trackpad_zoom_modifier = chosen;
+            h.call("ui.move", json!({"x":800,"y":500}));
+            let before = h.app.cam;
+            for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+                h.app.synthetic.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(120.0, 0.0),
+                    modifiers: chosen.modifiers().unwrap(),
+                    phase,
+                });
+                h.frame();
+            }
+            h.frames(30);
+            assert_eq!(h.app.cam, before, "{chosen:?}: horizontal scroll must be ignored");
+        }
+    }
+
+    #[test]
+    fn trackpad_zoom_modifier_matches_wheel_speed_and_pointer_anchor() {
+        for preset in ["fusion", crate::prefs::TOUCHPAD_NAV] {
+            for unit in [egui::MouseWheelUnit::Point, egui::MouseWheelUnit::Line] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.preferences.nav = preset.into();
+                h.app.preferences.smooth_wheel_zoom = false;
+                h.call("engine.execute", json!({"command":"solid.box","params":{"length":40,"width":30,"height":20}}));
+                h.call("ui.camera", json!({"fit":true}));
+                h.call("ui.move", json!({"x":800,"y":500}));
+                let before = h.app.cam;
+                let event = |modifiers| egui::Event::MouseWheel {
+                    unit,
+                    delta: vec2(0.0, if unit == egui::MouseWheelUnit::Point { 120.0 } else { 3.0 }),
+                    modifiers,
+                    phase: egui::TouchPhase::Move,
+                };
+                h.app.synthetic.push(event(egui::Modifiers::NONE));
+                h.frame();
+                let wheel = h.app.cam;
+                h.frames(30);
+                h.app.cam = before;
+                h.step(&json!({"shot":"trackpad-zoom-modifier-before"})).unwrap();
+                h.app.synthetic.push(event(egui::Modifiers::COMMAND));
+                h.frame();
+                assert_eq!(h.app.cam, wheel, "{preset}, {unit:?}: same speed and cursor anchor as wheel");
+                assert_ne!(h.app.cam.target, before.target, "off-centre zoom must preserve its pointer anchor");
+                h.step(&json!({"shot":"trackpad-zoom-modifier-after"})).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn trackpad_zoom_modifier_rejects_nonfinite_scroll() {
+        for preset in ["fusion", crate::prefs::TOUCHPAD_NAV] {
+            for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut h = crate::scenario::Harness::new();
+                h.app.preferences.nav = preset.into();
+                h.call("ui.move", json!({"x":800,"y":500}));
+                let before = h.app.cam;
+                for phase in [egui::TouchPhase::Start, egui::TouchPhase::Move, egui::TouchPhase::End] {
+                    h.app.synthetic.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, invalid),
+                        modifiers: egui::Modifiers::COMMAND,
+                        phase,
+                    });
+                    h.frame();
+                }
+                h.frames(10);
+                assert!(h.app.cam.is_valid());
+                assert_eq!(h.app.cam, before);
+            }
+        }
+    }
+
+    #[test]
     fn trackpad_two_finger_scroll_pans_without_zooming() {
         let mut h = crate::scenario::Harness::new();
         assert!(h.app.preferences.trackpad_pan, "two-finger pan is the default");
