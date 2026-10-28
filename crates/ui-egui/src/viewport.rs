@@ -4685,6 +4685,9 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<
     }
     let view = crate::shell::content_rect(app, viewport);
     let mut free = crate::viewport_layout::free_rect(view, &obstacles).shrink(t.space_8);
+    if ToastPlace::current(ui.ctx()) == ToastPlace::Corner {
+        free = corner_free(view, &obstacles);
+    }
     // The note offering to stand up a file just opened from a program not known to save Y up
     // (#7717): the shared toast with its buttons, which go by themselves and never block input.
     if let Some(text) = crate::stand_up::note_due(app, ui.ctx()) {
@@ -4770,6 +4773,42 @@ fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Rect) -> Vec<
     shown
 }
 
+/// Where toasts stack (Preferences › Interface › Notices, #7893).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToastPlace {
+    /// One column in the view's bottom-right corner, every toast `TOAST_WIDTH` wide, buttons as in
+    /// the dialogs: right-aligned, dismissals first and the main action right-most.
+    #[default]
+    Corner,
+    /// At the bottom centre, above the view toolbar, each as wide as its text (as before #7893).
+    /// Also what a value this version doesn't know reads as (`prefs::lenient`).
+    Centre,
+}
+
+impl ToastPlace {
+    pub(crate) fn publish(self, ctx: &egui::Context) {
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("sc_toast_place"), self));
+    }
+
+    pub(crate) fn current(ctx: &egui::Context) -> Self {
+        ctx.data(|data| data.get_temp(egui::Id::new("sc_toast_place"))).unwrap_or_default()
+    }
+}
+
+/// Every toast's width in the corner stack: room for three buttons on one row; longer text wraps.
+pub(crate) const TOAST_WIDTH: f32 = 340.0;
+
+/// Where the corner stack may go: the largest free rect in a `TOAST_WIDTH` column at the right of
+/// `view`, clear of `obstacles` (the axis view and cube at the top, the view toolbar when a narrow
+/// window brings it under the column, docked panels), less the usual margin.
+pub(crate) fn corner_free(view: Rect, obstacles: &[Rect]) -> Rect {
+    let t = Tokens::get();
+    let left = (view.right() - TOAST_WIDTH - 2.0 * t.space_8).max(view.left());
+    let column = Rect::from_min_max(pos2(left, view.top()), view.max);
+    crate::viewport_layout::free_rect(column, obstacles).shrink(t.space_8)
+}
+
 /// What a toast's button is for, which sets its look and where it goes: the main action first
 /// (the accent button), then an alternative, then the quiet dismissals.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4810,6 +4849,49 @@ fn toast_action_spots(buttons: &[(f32, ToastKind)], row_width: f32, gap: f32, he
     spots
 }
 
+/// The corner stack's buttons, as the dialogs place theirs: right-aligned, dismissals first, then
+/// the alternative, then the main action right-most. Rows fill from the main action leftwards; a
+/// button that doesn't fit starts a row above, so the row with the main action is the bottom one.
+/// Positions are relative to the rows' top left, within `row_width`.
+fn toast_action_spots_trailing(buttons: &[(f32, ToastKind)], row_width: f32, gap: f32, height: f32) -> Vec<Rect> {
+    let rank = |kind: ToastKind| match kind {
+        ToastKind::Dismiss => 0,
+        ToastKind::Secondary => 1,
+        ToastKind::Primary => 2,
+    };
+    let mut order: Vec<usize> = (0..buttons.len()).collect();
+    order.sort_by_key(|&i| rank(buttons[i].1));
+    let mut rows: Vec<Vec<usize>> = Vec::new();
+    let mut used = 0.0_f32;
+    for &i in order.iter().rev() {
+        let width = buttons[i].0;
+        match rows.last_mut() {
+            Some(row) if used + gap + width <= row_width => {
+                row.push(i);
+                used += gap + width;
+            }
+            _ => {
+                rows.push(vec![i]);
+                used = width;
+            }
+        }
+    }
+    let mut spots = vec![Rect::NOTHING; buttons.len()];
+    let count = rows.len();
+    for (k, row) in rows.iter().enumerate() {
+        let y = (count - 1 - k) as f32 * (height + gap);
+        let mut x = row_width;
+        for &i in row {
+            x -= buttons[i].0;
+            if let Some(spot) = spots.get_mut(i) {
+                *spot = Rect::from_min_size(pos2(x, y), vec2(buttons[i].0, height));
+            }
+            x -= gap;
+        }
+    }
+    spots
+}
+
 /// What leads a toast's text: a dot (red for an error) or a spinner.
 #[derive(Clone, Copy)]
 enum ToastLead {
@@ -4834,16 +4916,21 @@ fn paint_toast_with(
     lead: ToastLead,
     actions: &[(&str, ToastKind)],
 ) -> Option<(Rect, Option<usize>, Vec<Rect>)> {
-    if !free.is_finite() || !free.is_positive() || free.width() <= 40.0 {
+    // Rects no screen has are rejected too: the corner layout anchors to `free`'s right edge.
+    if !free.is_finite() || !free.is_positive() || free.width() <= 40.0 || free.max.x.abs().max(free.max.y.abs()) > 1.0e7 {
         return None;
     }
     let t = Tokens::get();
+    let corner = ToastPlace::current(ui.ctx()) == ToastPlace::Corner;
     let painter = ui.painter().with_clip_rect(free);
-    let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, (free.width() - 40.0).min(440.0));
+    // In the corner every toast is `TOAST_WIDTH` wide (or the room there is); at the centre each
+    // is as wide as its text, up to 440 points.
+    let wrap = if corner { (TOAST_WIDTH.min(free.width()) - 40.0).max(0.0) } else { (free.width() - 40.0).min(440.0) };
+    let galley = painter.layout(text, crate::fonts::medium(t.font_label), t.text, wrap);
     // The buttons: each as wide as its text and a margin, in rows no wider than the text may be.
     let gap = t.space_8;
     let button_height = crate::ui_kit::row_height();
-    let row_width = (free.width() - 40.0).clamp(0.0, 440.0);
+    let row_width = if corner { wrap } else { (free.width() - 40.0).clamp(0.0, 440.0) };
     let sizes: Vec<(f32, ToastKind)> = actions
         .iter()
         .map(|(label, kind)| {
@@ -4852,16 +4939,24 @@ fn paint_toast_with(
             (width.min(row_width), *kind)
         })
         .collect();
-    let spots = toast_action_spots(&sizes, row_width, gap, button_height);
+    let spots = if corner {
+        toast_action_spots_trailing(&sizes, row_width, gap, button_height)
+    } else {
+        toast_action_spots(&sizes, row_width, gap, button_height)
+    };
     let widest = spots.iter().map(|spot| spot.right()).fold(0.0, f32::max);
     let y = spots.iter().map(|spot| spot.top()).fold(0.0, f32::max);
     let actions_height = if spots.is_empty() { 0.0 } else { y + button_height + gap };
     let content = vec2(galley.size().x.max(widest), galley.size().y + actions_height);
-    let size = content + vec2(40.0, 16.0);
+    let mut size = content + vec2(40.0, 16.0);
+    if corner {
+        size.x = row_width + 40.0;
+    }
     if !size.is_finite() || size.x > free.width() || size.y > free.height() {
         return None;
     }
-    let r = Rect::from_center_size(pos2(free.center().x, free.bottom() - size.y * 0.5), size);
+    let x = if corner { free.right() - size.x * 0.5 } else { free.center().x };
+    let r = Rect::from_center_size(pos2(x, free.bottom() - size.y * 0.5), size);
     if !r.is_finite() {
         return None;
     }

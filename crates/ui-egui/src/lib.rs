@@ -2370,6 +2370,7 @@ impl SolveApp {
         }
         self.ui.layout.publish(ui.ctx());
         self.preferences.dialog_buttons.publish(ui.ctx());
+        self.preferences.toast_place.publish(ui.ctx());
         scenario::clear_handles();
         self.poll_feature_edit(ui.ctx());
         self.poll_deferred(ui.ctx());

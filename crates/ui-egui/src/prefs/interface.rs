@@ -104,6 +104,22 @@ pub(super) fn interface(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
                             crate::scenario::publish_handle(&format!("prefs:dialog_buttons:{key}"), at);
                         }
                     }
+                    // Where notices and offers stack (#7893).
+                    ui_kit::row(ui, app.tr("prefs.toast_place"), |ui| {
+                        let places = [crate::viewport::ToastPlace::Corner, crate::viewport::ToastPlace::Centre];
+                        let mut selected = places.iter().position(|p| *p == app.preferences.toast_place).unwrap_or(0);
+                        if ui_kit::segmented(ui, &mut selected, &[app.tr("prefs.bottom_right"), app.tr("prefs.bottom_centre")], Default::default())
+                            && let Some(place) = places.get(selected)
+                        {
+                            app.preferences.toast_place = *place;
+                        }
+                    });
+                    let row = app.tr("prefs.toast_place");
+                    for (label, key) in [("prefs.bottom_right", "corner"), ("prefs.bottom_centre", "centre")] {
+                        if let Some(at) = crate::scenario::handle_at(&format!("dialog:{row}:{}", app.tr(label))) {
+                            crate::scenario::publish_handle(&format!("prefs:toast_place:{key}"), at);
+                        }
+                    }
                     ui_kit::row(ui, app.tr("prefs.history"), |ui| {
                         let mut selected = if app.preferences.timeline_left { if app.preferences.timeline_under_browser { 2 } else { 1 } } else { 0 };
                         if ui_kit::segmented(

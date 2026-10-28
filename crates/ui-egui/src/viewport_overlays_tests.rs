@@ -155,14 +155,15 @@ fn toast_stays_in_free_content_above_history_and_navigation() {
                     let content = crate::shell::content_rect(&h.app, layout.viewport);
                     let mut obstacles = crate::shell::covered_rects(&h.app);
                     obstacles.extend([layout.navigation, layout.axis_view]);
-                    let free = crate::viewport_layout::free_rect(content, &obstacles).shrink(Tokens::get().space_8);
+                    // The default place: the bottom of the corner column (#7893).
+                    let free = corner_free(content, &obstacles);
                     if let Some(toast) = crate::scenario::rect_of("toast") {
                         assert!(toast.is_finite() && toast.is_positive());
                         assert!(content.contains_rect(toast), "{mode:?}, {scale}, {width}x{height}: {toast:?}");
                         for obstacle in obstacles {
                             assert!(!toast.intersect(obstacle).is_positive(), "{toast:?} intersects {obstacle:?}");
                         }
-                        assert!((toast.center().x - free.center().x).abs() < 0.01);
+                        assert!((toast.right() - free.right()).abs() < 0.01, "against the column's right: {toast:?} {free:?}");
                         assert!((toast.bottom() - free.bottom()).abs() < 0.01);
                     } else {
                         assert!(free.width() < 200.0 || free.height() < 40.0, "toast unexpectedly absent: {free:?}");
@@ -359,11 +360,13 @@ fn compass_circle_grabs_on_hover_and_the_home_chip_points() {
     assert_ne!(h.output.cursor_icon, egui::CursorIcon::Grab, "no hand away from the compass");
 }
 
-/// The status and computing toasts keep the size and place they always had: the text's size plus
-/// 40 by 16, centred at the bottom of the free rect.
+/// At the bottom centre (the `centre` preference, the place before #7893) the status and computing
+/// toasts keep the size and place they always had: the text's size plus 40 by 16, centred at the
+/// bottom of the free rect.
 #[test]
 fn the_shared_toast_draws_old_callers_exactly_as_before() {
     let ctx = crate::fonts::test_context();
+    ToastPlace::Centre.publish(&ctx);
     for width in [200.0_f32, 300.0, 500.0, 900.0] {
         let free = Rect::from_min_size(pos2(10.0, 20.0), vec2(width, 200.0));
         for (error, computing) in [(false, false), (true, false), (false, true)] {
@@ -673,4 +676,67 @@ fn view_angles_readout_shows_only_when_on_and_applies_typed_angles() {
         assert_eq!(h.app.session.doc.to_json(), design);
         assert!(h.app.session.undo.is_empty());
     }
+}
+
+/// In the corner (#7893) the buttons sit as in the dialogs: right-aligned, dismissals first and the
+/// main action right-most; when they wrap, the row with the main action is the bottom one.
+#[test]
+fn corner_toast_buttons_follow_the_dialogs_and_keep_the_main_action_bottom_right() {
+    use ToastKind::{Dismiss, Primary, Secondary};
+    let row_width = TOAST_WIDTH - 40.0;
+    // Three short ones fit one row: Close, Don't ask again, Stand it up.
+    let three = [(90.0, Primary), (110.0, Secondary), (50.0, Dismiss)];
+    let spots = toast_action_spots_trailing(&three, row_width, 8.0, 28.0);
+    assert!(spots.iter().all(|s| s.top() == 0.0), "one row: {spots:?}");
+    assert!((spots[0].right() - row_width).abs() < 0.01, "the main action is right-most: {spots:?}");
+    assert!(spots[2].right() < spots[1].left() && spots[1].right() < spots[0].left(), "dismiss, alternative, main: {spots:?}");
+    // The 3D mouse offer's four wrap: the main action and its alternative below, the dismissals above.
+    let four = [(90.0, Primary), (190.0, Secondary), (50.0, Dismiss), (120.0, Dismiss)];
+    let spots = toast_action_spots_trailing(&four, row_width, 8.0, 28.0);
+    let bottom = spots.iter().map(|s| s.top()).fold(0.0, f32::max);
+    assert!(bottom > 0.0, "wrapped: {spots:?}");
+    assert_eq!(spots[0].top(), bottom, "the main action is on the bottom row");
+    assert!((spots[0].right() - row_width).abs() < 0.01, "and right-most");
+    for (i, spot) in spots.iter().enumerate() {
+        assert!(spot.left() >= -0.01 && spot.right() <= row_width + 0.01, "inside the row: {spot:?}");
+        for other in &spots[i + 1..] {
+            assert!(!spot.intersects(*other), "{spot:?} overlaps {other:?}");
+        }
+    }
+    // Hostile widths never panic and give one spot per button.
+    for bad in [f32::NAN, f32::INFINITY, -5.0, 0.0] {
+        assert_eq!(toast_action_spots_trailing(&four, bad, 8.0, 28.0).len(), 4);
+    }
+}
+
+/// In the corner every toast is `TOAST_WIDTH` wide, whatever its text, and sits against the right of
+/// `free`; at the centre (the old place, a preference) each is as wide as its text, centred.
+#[test]
+fn corner_toasts_share_one_width_against_the_right_edge() {
+    let ctx = crate::fonts::test_context();
+    let free = Rect::from_min_size(pos2(0.0, 0.0), vec2(1200.0, 700.0));
+    for place in [ToastPlace::Corner, ToastPlace::Centre] {
+        place.publish(&ctx);
+        let mut rects = Vec::new();
+        draw(&ctx, |ui| {
+            for text in ["Open done", "Calibrating your 3D mouse fixes swapped or reversed axes and sets its speed and feel."] {
+                rects.push(paint_toast(ui, free, text.into(), false, false).unwrap());
+            }
+        });
+        match place {
+            ToastPlace::Corner => {
+                for r in &rects {
+                    assert!((r.width() - TOAST_WIDTH).abs() < 0.5, "{r:?}");
+                    assert!((r.right() - free.right()).abs() < 0.5, "against the right edge: {r:?}");
+                }
+            }
+            ToastPlace::Centre => {
+                assert!(rects[0].width() < rects[1].width(), "as wide as their text: {rects:?}");
+                for r in &rects {
+                    assert!((r.center().x - free.center().x).abs() < 0.5, "centred: {r:?}");
+                }
+            }
+        }
+    }
+    ToastPlace::Corner.publish(&ctx);
 }

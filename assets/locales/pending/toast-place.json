@@ -1,0 +1,42 @@
+{
+  "en": {
+    "prefs.bottom_centre": "Bottom centre",
+    "prefs.bottom_right": "Bottom right",
+    "prefs.toast_place": "Notices"
+  },
+  "ar": {
+    "prefs.bottom_centre": "أسفل الوسط",
+    "prefs.bottom_right": "أسفل اليمين",
+    "prefs.toast_place": "الإشعارات"
+  },
+  "de": {
+    "prefs.bottom_centre": "Unten mittig",
+    "prefs.bottom_right": "Unten rechts",
+    "prefs.toast_place": "Hinweise"
+  },
+  "he": {
+    "prefs.bottom_centre": "למטה במרכז",
+    "prefs.bottom_right": "למטה מימין",
+    "prefs.toast_place": "הודעות"
+  },
+  "ja": {
+    "prefs.bottom_centre": "下中央",
+    "prefs.bottom_right": "右下",
+    "prefs.toast_place": "通知"
+  },
+  "ko": {
+    "prefs.bottom_centre": "하단 가운데",
+    "prefs.bottom_right": "오른쪽 아래",
+    "prefs.toast_place": "알림"
+  },
+  "vi": {
+    "prefs.bottom_centre": "Giữa phía dưới",
+    "prefs.bottom_right": "Góc dưới bên phải",
+    "prefs.toast_place": "Thông báo"
+  },
+  "zh": {
+    "prefs.bottom_centre": "底部居中",
+    "prefs.bottom_right": "右下角",
+    "prefs.toast_place": "通知"
+  }
+}
