@@ -4,24 +4,39 @@
     "prefs.animated_background_note": "Animate backgrounds requested by the theme. Pauses when unfocused, idle or reduced motion is enabled.",
     "theme.background_invalid": "Theme background accepts only effect: rain."
   },
-  "ja": {
-    "prefs.animated_background": "背景のアニメーション",
-    "prefs.animated_background_note": "テーマで指定された背景を動かします。非アクティブ時、操作がない時、視差効果を減らす設定が有効な時は停止します。",
-    "theme.background_invalid": "テーマの背景には effect: rain のみを指定できます。"
-  },
-  "zh": {
-    "prefs.animated_background": "动态背景",
-    "prefs.animated_background_note": "播放主题指定的背景动画。窗口失去焦点、空闲或启用减少动态效果时暂停。",
-    "theme.background_invalid": "主题背景仅接受 effect: rain。"
+  "ar": {
+    "prefs.animated_background": "خلفية متحركة",
+    "prefs.animated_background_note": "تحريك الخلفيات التي يطلبها السمة. يتوقف مؤقتًا عند عدم التركيز أو الخمول أو عند تفعيل تقليل الحركة.",
+    "theme.background_invalid": "خلفية السمة تقبل فقط effect: rain."
   },
   "de": {
     "prefs.animated_background": "Animierter Hintergrund",
     "prefs.animated_background_note": "Vom Design angeforderte Hintergründe animieren. Pausiert ohne Fokus, bei Inaktivität oder reduzierten Animationen.",
     "theme.background_invalid": "Der Designhintergrund akzeptiert nur effect: rain."
   },
+  "he": {
+    "prefs.animated_background": "רקע מונפש",
+    "prefs.animated_background_note": "הנפשת רקעים שערכת הנושא מבקשת. נעצר כשהחלון לא בפוקוס, במצב סרק או כשהפחתת תנועה מופעלת.",
+    "theme.background_invalid": "רקע ערכת הנושא מקבל רק effect: rain."
+  },
+  "ja": {
+    "prefs.animated_background": "背景のアニメーション",
+    "prefs.animated_background_note": "テーマで指定された背景を動かします。非アクティブ時、操作がない時、視差効果を減らす設定が有効な時は停止します。",
+    "theme.background_invalid": "テーマの背景には effect: rain のみを指定できます。"
+  },
   "ko": {
     "prefs.animated_background": "배경 애니메이션",
     "prefs.animated_background_note": "테마에서 요청한 배경을 움직입니다. 창이 비활성 상태이거나 유휴 상태이거나 동작 줄이기가 켜져 있으면 멈춥니다.",
     "theme.background_invalid": "테마 배경에는 effect: rain만 지정할 수 있습니다."
+  },
+  "vi": {
+    "prefs.animated_background": "Nền động",
+    "prefs.animated_background_note": "Tạo chuyển động cho nền mà chủ đề yêu cầu. Tạm dừng khi cửa sổ không được chọn, khi rảnh hoặc khi bật giảm chuyển động.",
+    "theme.background_invalid": "Nền của chủ đề chỉ chấp nhận effect: rain."
+  },
+  "zh": {
+    "prefs.animated_background": "动态背景",
+    "prefs.animated_background_note": "播放主题指定的背景动画。窗口失去焦点、空闲或启用减少动态效果时暂停。",
+    "theme.background_invalid": "主题背景仅接受 effect: rain。"
   }
 }
