@@ -2167,6 +2167,8 @@ pub fn shortcuts(app: &mut SolveApp, ctx: &egui::Context) {
             .collect();
         (keys, i.modifiers)
     });
+    // A theme pasted on the Interface page is a theme, not copied components (#8226).
+    crate::prefs::take_theme_paste(app, ctx);
     // Home hides the design: only New, Open and Preferences work there.
     let shown = design_shown(app);
     if shown {

@@ -2128,6 +2128,8 @@ impl SolveApp {
         open_elsewhere::tick(self, ctx);
         update::tick(self, ctx);
         if self.issue_report.draft.is_none() && self.file_picker.is_none() {
+            // Files dropped on the theme Import tile are themes (#8226).
+            prefs::take_theme_drops(self, ctx);
             // Files dropped on the agent chat attach to its next message instead.
             agent_chat::take_drops(self, ctx);
             for f in ctx.input(|i| i.raw.dropped_files.clone()) {

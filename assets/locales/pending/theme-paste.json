@@ -1,0 +1,26 @@
+{
+  "en": {
+    "prefs.theme_file_or_paste": "file or paste",
+    "prefs.theme_import_hint": "Click to choose a theme file, drop one here, or press Ctrl+V (Cmd+V on a Mac) with a theme copied",
+    "prefs.theme_paste": "Paste theme",
+    "prefs.theme_paste_none": "The clipboard holds no SolidCraft theme"
+  },
+  "de": {
+    "prefs.theme_file_or_paste": "Datei oder Einfügen",
+    "prefs.theme_import_hint": "Klicken, um eine Designdatei zu wählen, eine hierher ziehen oder mit kopiertem Design Strg+V (Cmd+V auf dem Mac) drücken",
+    "prefs.theme_paste": "Design einfügen",
+    "prefs.theme_paste_none": "Die Zwischenablage enthält kein SolidCraft-Design"
+  },
+  "ja": {
+    "prefs.theme_file_or_paste": "ファイルまたは貼り付け",
+    "prefs.theme_import_hint": "クリックしてテーマファイルを選ぶか、ここにドロップするか、テーマをコピーした状態で Ctrl+V（Mac では Cmd+V）を押します",
+    "prefs.theme_paste": "テーマを貼り付け",
+    "prefs.theme_paste_none": "クリップボードに SolidCraft のテーマがありません"
+  },
+  "zh": {
+    "prefs.theme_file_or_paste": "文件或粘贴",
+    "prefs.theme_import_hint": "单击选择主题文件，拖放到此处，或复制主题后按 Ctrl+V（Mac 上为 Cmd+V）",
+    "prefs.theme_paste": "粘贴主题",
+    "prefs.theme_paste_none": "剪贴板中没有 SolidCraft 主题"
+  }
+}
