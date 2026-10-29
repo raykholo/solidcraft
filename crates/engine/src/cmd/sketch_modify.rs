@@ -1404,6 +1404,14 @@ fn weld_corner(sk: &mut Sketch, p: &Value) {
     }
 }
 
+fn refuse_spatial_corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<()> {
+    if ["a", "b"].iter().any(|key| str_(p, key).is_some_and(|id| sk.is_spatial_corner_curve(id))) {
+        let action = if cmd == "sketch.fillet" { "filleting" } else { "chamfering" };
+        return Err(bad(cmd, format!("not supported yet: {action} 3D or linked sketch curves")));
+    }
+    Ok(())
+}
+
 /// Fillets and chamfers refuse a corner on an infinite line (#1359): it has no end there.
 fn refuse_infinite_corner(sk: &Sketch, p: &Value, cmd: &str) -> Result<()> {
     let infinite = |c: Option<usize>| c.and_then(|c| sk.curves.get(c)).is_some_and(|c| c.infinite);
@@ -1661,12 +1669,7 @@ fn kept_json(kept: Vec<CornerKept>) -> (Vec<String>, Vec<String>) {
 /// Round one corner (`point` or `a`, `b`) with an arc of radius `r` tangent to both curves:
 /// the arc, the tangent constraints and what became of the corner point.
 fn fillet_corner(sk: &mut Sketch, p: &Value, r: f64, cmd: &str) -> Result<(usize, Vec<String>, CornerKept)> {
-    if ["a", "b"]
-        .iter()
-        .any(|key| str_(p, key).and_then(|id| sk.wire_index(id)).and_then(|i| sk.wires.get(i)).is_some_and(|wire| wire.fit.len() == 2))
-    {
-        return Err(bad(cmd, "not supported yet: filleting 3D sketch lines"));
-    }
+    refuse_spatial_corner(sk, p, cmd)?;
     refuse_infinite_corner(sk, p, cmd)?;
     refuse_offset_corner(sk, p, cmd)?;
     weld_corner(sk, p);
@@ -1778,6 +1781,7 @@ fn round_corner(sk: &mut Sketch, p: &Value, r: f64, cmd: &str) -> Result<Option<
 
 fn chamfer(s: &mut Session, p: &Value, cmd: &str, dists: impl FnOnce(f64) -> Result<(f64, f64)>) -> Result<Value> {
     let (out, info) = edit(s, p, cmd, false, |sk, _| {
+        refuse_spatial_corner(sk, p, cmd)?;
         refuse_infinite_corner(sk, p, cmd)?;
         refuse_offset_corner(sk, p, cmd)?;
         weld_corner(sk, p);
