@@ -1574,6 +1574,7 @@ impl Snapshot {
             toolbar,
             favourites,
             profile,
+            webdav_password,
         } = self;
         *prefs == app.preferences
             && *dark == app.ui.dark
@@ -1592,6 +1593,7 @@ impl Snapshot {
             && *toolbar == app.toolbar_custom.prefs()
             && *favourites == app.sbox.pinned
             && *profile == app.settings_profiles.active
+            && *webdav_password == app.webdav.password
     }
 }
 
