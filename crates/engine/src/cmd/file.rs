@@ -116,9 +116,10 @@ fn step_options(p: &Value, cmd: &str) -> Result<StepOptions> {
 }
 
 /// Read a STEP file as an Import feature.
-fn read_step(path: &str, names: solidcraft_io::StepNames) -> Result<solidcraft_io::StepFeature> {
+fn read_step(path: &str, names: solidcraft_io::StepNames) -> Result<(solidcraft_io::StepFeature, Vec<u8>)> {
     let bytes = solidcraft_io::limits::read(path, solidcraft_io::limits::Kind::Step).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
-    solidcraft_io::step_import_feature_named(&bytes, path, names).map_err(|e| EngineError::Other(format!("{path}: {e}")))
+    let feature = solidcraft_io::step_import_feature_named(&bytes, path, names).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    Ok((feature, bytes))
 }
 
 /// Which way is up in a STEP or IGES file, from the program its header names: `("y", name)` for
@@ -142,16 +143,35 @@ fn quarter_turn_x() -> solidcraft_doc::Mat {
 /// Add an Import feature for a STEP file to the session's design, in a new component named
 /// after the file (#1386).
 fn add_step(s: &mut Session, path: &str, name: Option<&str>, options: &StepOptions) -> Result<Value> {
-    let sf = read_step(path, options.names)?;
+    let (sf, bytes) = read_step(path, options.names)?;
+    // The evaluator already certifies the STEP payload with SHA-256. Reuse that digest only
+    // when it is exactly the source bytes (IGES conversion and legacy encodings differ).
+    let unchanged = matches!(&sf.kind, solidcraft_doc::FeatureKind::Import { step, .. } if step.as_bytes() == bytes);
     let fname = name.filter(|n| !n.trim().is_empty()).unwrap_or(&sf.name).to_string();
     let cname = import::component_name(path, name);
     let (id, placed) = import::add_in_component(s, sf.kind, &fname, sf.body_names, &cname, import::Tree::Step(&sf.import))?;
+    let content_sha256 = unchanged
+        .then(|| {
+            s.model.state().bodies.iter().filter(|b| b.feature == id).find_map(|b| {
+                b.body.face_sources()?.iter().flatten().find_map(|source| match source {
+                    solidcraft_kernel::FaceSource::Imported { payload_sha256: Some(digest), producer: Some(producer), .. } if *producer == id => {
+                        Some(digest.clone())
+                    }
+                    _ => None,
+                })
+            })
+        })
+        .flatten()
+        .unwrap_or_else(|| {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(&bytes))
+        });
     // Y up: the import's component is turned a quarter turn about X (Y becomes Z), so an
     // assembly's parts and instances turn together.
     let turned = if options.y_up { turn_up(s, &placed)? } else { None };
     let created = created_bodies(s, id);
     let fname = s.doc.feature(id).map(|f| f.name.clone()).unwrap_or_default();
-    let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": created, "created_bodies": created, "warnings": sf.warnings, "system": sf.import.system});
+    let mut out = json!({"path": path, "feature": id, "name": fname, "bodies": created, "created_bodies": created, "warnings": sf.warnings, "system": sf.import.system, "content_sha256": content_sha256});
     if let Some((up, exporter)) = exporter_up(&sf.import) {
         out["exporter"] = json!(exporter);
         out["exporter_up"] = json!(up);
@@ -326,7 +346,18 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         s.replace_design(fresh);
         let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
         let mut out = json!({"path": path, "features": s.doc.features.len(), "errors": errors, "bodies": r["bodies"], "warnings": r["warnings"]});
-        for k in ["component", "component_name", "occurrence", "subcomponents", "rigid_joints", "stand_up", "system", "exporter", "exporter_up"] {
+        for k in [
+            "component",
+            "component_name",
+            "occurrence",
+            "subcomponents",
+            "rigid_joints",
+            "stand_up",
+            "system",
+            "exporter",
+            "exporter_up",
+            "content_sha256",
+        ] {
             if let Some(v) = r.get(k) {
                 out[k] = v.clone();
             }
@@ -994,6 +1025,31 @@ mod tests {
         }
         assert!(!std::path::Path::new(&path("parts.stl")).exists() && !std::path::Path::new(&path("bad.3mf")).exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_digest_is_of_original_bytes_for_open_and_insert() {
+        use sha2::{Digest, Sha256};
+        let dir = std::env::temp_dir().join(format!("solidcraft-import-digest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("part.step").to_string_lossy().to_string();
+        let mut source = Session::default();
+        source.execute("solid.box", &json!({"length": 10, "width": 40, "height": 5})).unwrap();
+        source.execute("file.export", &json!({"path": path})).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        for legacy in [false, true] {
+            if legacy {
+                bytes.extend_from_slice(b"\n/* legacy name: \xe9 */\n");
+                std::fs::write(&path, &bytes).unwrap();
+            }
+            let expected = format!("{:x}", Sha256::digest(&bytes));
+            for command in ["doc.open", "file.insert_step"] {
+                let mut session = Session::default();
+                let result = session.execute(command, &json!({"path": path})).unwrap();
+                assert_eq!(result["content_sha256"], expected, "{command}: legacy={legacy}");
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     /// #4747: a mesh export's `quality` follows curved faces more closely. A 3 mm hole in a

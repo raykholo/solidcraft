@@ -76,6 +76,13 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 });
             },
         );
+        ui.horizontal_wrapped(|ui| {
+            let remember = setting::remember_stand_up(app, ui).on_hover_text(app.tr("prefs.remember_stand_up_note"));
+            crate::scenario::publish_handle("prefs:remember_stand_up", remember.rect.center());
+            if ui_kit::button(ui, app.tr("prefs.forget_stand_up"), ui_kit::Button::Normal).clicked() {
+                forget_stand_up(app);
+            }
+        });
         setting::extrude_auto_to_object(app, ui);
         let auto = setting::auto_operation(app, ui);
         crate::scenario::publish_handle("prefs:auto_operation", auto.rect.center());

@@ -1,0 +1,32 @@
+{
+  "ar": {
+    "prefs.forget_stand_up": "نسيان الإجابات المحفوظة",
+    "prefs.remember_stand_up": "تذكّر إجابات تعديل اتجاه الملفات التي فتحتها",
+    "prefs.remember_stand_up_note": "طبّق إجابة تعديل الاتجاه نفسها عند فتح ملف لم يتغير مجددًا. عطّل هذا الخيار للسؤال كل مرة."
+  },
+  "en": {
+    "prefs.forget_stand_up": "Forget remembered answers",
+    "prefs.remember_stand_up": "Remember stand-up answers for files I've opened",
+    "prefs.remember_stand_up_note": "Apply the same stand-up answer when an unchanged file opens again. Turn off to ask each time."
+  },
+  "he": {
+    "prefs.forget_stand_up": "שכח תשובות שמורות",
+    "prefs.remember_stand_up": "זכור תשובות ליישור קבצים שפתחתי",
+    "prefs.remember_stand_up_note": "החל את אותה תשובת יישור בפתיחה חוזרת של קובץ שלא השתנה. כבה כדי לשאול בכל פעם."
+  },
+  "ja": {
+    "prefs.forget_stand_up": "記憶した回答を消去",
+    "prefs.remember_stand_up": "開いたファイルの正立に関する回答を記憶する",
+    "prefs.remember_stand_up_note": "変更されていないファイルを再び開くと、同じ正立の回答を適用します。オフにすると毎回確認します。"
+  },
+  "vi": {
+    "prefs.forget_stand_up": "Quên các câu trả lời đã nhớ",
+    "prefs.remember_stand_up": "Nhớ câu trả lời dựng đứng cho các tệp tôi đã mở",
+    "prefs.remember_stand_up_note": "Áp dụng cùng câu trả lời dựng đứng khi mở lại tệp chưa thay đổi. Tắt để hỏi mỗi lần."
+  },
+  "zh": {
+    "prefs.forget_stand_up": "清除记住的回答",
+    "prefs.remember_stand_up": "记住已打开文件的摆正选择",
+    "prefs.remember_stand_up_note": "再次打开未更改的文件时应用相同的摆正选择。关闭后每次都会询问。"
+  }
+}

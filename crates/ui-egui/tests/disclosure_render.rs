@@ -137,3 +137,50 @@ fn render_browser_uses_shared_rows_in_both_lenses_and_themes() {
         }
     }
 }
+
+#[test]
+fn stand_up_memory_controls_apply_and_forget_with_visible_evidence() {
+    use solidcraft_ui_egui::stand_up::Answer;
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/stand-up-memory-review");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Harness::new();
+    h.app.home.open = false;
+    h.call("ui.resize", json!({"width":1400,"height":1200}));
+    h.call("ui.prefs", json!({"open":"Design"}));
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"prefs:remember_stand_up"}})).unwrap();
+    assert!(!h.app.preferences.remember_stand_up);
+    h.step(&json!({"click":{"handle":"prefs:remember_stand_up"}})).unwrap();
+    assert!(h.app.preferences.remember_stand_up);
+    let digest = "a".repeat(64);
+    h.app.preferences.stand_up_answers.remember(digest.clone(), Answer::Leave);
+    h.step(&json!({"widget":"Forget remembered answers"})).unwrap();
+    assert_eq!(h.app.preferences.stand_up_answers.get(&digest), None);
+    let capture = |h: &mut Harness, name: &str| {
+        h.ctx = egui::Context::default();
+        solidcraft_ui_egui::fonts::setup_fonts(&h.ctx);
+        theme::apply(&h.ctx);
+        let mut textures: HashMap<TextureId, ColorImage> = HashMap::new();
+        for _ in 0..8 {
+            raster::paint(h, &mut textures, vec![]);
+        }
+        let output = raster::paint(h, &mut textures, vec![]);
+        raster::raster(h, &textures, output).save(dir.join(name)).unwrap();
+    };
+    capture(&mut h, "preferences.png");
+    h.call("ui.prefs", json!({"button":"ok", "stand_up_unknown":"ask"}));
+    let path = dir.join("plate.step").to_string_lossy().to_string();
+    h.app.run("solid.box", json!({"length":10,"width":40,"height":5})).unwrap();
+    h.app.run("file.export", json!({"path":path})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap().replace("'SolidCraft','SolidCraft'", "'SolidCraft','Example CAD'");
+    std::fs::write(&path, text).unwrap();
+    h.app.open_path(&path);
+    assert!(h.app.stand_up.is_some());
+    capture(&mut h, "first-offer.png");
+    h.step(&json!({"click":{"handle":"stand_up:stand"}})).unwrap();
+    let stood = solidcraft_engine::view::bounds(&h.app.session);
+    h.app.open_path(&path);
+    assert!(h.app.stand_up.is_none());
+    assert_eq!(solidcraft_engine::view::bounds(&h.app.session), stood);
+    capture(&mut h, "reopened.png");
+}
