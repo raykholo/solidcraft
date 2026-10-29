@@ -1170,6 +1170,8 @@ preference_settings! {
     stand_up_unknown: StandUpUnknown = StandUpUnknown::default(), PAGE_DESIGN;
     /// Reapply a file's stand-up answer when its original bytes have not changed.
     remember_stand_up: bool = true, PAGE_DESIGN => check_id("prefs.remember_stand_up");
+    /// Reopen an unchanged CAD import from the existing saved-design model cache.
+    reuse_imports: bool = true, PAGE_DESIGN => check_id("prefs.reuse_imports");
     /// Oldest-first bounded file answers; resetting settings preserves user history.
     stand_up_answers: crate::stand_up::Answers = Default::default();
     /// Extrude: with a profile picked, a face, vertex or parallel plane picked off its plane
@@ -6764,12 +6766,27 @@ mod tests {
         // Across app restarts, too: the user history round-trips through the real settings API.
         let mut reopened = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         reopened.load_prefs(&app.prefs());
-        reopened.open_path(&path);
+        assert!(reopened.preferences.reuse_imports);
+        let hit = reopened.run("doc.open", json!({"path": path})).unwrap();
+        assert_eq!(hit["import_reused"], true, "remembered stand-up applies on a cache hit");
+        crate::stand_up::offer(&mut reopened, &path, &[], Some(&hit));
         assert!(reopened.stand_up.is_none());
         assert_eq!(solidcraft_engine::view::bounds(&reopened.session), stood);
         reopened.run("edit.undo", json!({})).unwrap();
         let b = solidcraft_engine::view::bounds(&reopened.session);
         assert!((b.max.y - b.min.y - 40.0).abs() < 1e-6, "remembered rotation is undoable");
+
+        control(&mut reopened, &json!({"reuse_imports": false})).unwrap();
+        assert_eq!(reopened.run("doc.open", json!({"path": path})).unwrap()["import_reused"], false);
+        let mut settings = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        settings.load_prefs(&reopened.prefs());
+        assert!(!settings.preferences.reuse_imports, "reuse preference survives restart");
+        control(&mut reopened, &json!({"reuse_imports": true})).unwrap();
+        let answers = reopened.preferences.stand_up_answers.clone();
+        reopened.run("file.import_cache_clear", json!({})).unwrap();
+        assert_eq!(reopened.preferences.stand_up_answers, answers, "clearing imports keeps stand-up answers");
+        assert_eq!(reopened.run("doc.open", json!({"path": path})).unwrap()["import_reused"], false);
+        assert_eq!(reopened.run("doc.open", json!({"path": path})).unwrap()["import_reused"], true);
 
         // A byte change, even one that leaves the geometry alone, asks again.
         std::fs::write(&path, format!("{text}\n")).unwrap();
