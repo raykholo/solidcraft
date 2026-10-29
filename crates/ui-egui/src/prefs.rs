@@ -557,10 +557,11 @@ pub enum OrbitAround {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackpadZoomModifier {
-    #[default]
     Cmd,
     Alt,
     Ctrl,
+    /// The default: scroll keeps its usual meaning until a key is chosen.
+    #[default]
     Off,
 }
 
@@ -3293,7 +3294,7 @@ pub(crate) fn reveal_preference(h: &mut crate::scenario::Harness, handle: &str) 
 mod tests {
     #[test]
     fn trackpad_zoom_modifier_roundtrips_and_validates_control_values() {
-        assert_eq!(Prefs::default().trackpad_zoom_modifier, TrackpadZoomModifier::Cmd);
+        assert_eq!(Prefs::default().trackpad_zoom_modifier, TrackpadZoomModifier::Off);
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         for (id, value) in [
             ("cmd", TrackpadZoomModifier::Cmd),

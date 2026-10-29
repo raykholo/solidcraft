@@ -391,7 +391,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `timeline_origin_bodies` (default false: the History on the left or under the browser starts with the active component's Bodies folder and the Origin, the browser's rows with their eyes, folds and menus; the bottom History is unchanged)
 - `toast_place` (`corner` (default: notices and offers stack in one column in the view's bottom-right corner, each 340 points wide, buttons right-aligned with the main action right-most, #7893), `centre` (at the bottom centre above the view toolbar, each as wide as its text, as before))
 - `trackpad_pan` (default true: two-finger scroll pans, except Touchpad always zooms; pinch zooms)
-- `trackpad_zoom_modifier` (`cmd` default, `alt`, `ctrl`, or `off`: hold this key alone for vertical scroll to zoom)
+- `trackpad_zoom_modifier` (`off` default, `cmd`, `alt`, or `ctrl`: hold this key alone for vertical scroll to zoom)
 - `ui_font` (an installed font family or a font file for the interface; empty for the built-in font)
 - `ui_scale`
 - `up_axis` (`z`, `y`)
