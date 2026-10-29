@@ -950,7 +950,7 @@ fn corner_candidates_agree_with_engine_spatial_curve_filter() {
         for id in [&line, &spline, &linked, &"side".to_owned()] {
             let state = h.app.session.world_state();
             let sk = &state.sketch(sketch).unwrap().sketch;
-            let hit = Hit::SketchCurve { sketch, id: id.clone(), straight: true };
+            let hit = Hit::SketchCurve { sketch, id: id.clone(), straight: true, point: solidcraft_engine::geom::Vec3::ZERO };
             let offered = candidate(h.app.dialog.as_ref().unwrap(), &h.app.session, &hit).is_some();
             assert_eq!(offered, !sk.is_spatial_corner_curve(id), "{cmd}: {id}");
             assert_eq!(offered, id == "side", "{cmd}: {id}");
