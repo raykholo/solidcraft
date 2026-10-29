@@ -4840,7 +4840,8 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
         app.tool.as_ref().filter(|tool| matches!(tool.cmd, "canvas.insert" | "canvas.decal")).map(|tool| crate::tools::hint(tool.cmd));
     // Nothing to show or time: an idle window skips the layout. The offer is checked too, as its clock
     // runs from the frames `due` sees.
-    if placement_hint.is_none() && app.status.is_none()
+    if placement_hint.is_none()
+        && app.status.is_none()
         && app.computing_since().is_none()
         && app.agent_computing().is_none()
         && crate::space_mouse_offer::offerable(app).is_none()
@@ -4900,6 +4901,7 @@ pub(crate) fn transient_messages(app: &mut SolveApp, ui: &egui::Ui, viewport: Re
         && let Some(r) = paint_toast(ui, free, hint, false, false)
     {
         crate::scenario::publish_rect("toast:placement", r);
+        obstacles.push(r);
         free.max.y = r.top() - t.space_8;
     }
     if let Some((msg, at, error)) = app.status.clone() {
