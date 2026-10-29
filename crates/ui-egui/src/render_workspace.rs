@@ -17,7 +17,6 @@ use solidcraft_engine::render::{
 use crate::gpu::{Frame, GpuScene, SceneSlot, ViewportCallback};
 use crate::{SolveApp, theme::Tokens};
 
-#[cfg(test)]
 // Vertex payload only, not an OS/GPU peak-memory promise. Native viewport
 // uploads are already chunked by the installed device's buffer limit.
 const MAX_GEOMETRY_BYTES: usize =
@@ -87,6 +86,11 @@ pub(crate) fn geometry_budget(max_buffer_size: u64, web: bool) -> u64 {
     if web { WEB_GEOMETRY_BYTES } else { max_buffer_size.saturating_mul(DESKTOP_GEOMETRY_BUFFERS).min(DESKTOP_GEOMETRY_CEILING) }
 }
 
+/// Apply the saved compatibility preference to the device-derived budget.
+fn preferred_geometry_budget(device_budget: u64, previous: bool) -> u64 {
+    if previous { MAX_GEOMETRY_BYTES as u64 } else { device_budget }
+}
+
 fn admit_geometry(bytes: u64, budget: u64) -> Result<(), String> {
     if bytes > budget {
         return Err(format!(
@@ -133,7 +137,7 @@ pub struct State {
     design_camera: Option<(Camera, bool)>,
     slot: SceneSlot,
     key: Option<u64>,
-    scene_signature: Option<(u64, usize, u64)>,
+    scene_signature: Option<(u64, usize, u64, u64)>,
     scene: Option<ProductScene>,
     scene_error: Option<String>,
     preview_upload_bytes: Option<usize>,
@@ -1642,9 +1646,9 @@ fn show_result(app: &mut SolveApp, ui: &mut egui::Ui) {
 }
 
 impl State {
-    fn prepare_preview(&mut self, signature: (u64, usize, u64), capture: impl FnOnce() -> Result<ProductScene, String>) -> Result<(), String> {
+    fn prepare_preview(&mut self, signature: (u64, usize, u64, u64), capture: impl FnOnce() -> Result<ProductScene, String>) -> Result<(), String> {
         if self.scene_signature != Some(signature) {
-            let prepared = capture().and_then(|scene| gpu_scene_with_budget(&scene, self.geometry_budget).map(|(key, gpu)| (scene, key, gpu)));
+            let prepared = capture().and_then(|scene| gpu_scene_with_budget(&scene, signature.3).map(|(key, gpu)| (scene, key, gpu)));
             self.scene_signature = Some(signature);
             match prepared {
                 Ok((scene, key, gpu)) => {
@@ -2000,7 +2004,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         let mut visibility = std::collections::hash_map::DefaultHasher::new();
         app.session.visibility.hidden_bodies.hash(&mut visibility);
         app.session.visibility.hidden_occurrences.hash(&mut visibility);
-        let signature = (app.session.revision, Arc::as_ptr(&app.session.world_state()) as usize, visibility.finish() ^ assign::preview_key(app));
+        let budget = preferred_geometry_budget(app.render_workspace.geometry_budget, app.preferences.render_previous_geometry_budget);
+        let signature = (app.session.revision, Arc::as_ptr(&app.session.world_state()) as usize, visibility.finish() ^ assign::preview_key(app), budget);
         let preview = assign::preview(app);
         app.render_workspace.prepare_preview(signature, || {
             let mut scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|error| error.to_string())?;

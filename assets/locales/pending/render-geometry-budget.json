@@ -1,0 +1,26 @@
+{
+  "en": {
+    "prefs.render_previous_geometry_budget": "Use previous Render preview geometry budget",
+    "prefs.render_previous_geometry_budget_help": "Restore the fixed 512 MiB (64-bit desktop), 128 MiB (other platforms) geometry limit instead of the device-based budget."
+  },
+  "ar": {
+    "prefs.render_previous_geometry_budget": "استخدام ميزانية الهندسة السابقة لمعاينة التصيير",
+    "prefs.render_previous_geometry_budget_help": "استعادة حد الهندسة الثابت البالغ 128 ميبيبايت بدلاً من الميزانية المعتمدة على الجهاز."
+  },
+  "he": {
+    "prefs.render_previous_geometry_budget": "שימוש בתקציב הגאומטריה הקודם לתצוגה מקדימה של רינדור",
+    "prefs.render_previous_geometry_budget_help": "שחזור מגבלת הגאומטריה הקבועה של 512 MiB (64-bit desktop), 128 MiB (other platforms) במקום התקציב המבוסס על ההתקן."
+  },
+  "ja": {
+    "prefs.render_previous_geometry_budget": "レンダープレビューで以前のジオメトリ予算を使用",
+    "prefs.render_previous_geometry_budget_help": "デバイスに基づく予算の代わりに、固定の512 MiB (64-bit desktop), 128 MiB (other platforms)のジオメトリ上限に戻します。"
+  },
+  "vi": {
+    "prefs.render_previous_geometry_budget": "Dùng ngân sách hình học trước đây cho bản xem trước kết xuất",
+    "prefs.render_previous_geometry_budget_help": "Khôi phục giới hạn hình học cố định 512 MiB (64-bit desktop), 128 MiB (other platforms) thay cho ngân sách dựa trên thiết bị."
+  },
+  "zh": {
+    "prefs.render_previous_geometry_budget": "使用先前的渲染预览几何内存预算",
+    "prefs.render_previous_geometry_budget_help": "恢复固定的512 MiB (64-bit desktop), 128 MiB (other platforms)几何内存上限，替代基于设备的预算。"
+  }
+}

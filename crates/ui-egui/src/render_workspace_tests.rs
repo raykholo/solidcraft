@@ -3520,7 +3520,7 @@ fn full_detail_preview_source_can_exceed_legacy_128_mib_without_mesh_reduction()
 fn refused_product_capture_is_cached_until_identity_changes_or_explicit_retry() {
     let mut h = Harness::new();
     let calls = std::cell::Cell::new(0);
-    let signature = (7, 123, 99);
+    let signature = (7, 123, 99, MAX_GEOMETRY_BYTES as u64);
     for _ in 0..8 {
         assert_eq!(
             h.app
@@ -3539,7 +3539,7 @@ fn refused_product_capture_is_cached_until_identity_changes_or_explicit_retry() 
     assert!(
         h.app
             .render_workspace
-            .prepare_preview((8, 123, 99), || {
+            .prepare_preview((8, 123, 99, MAX_GEOMETRY_BYTES as u64), || {
                 calls.set(calls.get() + 1);
                 Err("new revision".into())
             })
@@ -6351,4 +6351,18 @@ fn geometry_refusal_reports_scene_size_limit_and_recovery() {
     assert!(error.contains("Hide bodies in Design"), "{error}");
     let refused = upload_refusal(&scene, "Out of Memory");
     assert!(refused.contains("144.0 MiB") && refused.contains("Out of Memory") && refused.contains("Hide bodies in Design"), "{refused}");
+}
+
+#[test]
+fn previous_geometry_budget_restores_the_fixed_limit() {
+    for web in [false, true] {
+        for device in [64 << 20, 256 << 20, u64::MAX] {
+            let device_budget = geometry_budget(device, web);
+            assert_eq!(preferred_geometry_budget(device_budget, false), device_budget);
+            let previous = preferred_geometry_budget(device_budget, true);
+            assert_eq!(previous, MAX_GEOMETRY_BYTES as u64);
+            assert!(admit_geometry(previous, previous).is_ok());
+            assert!(admit_geometry(previous + 1, previous).is_err());
+        }
+    }
 }
