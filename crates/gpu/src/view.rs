@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use solidcraft_geom::Vec3;
 
 use crate::pbr;
+use wgpu::util::DeviceExt;
 
 mod ao;
 #[cfg(not(target_arch = "wasm32"))]

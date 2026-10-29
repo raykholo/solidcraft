@@ -10,8 +10,8 @@ use egui_wgpu::wgpu;
 pub use solidcraft_gpu::view::{
     AccessMap, BlockBuilder, BlockBytes, BlockTris, CLOUD_POINT_SIZE, DrawStats, DrawStatsHandle, Frame, GpuImage, GpuPoints, GpuScene, GpuTarget,
     INSTANCE_SIZE, InstanceLook, InstancedMesh, LINE_SIZE, LOD_PX, MAX_PALETTE, PBR_SIZE, Palette, PaletteIndex, PlannedBody, Renderer, SHARED_SIZE,
-    SceneBlock, SceneSlot, SharedTris, TRI_SIZE, TriClass, UploadError, cloud_point, extend_runs, level_for, lifted_width, placement_scale, runs_within,
-    supersampled_size,
+    SceneBlock, SceneSlot, SharedTris, TRI_SIZE, TriClass, UploadError, cloud_point, extend_runs, level_for, lifted_width, placement_scale,
+    runs_within, supersampled_size,
 };
 
 /// A frame of the viewport as an egui paint callback.

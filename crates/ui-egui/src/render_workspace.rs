@@ -70,6 +70,7 @@ mod transport;
 mod thumbnails;
 #[path = "render_ui/wear.rs"]
 mod wear;
+
 /// The browser's preview budget: WebGPU and WebGL share the tab's memory, so it stays small.
 const WEB_GEOMETRY_BYTES: u64 = 128 * 1024 * 1024;
 /// Desktop: at most this many of the device's largest buffers of geometry...
@@ -103,14 +104,12 @@ fn admit_geometry(bytes: u64, budget: u64) -> Result<(), String> {
 }
 
 /// The message when the device refused the preview's geometry.
-fn upload_refusal(scene: &ProductScene, error: &str) -> String {
-    let bytes: u64 = scene.meshes.iter().map(|m| (m.mesh.triangles.len() as u64).saturating_mul(3 * crate::gpu::PBR_SIZE as u64)).sum();
+fn upload_refusal(bytes: u64, error: &str) -> String {
     format!(
         "The graphics device could not hold the Render preview's {:.1} MiB of geometry ({error}). Hide bodies in Design, then return to Render and try again.",
         bytes as f64 / 1048576.0
     )
 }
-
 
 #[cfg(test)]
 #[path = "render_workspace_tests.rs"]
@@ -1811,10 +1810,11 @@ fn preview_upload_plan(scene: &ProductScene, limit: usize) -> Result<PreviewUplo
                 return Err(crate::i18n::tr("render.error_pbr_opacity").into());
             }
             if opacity > 0.0 {
-                plan.add(pbr, opacity < 0.999, 1, limit)?;
+                plan.add(pbr, opacity < 0.999, 1, usize::MAX)?;
             }
         }
     }
+    admit_geometry(plan.bytes()? as u64, limit as u64)?;
     Ok(plan)
 }
 
@@ -2005,16 +2005,21 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         app.session.visibility.hidden_bodies.hash(&mut visibility);
         app.session.visibility.hidden_occurrences.hash(&mut visibility);
         let budget = preferred_geometry_budget(app.render_workspace.geometry_budget, app.preferences.render_previous_geometry_budget);
-        let signature = (app.session.revision, Arc::as_ptr(&app.session.world_state()) as usize, visibility.finish() ^ assign::preview_key(app), budget);
+        let signature =
+            (app.session.revision, Arc::as_ptr(&app.session.world_state()) as usize, visibility.finish() ^ assign::preview_key(app), budget);
         let preview = assign::preview(app);
+        let previous_key = app.render_workspace.key;
         app.render_workspace.prepare_preview(signature, || {
             let mut scene = solidcraft_engine::product_scene::extract(&app.session).map_err(|error| error.to_string())?;
             assign::preview_scene(&mut scene, preview.as_ref())?;
             Ok(scene)
         })?;
+        if app.render_workspace.key != previous_key {
+            ui.ctx().request_repaint();
+        }
         let scene = app.render_workspace.scene.as_ref().ok_or(crate::i18n::tr("render.error_no_scene"))?;
         if let Some(error) = app.render_workspace.upload_error.lock().ok().and_then(|e| e.clone()) {
-            return Err(upload_refusal(scene, &error));
+            return Err(upload_refusal(app.render_workspace.preview_upload_bytes.unwrap_or(0) as u64, &error));
         }
         request.features = scene.required_features();
         solidcraft_engine::render::resolve_request(&[app.session.render_backend()], &request).map_err(|e| e.to_string())?;
@@ -2073,7 +2078,6 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         Ok(())
     })();
     if let Err(error) = result {
-        ui.ctx().request_repaint();
         preview_error(app, ui, rect, &error);
     }
     shot::overlay(app, ui, viewport);

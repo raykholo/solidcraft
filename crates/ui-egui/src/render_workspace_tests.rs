@@ -6339,7 +6339,9 @@ fn geometry_refusal_reports_scene_size_limit_and_recovery() {
             mesh: Arc::new(Mesh { triangles: vec![[0; 3]; 1 << 20], ..Default::default() }),
             color: [128; 3],
             opacity: 1.0,
-            surface: Some(solidcraft_engine::render::surface::OpaqueSurface::new(solidcraft_engine::geom::Vec3::new(0.5, 0.5, 0.5), 0.0, 0.5, 1.5).unwrap()),
+            surface: Some(
+                solidcraft_engine::render::surface::OpaqueSurface::new(solidcraft_engine::geom::Vec3::new(0.5, 0.5, 0.5), 0.0, 0.5, 1.5).unwrap(),
+            ),
             transmission: None,
             faces: Vec::new(),
         }],
@@ -6349,7 +6351,7 @@ fn geometry_refusal_reports_scene_size_limit_and_recovery() {
     assert!(error.contains("144.0 MiB"), "{error}");
     assert!(error.contains("128.0 MiB"), "{error}");
     assert!(error.contains("Hide bodies in Design"), "{error}");
-    let refused = upload_refusal(&scene, "Out of Memory");
+    let refused = upload_refusal(144 << 20, "Out of Memory");
     assert!(refused.contains("144.0 MiB") && refused.contains("Out of Memory") && refused.contains("Hide bodies in Design"), "{refused}");
 }
 
@@ -6365,4 +6367,17 @@ fn previous_geometry_budget_restores_the_fixed_limit() {
             assert!(admit_geometry(previous + 1, previous).is_err());
         }
     }
+}
+
+#[test]
+fn geometry_budget_change_retries_cached_admission_without_document_changes() {
+    let mut session = Session::default();
+    session.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+    let scene = solidcraft_engine::product_scene::extract(&session).unwrap();
+    let bytes = preview_upload_plan(&scene, usize::MAX).unwrap().bytes().unwrap() as u64;
+    let mut state = State::default();
+    assert!(state.prepare_preview((7, 123, 99, bytes - 1), || Ok(scene.clone())).is_err());
+    state.prepare_preview((7, 123, 99, bytes), || Ok(scene)).unwrap();
+    assert_eq!(state.preview_upload_bytes, Some(bytes as usize));
+    assert!(state.scene_error.is_none());
 }
