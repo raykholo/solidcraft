@@ -190,8 +190,7 @@ pub(crate) fn immediate_wheel(
     };
     for event in &input.events {
         let egui::Event::MouseWheel { unit, delta, modifiers, phase } = event else { continue };
-        // egui aliases Ctrl/Command on Windows/Linux; macOS can hold both physical keys.
-        let modifier_zoom = zoom_modifier.is_some_and(|chosen| modifiers.matches_exact(chosen) && !(modifiers.mac_cmd && modifiers.ctrl));
+        let modifier_zoom = claims_scroll(*modifiers, zoom_modifier);
         if !modifier_zoom && modifiers.matches_any(options.zoom_modifier) {
             continue;
         }
@@ -256,12 +255,18 @@ pub(crate) fn immediate_wheel(
     out
 }
 
+/// Whether the chosen trackpad zoom modifier (Preferences › Navigation, #8322) claims a wheel
+/// event: that key held alone. egui aliases Ctrl/Command on Windows/Linux; macOS can hold both.
+pub(crate) fn claims_scroll(modifiers: egui::Modifiers, zoom_modifier: Option<egui::Modifiers>) -> bool {
+    zoom_modifier.is_some_and(|chosen| modifiers.matches_exact(chosen) && !(modifiers.mac_cmd && modifiers.ctrl))
+}
+
 /// Combined pinch-to-zoom factor for one frame (1 = no pinch input).
 ///
 /// Some input paths deliver pinch as a zoom-modified wheel instead of `Event::Zoom`.
 /// Read the raw movement that [`immediate_wheel`] leaves to the zoom modifier, without
 /// replaying egui's smoothed zoom delta on later frames. Gesture boundaries carry no movement.
-pub(crate) fn pinch_factor(input: &egui::InputState, options: egui::InputOptions, page_height: f32) -> f32 {
+pub(crate) fn pinch_factor(input: &egui::InputState, options: egui::InputOptions, page_height: f32, zoom_modifier: Option<egui::Modifiers>) -> f32 {
     let mut factor = 1.0;
     for event in &input.events {
         match event {
@@ -270,7 +275,10 @@ pub(crate) fn pinch_factor(input: &egui::InputState, options: egui::InputOptions
                     factor *= f;
                 }
             }
-            egui::Event::MouseWheel { unit, delta, modifiers, phase: egui::TouchPhase::Move } if modifiers.matches_any(options.zoom_modifier) => {
+            // A wheel the chosen zoom modifier already turns into zoom is not also a pinch.
+            egui::Event::MouseWheel { unit, delta, modifiers, phase: egui::TouchPhase::Move }
+                if modifiers.matches_any(options.zoom_modifier) && !claims_scroll(*modifiers, zoom_modifier) =>
+            {
                 let points = match unit {
                     egui::MouseWheelUnit::Point => *delta,
                     egui::MouseWheelUnit::Line => *delta * options.line_scroll_speed,
@@ -567,7 +575,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         scroll
     } + raw.modifier_zoom;
     // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
-    let pinch = ui.input(|i| pinch_factor(i, options, page_height));
+    let pinch = ui.input(|i| pinch_factor(i, options, page_height, zoom_modifier));
     let h = rect.height().max(1.0) as f64;
     if inside && pinch != 1.0 {
         app.viewport.orbit_free = None;
@@ -1199,7 +1207,7 @@ mod tests {
         assert_eq!(events.last(), Some(&egui::Event::Zoom(1.1)));
         let mut input = egui::InputState::default();
         input.events = events;
-        assert!((super::pinch_factor(&input, egui::InputOptions::default(), 600.0) - 1.1).abs() < 1e-6);
+        assert!((super::pinch_factor(&input, egui::InputOptions::default(), 600.0, None) - 1.1).abs() < 1e-6);
     }
 
     #[test]
@@ -1883,7 +1891,7 @@ mod tests {
                 modifiers: egui::Modifiers::CTRL,
                 phase,
             }];
-            assert_eq!(super::pinch_factor(&input, egui::InputOptions::default(), 600.0), 1.0, "{phase:?} is a gesture boundary, not movement");
+            assert_eq!(super::pinch_factor(&input, egui::InputOptions::default(), 600.0, None), 1.0, "{phase:?} is a gesture boundary, not movement");
         }
     }
 
@@ -1896,7 +1904,7 @@ mod tests {
         let factor = |events: Vec<Event>| {
             let mut input = egui::InputState::default();
             input.events = events;
-            super::pinch_factor(&input, options, 600.0)
+            super::pinch_factor(&input, options, 600.0, None)
         };
         let wheel = |unit, delta, modifiers| Event::MouseWheel { unit, delta, modifiers, phase: TouchPhase::Move };
         let close = |a: f32, b: f32| (a - b).abs() < 1e-4;

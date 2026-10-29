@@ -9336,29 +9336,38 @@ mod tests {
             ] {
                 for bracket in [true, false] {
                     for reverse in [false, true] {
-                        let mut h = crate::scenario::Harness::new();
-                        h.app.preferences.nav = preset.into();
-                        h.app.preferences.trackpad_zoom_modifier = chosen;
-                        h.app.preferences.zoom_reverse = reverse;
-                        h.app.preferences.zoom_to_cursor = false;
-                        h.call("ui.move", json!({"x":800,"y":500}));
-                        let before = h.app.cam;
-                        let event = |phase| egui::Event::MouseWheel { unit: U::Point, delta: vec2(60.0, 120.0), modifiers: held, phase };
-                        if bracket {
-                            h.app.synthetic.push(event(P::Start));
+                        // Run the same input with the given choice; a key that is not chosen
+                        // must leave main's own handling (Cmd/Ctrl + wheel is a pinch, #8480) unchanged.
+                        let run = |choice| {
+                            let mut h = crate::scenario::Harness::new();
+                            h.app.preferences.nav = preset.into();
+                            h.app.preferences.trackpad_zoom_modifier = choice;
+                            h.app.preferences.zoom_reverse = reverse;
+                            h.app.preferences.zoom_to_cursor = false;
+                            h.call("ui.move", json!({"x":800,"y":500}));
+                            let before = h.app.cam;
+                            let event = |phase| egui::Event::MouseWheel { unit: U::Point, delta: vec2(60.0, 120.0), modifiers: held, phase };
+                            if bracket {
+                                h.app.synthetic.push(event(P::Start));
+                                h.frame();
+                            }
+                            h.app.synthetic.push(event(P::Move));
                             h.frame();
+                            if bracket {
+                                h.app.synthetic.push(event(P::End));
+                                h.frame();
+                            }
+                            (h, before)
+                        };
+                        let (mut h, before) = run(chosen);
+                        if zooms {
+                            let expected = before.half_height() * (-0.18 * crate::prefs::zoom_sign(&h.app)).exp();
+                            assert!((h.app.cam.half_height() - expected).abs() < 1e-6, "{preset}, {chosen:?}, {held:?}");
+                            assert_eq!(h.app.cam.target, before.target);
+                            assert_eq!(h.app.cam.back(), before.back());
+                        } else {
+                            assert_eq!(h.app.cam, run(Z::Off).0.app.cam, "{preset}, {chosen:?}, {held:?}: unchosen keys keep the default handling");
                         }
-                        h.app.synthetic.push(event(P::Move));
-                        h.frame();
-                        if bracket {
-                            h.app.synthetic.push(event(P::End));
-                            h.frame();
-                        }
-                        let expected =
-                            if zooms { before.half_height() * (-0.18 * crate::prefs::zoom_sign(&h.app)).exp() } else { before.half_height() };
-                        assert!((h.app.cam.half_height() - expected).abs() < 1e-6, "{preset}, {chosen:?}, {held:?}");
-                        assert_eq!(h.app.cam.target, before.target);
-                        assert_eq!(h.app.cam.back(), before.back());
                         let after = h.app.cam;
                         h.frames(30);
                         assert_eq!(h.app.cam, after, "modifier scroll must not drift");
