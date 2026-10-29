@@ -1124,7 +1124,7 @@ mod tests {
         }
     }
 
-    /// Continue with an empty description gives it the focus once (#7190). It used to take the
+    /// Opening GitHub with an empty description gives it the focus once (#7190). It used to take the
     /// focus back every frame, so what was typed in Summary went into the description.
     #[test]
     fn issue_report_empty_description_takes_the_focus_once() {
@@ -1133,7 +1133,7 @@ mod tests {
         h.app.issue_report.draft = Some(draft_for(&h.app, None, None));
         h.frames(16);
         let description = Some(egui::Id::new("issue_report_body"));
-        click_commands(&mut h, "Continue on GitHub");
+        open_commands(&mut h);
         assert_eq!(h.ctx.memory(|m| m.focused()), description);
         // Click the Summary field (found by its id: it has no label of its own) and type.
         let title = egui::Id::new("issue_report_title").accesskit_id();
@@ -1145,8 +1145,8 @@ mod tests {
         let draft = h.app.issue_report.draft.as_ref().unwrap();
         assert_eq!((draft.title.as_str(), draft.description.as_str()), ("My title", ""));
         assert!(draft.missing_description && h.widget("Describe what happened before continuing.").is_some());
-        // Still empty: the next Continue gives it the focus again.
-        click_commands(&mut h, "Continue on GitHub");
+        // Still empty: opening GitHub again gives it the focus again.
+        open_commands(&mut h);
         assert_eq!(h.ctx.memory(|m| m.focused()), description);
     }
 

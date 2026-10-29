@@ -1,0 +1,50 @@
+{
+  "en": {
+    "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.": "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.",
+    "Open GitHub": "Open GitHub",
+    "Open GitHub issue form": "Open GitHub issue form",
+    "Opens your browser and copies the report text. Review and submit your report on GitHub.": "Opens your browser and copies the report text. Review and submit your report on GitHub.",
+    "Report copied. Keep this text to submit on GitHub when you are online.": "Report copied. Keep this text to submit on GitHub when you are online.",
+    "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app.": "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app."
+  },
+  "ja": {
+    "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.": "オフラインの場合やGitHubが開かない場合は、「レポートをコピー」でテキストを保存し、後で送信してください。",
+    "Open GitHub": "GitHubを開く",
+    "Open GitHub issue form": "GitHubのIssueフォームを開く",
+    "Opens your browser and copies the report text. Review and submit your report on GitHub.": "ブラウザーを開き、レポートのテキストをコピーします。GitHubで内容を確認して送信してください。",
+    "Report copied. Keep this text to submit on GitHub when you are online.": "レポートをコピーしました。このテキストを保存し、オンラインになったらGitHubで送信してください。",
+    "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app.": "SolidCraftからレポートを直接送信することはできません。GitHubで送信してください。アプリにトークンは必要ありません。"
+  },
+  "zh": {
+    "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.": "如果处于离线状态或 GitHub 无法打开，请使用“复制报告”并保留文本以便稍后提交。",
+    "Open GitHub": "打开 GitHub",
+    "Open GitHub issue form": "打开 GitHub 问题表单",
+    "Opens your browser and copies the report text. Review and submit your report on GitHub.": "打开浏览器并复制报告文本。请在 GitHub 上检查并提交报告。",
+    "Report copied. Keep this text to submit on GitHub when you are online.": "报告已复制。请保留此文本，联网后在 GitHub 上提交。",
+    "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app.": "SolidCraft 无法直接提交报告。请在 GitHub 上提交；应用中不需要令牌。"
+  },
+  "ar": {
+    "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.": "إذا كنت غير متصل بالإنترنت أو تعذّر فتح GitHub، فاستخدم «نسخ التقرير» واحتفظ بالنص لإرساله لاحقًا.",
+    "Open GitHub": "فتح GitHub",
+    "Open GitHub issue form": "فتح نموذج الإبلاغ عن مشكلة على GitHub",
+    "Opens your browser and copies the report text. Review and submit your report on GitHub.": "يفتح المتصفح وينسخ نص التقرير. راجع تقريرك وأرسله على GitHub.",
+    "Report copied. Keep this text to submit on GitHub when you are online.": "تم نسخ التقرير. احتفظ بهذا النص لإرساله على GitHub عند الاتصال بالإنترنت.",
+    "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app.": "لا يستطيع SolidCraft إرسال التقارير مباشرةً. أرسلها على GitHub؛ لا حاجة إلى رمز وصول في التطبيق."
+  },
+  "he": {
+    "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.": "אם אין חיבור לאינטרנט או ש-GitHub אינו נפתח, יש להשתמש באפשרות «העתקת הדיווח» ולשמור את הטקסט לשליחה מאוחר יותר.",
+    "Open GitHub": "פתיחת GitHub",
+    "Open GitHub issue form": "פתיחת טופס דיווח על בעיה ב-GitHub",
+    "Opens your browser and copies the report text. Review and submit your report on GitHub.": "פותח את הדפדפן ומעתיק את טקסט הדיווח. יש לבדוק את הדיווח ולשלוח אותו ב-GitHub.",
+    "Report copied. Keep this text to submit on GitHub when you are online.": "הדיווח הועתק. יש לשמור את הטקסט כדי לשלוח אותו ב-GitHub כשהחיבור לאינטרנט יהיה זמין.",
+    "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app.": "אין אפשרות לשלוח דיווחים ישירות מתוך SolidCraft. יש לשלוח אותם ב-GitHub; אין צורך באסימון גישה באפליקציה."
+  },
+  "vi": {
+    "If you are offline or GitHub does not open, use Copy report and keep the text to submit later.": "Nếu bạn đang ngoại tuyến hoặc không mở được GitHub, hãy dùng “Sao chép báo cáo” và giữ lại nội dung để gửi sau.",
+    "Open GitHub": "Mở GitHub",
+    "Open GitHub issue form": "Mở biểu mẫu báo lỗi trên GitHub",
+    "Opens your browser and copies the report text. Review and submit your report on GitHub.": "Mở trình duyệt và sao chép nội dung báo cáo. Hãy xem lại và gửi báo cáo trên GitHub.",
+    "Report copied. Keep this text to submit on GitHub when you are online.": "Đã sao chép báo cáo. Hãy giữ lại nội dung này để gửi lên GitHub khi có kết nối mạng.",
+    "SolidCraft cannot submit reports directly. Submit on GitHub; no token is needed in the app.": "SolidCraft không thể gửi báo cáo trực tiếp. Hãy gửi trên GitHub; ứng dụng không cần mã truy cập."
+  }
+}
