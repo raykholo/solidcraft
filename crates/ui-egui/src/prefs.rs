@@ -3314,13 +3314,13 @@ mod tests {
         for invalid in [json!("super"), json!(""), json!(42), json!(null)] {
             assert!(set(&mut app, &json!({"trackpad_zoom_modifier": invalid})).is_err());
             assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
-            assert_eq!(lenient(&json!({"trackpad_zoom_modifier": invalid})).trackpad_zoom_modifier, TrackpadZoomModifier::Cmd);
+            assert_eq!(lenient(&json!({"trackpad_zoom_modifier": invalid})).trackpad_zoom_modifier, TrackpadZoomModifier::Off);
         }
         app.load_prefs(&json!({"preferences": {"trackpad_zoom_modifier": "future"}}).to_string());
-        assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Cmd);
-        app.preferences.trackpad_zoom_modifier = TrackpadZoomModifier::Off;
+        assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
+        app.preferences.trackpad_zoom_modifier = TrackpadZoomModifier::Cmd;
         reset_preferences(&mut app.preferences, PAGE_NAVIGATION);
-        assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Cmd);
+        assert_eq!(app.preferences.trackpad_zoom_modifier, TrackpadZoomModifier::Off);
     }
 
     #[test]

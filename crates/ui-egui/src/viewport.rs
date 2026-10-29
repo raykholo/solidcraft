@@ -9396,6 +9396,7 @@ mod tests {
                 let mut h = crate::scenario::Harness::new();
                 h.app.preferences.nav = preset.into();
                 h.app.preferences.smooth_wheel_zoom = false;
+                h.app.preferences.trackpad_zoom_modifier = crate::prefs::TrackpadZoomModifier::Cmd;
                 h.call("engine.execute", json!({"command":"solid.box","params":{"length":40,"width":30,"height":20}}));
                 h.call("ui.camera", json!({"fit":true}));
                 h.call("ui.move", json!({"x":800,"y":500}));
