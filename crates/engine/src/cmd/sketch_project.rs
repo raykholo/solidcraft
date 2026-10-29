@@ -233,7 +233,7 @@ pub(super) mod refresh_count {
 
 /// Resolve an origin axis as a mirror line, keeping its projection linked and fixed.
 pub(super) fn origin_axis_line(s: &Session, p: &Value, line: &Value, cmd: &str) -> Result<(LinkSource, Vec<solidcraft_sketch::LinkGeom>)> {
-    let id = super::sketch::target_sketch(s, p, cmd)?;
+    let id = sketch_store::target(s, p, cmd)?;
     let doc = placed_candidate(s, &s.doc);
     let st = s.model.state_before(id);
     let st = state_for_sketch(s, &doc, id, &st)?;
