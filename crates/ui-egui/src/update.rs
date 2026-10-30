@@ -8,14 +8,11 @@
 //! `installed.json` records this installation. The checks run as before, but the window only says
 //! to update SolidCraft in that launcher: no Update now, no AppImage replacement, no Download.
 //!
-//! Releases come about once a day, so the open app checks more often around the time the next
-//! one is expected (`wait_after_check`): it ramps up as that time nears, checks every ten
-//! minutes in the release window, and backs off again after it. The requests are conditional
-//! (`If-None-Match` with GitHub's ETag), so an unchanged answer is a bodiless 304 that does not
-//! count against GitHub's rate limit. Those near-release checks poll the releases Atom feed
-//! (`RELEASES_FEED`, not rate limited, ETag-conditional) and call the API only when the feed
-//! shows a release newer than the one known. Preferences ▸ General ▸ Check more often around release
-//! time turns this off: then it is the start and once a day.
+//! With Preferences ▸ General ▸ Check for updates every 15 minutes on (the default), the open app
+//! checks every `POLL_INTERVAL_S`. Those checks poll the releases Atom feed (`RELEASES_FEED`, not
+//! rate limited, ETag-conditional: an unchanged answer is a bodiless 304) and call the API
+//! (`releases/latest`) only when the feed shows a release newer than the one known. Off: the start
+//! and once a day.
 //!
 //! The request is the only thing sent: no identifiers, no usage data. A short timeout keeps it
 //! from hanging, a failed check (offline, rate limited) stays silent and is retried later, and
@@ -59,22 +56,9 @@ fn is_release_url(url: &str) -> bool {
 
 /// While the app stays open, automatic checks run once a day (every start checks too).
 pub const CHECK_INTERVAL_S: f64 = 24.0 * 3600.0;
-/// How long after one release the next is expected (releases come about daily).
-pub const EXPECTED_RELEASE_S: f64 = 24.0 * 3600.0;
-/// The release window opens this long before the expected time.
-pub const WINDOW_LEAD_S: f64 = 3600.0;
-/// The release window closes this long after the expected time.
-pub const WINDOW_TAIL_S: f64 = 6.0 * 3600.0;
-/// Inside the release window the open app checks this often (fifteen minutes: the tightest
-/// interval that keeps an office of SolidCraft users on one address under GitHub's anonymous
-/// limit of 60 requests an hour).
-pub const WINDOW_CHECK_S: f64 = 900.0;
-/// Before the window the wait is half the time left until it opens, but at least this (fifteen minutes)...
-pub const RAMP_MIN_S: f64 = 900.0;
-/// ...and at most this (six hours).
-pub const RAMP_MAX_S: f64 = 6.0 * 3600.0;
-/// After the window the wait starts at this (an hour), doubles with each check and stops at a day.
-pub const BACKOFF_START_S: f64 = 3600.0;
+/// With the option on, the open app checks the releases feed this often (fifteen minutes). A feed
+/// poll costs a 304 with no body, and fifteen minutes was the maintainer's floor.
+pub const POLL_INTERVAL_S: f64 = 15.0 * 60.0;
 /// Remind me later hides the button for three days.
 pub const REMIND_DELAY_S: f64 = 3.0 * 24.0 * 3600.0;
 /// Check now can't be pressed more often than this (GitHub allows 60 anonymous requests an hour).
@@ -672,9 +656,6 @@ pub struct Memo {
     pub skipped: String,
     /// Remind me later: no button before this time.
     pub remind_after: f64,
-    /// When the latest release was published (Unix seconds; 0: unknown). The schedule around
-    /// release time counts from it.
-    pub published_at: f64,
     /// GitHub's ETag of the last answer, sent back as `If-None-Match`.
     pub etag: String,
     /// The same for the releases feed (a separate request with its own ETag).
@@ -708,36 +689,6 @@ pub fn parse_timestamp(s: &str) -> Option<f64> {
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     let days = era * 146_097 + doe - 719_468;
     Some((days * 86_400 + h * 3600 + mi * 60 + sec) as f64)
-}
-
-/// How long the open app waits after a successful check. `published_at` is when the latest
-/// release came out (Unix seconds; 0 or anything unusable: unknown). A release is often followed
-/// within hours by a fix release, and the next one comes about `EXPECTED_RELEASE_S` later. So
-/// between the two the wait is half the time since the release or half the time left to the
-/// window, whichever is shorter: it doubles away from a release and halves toward the next window
-/// (a mirror image), is `WINDOW_CHECK_S` inside the release window, and after it starts at
-/// `BACKOFF_START_S` and doubles up to a day. Unknown, or `fast` off: a day.
-pub fn wait_after_check(now: f64, published_at: f64, fast: bool) -> f64 {
-    let t = now - published_at;
-    if !fast || !now.is_finite() || !published_at.is_finite() || published_at <= 0.0 || t < 0.0 {
-        return CHECK_INTERVAL_S;
-    }
-    let opens = EXPECTED_RELEASE_S - WINDOW_LEAD_S;
-    let closes = EXPECTED_RELEASE_S + WINDOW_TAIL_S;
-    if t < opens {
-        (t.min(opens - t) / 2.0).clamp(RAMP_MIN_S, RAMP_MAX_S)
-    } else if t <= closes {
-        WINDOW_CHECK_S
-    } else {
-        // The checks fall at 1 h, 3 h, 7 h, ... after the window closes: the wait is whatever
-        // step `t` is in.
-        let late = t - closes;
-        let mut wait = BACKOFF_START_S;
-        while wait < CHECK_INTERVAL_S && late + BACKOFF_START_S >= 2.0 * wait {
-            wait *= 2.0;
-        }
-        wait.min(CHECK_INTERVAL_S)
-    }
 }
 
 impl Memo {
@@ -783,10 +734,11 @@ impl Memo {
         }
     }
 
-    /// After a successful check: the next one comes `wait_after_check` later (a day when `fast`
+    /// After a successful check: the next one comes `POLL_INTERVAL_S` later (a day when `fast`
     /// is off), and never before GitHub's rate-limit wait is over.
     pub fn schedule(&mut self, now: f64, fast: bool) {
-        self.next_check = (now + wait_after_check(now, self.published_at, fast)).max(self.rate_limited_until.min(now + CHECK_INTERVAL_S));
+        let wait = if fast { POLL_INTERVAL_S } else { CHECK_INTERVAL_S };
+        self.next_check = (now + wait).max(self.rate_limited_until.min(now + CHECK_INTERVAL_S));
     }
 }
 
@@ -943,13 +895,12 @@ enum Checked {
     Unchanged,
     Fresh {
         release: Release,
-        published_at: f64,
         etag: String,
         /// The releases feed's ETag, when the feed led to this answer.
         feed_etag: Option<String>,
     },
     /// The feed shows nothing newer than what is known: no API call was made.
-    NoNews { published_at: f64, feed_etag: String },
+    NoNews { feed_etag: String },
 }
 
 /// What the near-release automatic checks know when they poll the releases feed.
@@ -978,7 +929,7 @@ fn fetch_checked(
             Ok(Conditional::Modified { body, etag: new }) => {
                 if let Some(top) = parse_feed(&body) {
                     if !is_newer(&top.tag, poll.known) {
-                        return Ok(Checked::NoNews { published_at: top.updated, feed_etag: new.unwrap_or_default() });
+                        return Ok(Checked::NoNews { feed_etag: new.unwrap_or_default() });
                     }
                     // A new release: the API gives its assets and notes. Its old ETag can't match.
                     feed_etag = Some(new.unwrap_or_default());
@@ -996,11 +947,7 @@ fn fetch_checked(
         },
         _ => (fetch_body(feed, http)?, String::new()),
     };
-    let published_at = serde_json::from_slice::<Value>(&body)
-        .ok()
-        .and_then(|v| v.get("published_at").and_then(Value::as_str).and_then(parse_timestamp))
-        .unwrap_or(0.0);
-    Ok(Checked::Fresh { release: Release::parse(&body)?, published_at, etag, feed_etag })
+    Ok(Checked::Fresh { release: Release::parse(&body)?, etag, feed_etag })
 }
 
 fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
@@ -1010,18 +957,18 @@ fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
     let feed = app.updater.feed.clone();
     let http = app.services.http_get.clone();
     let cond = app.services.http_get_if_changed.clone();
-    // Only the automatic checks of the near-release schedule are conditional, and only when the
+    // Only the automatic checks of the 15-minute poll are conditional, and only when the
     // release the ETag belongs to is in memory (a 304 carries no release).
     let etag = Some(app.preferences.update.etag.clone())
-        .filter(|e| !manual && app.preferences.check_around_release && app.updater.release.is_some() && !e.is_empty());
-    // The near-release checks ask the releases feed first (its own ETag, usable only when the
+        .filter(|e| !manual && app.preferences.check_often && app.updater.release.is_some() && !e.is_empty());
+    // The 15-minute checks ask the releases feed first (its own ETag, usable only when the
     // release it showed is in memory); the API is called only when the feed shows a newer release.
     let known = match &app.updater.release {
         Some(r) if is_newer(&r.tag, current_version()) => r.tag.clone(),
         _ => current_version().to_string(),
     };
     let feed_etag = Some(app.preferences.update.feed_etag.clone()).filter(|e| !e.is_empty() && app.updater.release.is_some());
-    let poll_feed = !manual && app.preferences.check_around_release && cond.is_some();
+    let poll_feed = !manual && app.preferences.check_often && cond.is_some();
     let fetch = move || {
         let poll = FeedPoll { etag: feed_etag.as_deref(), known: &known };
         fetch_checked(feed.as_deref(), http.as_ref(), cond.as_ref(), etag.as_deref(), poll_feed.then_some(&poll))
@@ -1057,22 +1004,18 @@ fn poll(app: &mut SolveApp) {
     app.updater.rx = None;
     let now = unix_now();
     app.preferences.update.finished(now, result.as_ref().err());
-    let fast = app.preferences.check_around_release;
+    let fast = app.preferences.check_often;
     match result {
         Ok(Checked::Unchanged) => {
             app.preferences.update.schedule(now, fast);
             app.updater.status = if offered_or_newer(app).is_some() { Status::Idle } else { Status::UpToDate };
         }
-        Ok(Checked::NoNews { published_at, feed_etag }) => {
-            if published_at > 0.0 {
-                app.preferences.update.published_at = published_at;
-            }
+        Ok(Checked::NoNews { feed_etag }) => {
             app.preferences.update.feed_etag = feed_etag;
             app.preferences.update.schedule(now, fast);
             app.updater.status = if offered_or_newer(app).is_some() { Status::Idle } else { Status::UpToDate };
         }
-        Ok(Checked::Fresh { release, published_at, etag, feed_etag }) => {
-            app.preferences.update.published_at = published_at;
+        Ok(Checked::Fresh { release, etag, feed_etag }) => {
             app.preferences.update.etag = etag;
             if let Some(e) = feed_etag {
                 app.preferences.update.feed_etag = e;
@@ -1395,7 +1338,7 @@ pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
     if can {
         ui_kit::checkbox(ui, crate::i18n::tr("update.check_automatically"), &mut app.preferences.check_updates);
         if app.preferences.check_updates {
-            ui_kit::checkbox(ui, crate::i18n::tr("update.check_near_release"), &mut app.preferences.check_around_release);
+            ui_kit::checkbox(ui, crate::i18n::tr("update.check_often"), &mut app.preferences.check_often);
         }
         ui.horizontal_wrapped(|ui| {
             let busy = app.updater.status == Status::Checking;

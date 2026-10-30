@@ -17,19 +17,13 @@ room, then to its icon alone.
 - **Remind me later** hides it for three days.
 
 SolidCraft checks every time it starts, so a release that came out since you last opened it shows
-up straight away. While it stays open it checks again, and more often when a new release is
-likely. A release is often followed within hours by a fix release, and the next one comes about a
-day later, so right after a release it checks every fifteen minutes and the wait doubles from there
-(half the time since the release, at most six hours), then shrinks again as a day nears (half the
-time left), and from an hour before that until six hours after it SolidCraft checks every fifteen
-minutes. After that it backs off again
-(an hour, doubling with each check, up to a day). A newly published release starts the count over.
+up straight away. While it stays open, with **Check for updates every 15 minutes** on, it checks
+every 15 minutes. It polls the releases feed, where an unchanged answer is free, and calls the
+GitHub API only for a new release. With the option off it checks at start and once a day.
 
 **Preferences ▸ General ▸ Updates** has **Check for updates automatically** (on by default),
-**Check more often around release time** (on by default; shown while the automatic check is on)
+**Check for updates every 15 minutes** (on by default; shown while the automatic check is on)
 and **Check now**, which checks right away and shows the window even for a version you skipped.
-Turning off **Check more often around release time** gives the plain schedule: at every start and
-once a day while SolidCraft stays open.
 
 ## Updating in one click
 
@@ -71,8 +65,8 @@ affected.
 
 ## What is sent
 
-One HTTPS request each time SolidCraft starts, and then while it stays open as often as the
-schedule above says (once a day with **Check more often around release time** off):
+One HTTPS request each time SolidCraft starts, and then while it stays open every 15
+minutes (once a day with **Check for updates every 15 minutes** off):
 
 ```text
 GET https://api.github.com/repos/tangency-labs/solidcraft/releases/latest
@@ -82,9 +76,9 @@ X-GitHub-Api-Version: 2022-11-28
 If-None-Match: "<ETag of the previous answer>"
 ```
 
-With **Check more often around release time** on, the repeat checks of an open SolidCraft first
+With **Check for updates every 15 minutes** on, the repeat checks of an open SolidCraft first
 ask GitHub's releases feed, which is not rate limited, so many people behind one address don't
-use up the API's limit. The checks still run at most every fifteen minutes.
+use up the API's limit. The checks run every fifteen minutes.
 
 ```text
 GET https://github.com/tangency-labs/solidcraft/releases.atom
@@ -98,8 +92,7 @@ The API request above is made only when the feed shows a release newer than the 
 `If-None-Match` is sent only on the repeat checks of an open SolidCraft with that option on, and
 carries the ETag value GitHub itself gave with its last answer for this same public release page:
 it says nothing about you. When nothing changed, GitHub answers 304 with no body, and such
-answers don't count against its rate limit. The release's publication time, which the schedule
-uses, comes from GitHub's answer and is kept in your preferences on your computer.
+answers don't count against its rate limit.
 
 **Update now** then downloads `SHA256SUMS.txt` (and its signature) and the one package from the
 release's own `github.com/tangency-labs/solidcraft/releases/download/…` links, with the same

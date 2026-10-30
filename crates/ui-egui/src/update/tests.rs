@@ -770,77 +770,31 @@ fn github_timestamps_parse_and_garbage_does_not() {
 }
 
 #[test]
-fn checks_come_sooner_as_the_expected_release_time_nears() {
-    let published = 1_800_000_000.0;
-    let at = |t: f64| wait_after_check(published + t, published, true);
-    let h = 3600.0;
-    // Just after a release, when a fix release often follows: half the time since it, at least
-    // fifteen minutes, so the wait doubles away from the release.
-    assert_eq!(at(0.0), RAMP_MIN_S);
-    assert_eq!(at(0.25 * h), RAMP_MIN_S);
-    assert_eq!(at(1.0 * h), 0.5 * h);
-    assert_eq!(at(2.0 * h), 1.0 * h);
-    assert_eq!(at(4.0 * h), 2.0 * h);
-    // Midway: at most six hours.
-    assert_eq!(at(11.5 * h), 5.75 * h);
-    assert_eq!(at(12.0 * h), 5.5 * h);
-    // Ramping: the wait halves as the window nears.
-    assert_eq!(at(16.0 * h), 3.5 * h);
-    assert_eq!(at(20.0 * h), 1.5 * h);
-    assert_eq!(at(22.0 * h), 0.5 * h);
-    assert_eq!(at(22.9 * h), RAMP_MIN_S, "never faster than fifteen minutes");
-    // In the window (23 h to 30 h): every fifteen minutes.
-    for t in [23.0 * h, 24.0 * h, 29.99 * h, 30.0 * h] {
-        assert_eq!(at(t), WINDOW_CHECK_S, "t = {t}");
-    }
-    // Past it: an hour, doubling, up to a day.
-    assert_eq!(at(30.0 * h + 1.0), BACKOFF_START_S);
-    assert_eq!(at(31.0 * h), 2.0 * h);
-    assert_eq!(at(33.0 * h), 4.0 * h);
-    assert_eq!(at(37.0 * h), 8.0 * h);
-    assert_eq!(at(45.0 * h), 16.0 * h);
-    assert_eq!(at(61.0 * h), CHECK_INTERVAL_S);
-    assert_eq!(at(1000.0 * 24.0 * h), CHECK_INTERVAL_S, "capped at a day");
-}
-
-#[test]
-fn an_unknown_or_unusable_release_time_keeps_the_daily_schedule() {
+fn with_the_option_on_the_next_check_is_fifteen_minutes_after_a_success() {
     let now = 1_800_000_000.0;
-    for published in [0.0, -5.0, f64::NAN, f64::INFINITY, now + 3600.0] {
-        assert_eq!(wait_after_check(now, published, true), CHECK_INTERVAL_S, "{published}");
-    }
-    assert_eq!(wait_after_check(f64::NAN, now, true), CHECK_INTERVAL_S);
-    // Garbage in a feed gives no release time.
-    let dir = scratch();
-    let path = dir.0.join("latest.json");
-    std::fs::write(&path, json!({"tag_name": "v999.0.0", "published_at": "yesterday"}).to_string()).unwrap();
-    match fetch_checked(Some(&path), None, None, None, None) {
-        Ok(Checked::Fresh { published_at, .. }) => assert_eq!(published_at, 0.0),
-        _ => panic!("the feed should load"),
-    }
+    let mut m = Memo::default();
+    m.schedule(now, true);
+    assert_eq!(m.next_check, now + POLL_INTERVAL_S);
+    assert_eq!(POLL_INTERVAL_S, 900.0);
+    assert!(!m.due(now + 899.0, false));
+    assert!(m.due(now + 900.0, false));
 }
 
 #[test]
-fn the_toggle_off_is_the_daily_schedule() {
-    let published = 1_800_000_000.0;
-    for t in [0.0, 12.0 * 3600.0, 24.0 * 3600.0, 40.0 * 3600.0] {
-        assert_eq!(wait_after_check(published + t, published, false), CHECK_INTERVAL_S);
-    }
-    let mut m = Memo { published_at: published, ..Memo::default() };
-    let now = published + 24.0 * 3600.0;
+fn with_the_option_off_the_next_check_is_a_day_after_a_success() {
+    let now = 1_800_000_000.0;
+    let mut m = Memo::default();
     m.schedule(now, false);
     assert_eq!(m.next_check, now + CHECK_INTERVAL_S);
-    m.schedule(now, true);
-    assert_eq!(m.next_check, now + WINDOW_CHECK_S);
+    assert!(!m.due(now + CHECK_INTERVAL_S - 1.0, false));
 }
 
 #[test]
-fn a_rate_limit_wait_still_wins_over_the_window_schedule() {
-    let published = 1_800_000_000.0;
-    let now = published + 24.0 * 3600.0;
-    let mut m = Memo { published_at: published, ..Memo::default() };
+fn a_rate_limit_wait_still_wins_over_the_poll_interval() {
+    let now = 1_800_000_000.0;
+    let mut m = Memo::default();
     m.checked(now, &Err(FetchError::RateLimited { retry_after_s: 1800 }));
-    // In the window, but GitHub said to wait: nothing is due before then, at launch or not.
+    // GitHub said to wait: nothing is due before then, at launch or not.
     for launch in [false, true] {
         assert!(!m.due(now + 1700.0, launch));
         assert!(m.due(now + 1800.0, launch));
@@ -851,35 +805,11 @@ fn a_rate_limit_wait_still_wins_over_the_window_schedule() {
 }
 
 #[test]
-fn a_new_release_resets_the_schedule_and_the_etag_is_kept() {
-    let dir = scratch();
-    let (feed, _) = next_release_feed(&dir.0);
-    let mut h = crate::scenario::Harness::new();
-    h.app.updater.feed = Some(feed.clone());
-    let published = unix_now() - 25.0 * 3600.0;
-    let stamp = |secs: f64| {
-        let days = (secs / 86_400.0).floor();
-        let rest = secs - days * 86_400.0;
-        // civil date from days (inverse of parse_timestamp)
-        let z = days as i64 + 719_468;
-        let era = z.div_euclid(146_097);
-        let doe = z - era * 146_097;
-        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-        let mp = (5 * doy + 2) / 153;
-        let d = doy - (153 * mp + 2) / 5 + 1;
-        let m = if mp < 10 { mp + 3 } else { mp - 9 };
-        let y = yoe + era * 400 + i64::from(m <= 2);
-        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", (rest / 3600.0) as i64, (rest % 3600.0 / 60.0) as i64, (rest % 60.0) as i64)
-    };
-    let body = json!({"tag_name": "v999.0.0", "published_at": stamp(published)});
-    std::fs::write(&feed, body.to_string()).unwrap();
-    h.frame();
-    wait_for_check(&mut h);
-    let m = &h.app.preferences.update;
-    assert!((m.published_at - published.floor()).abs() <= 1.0, "{} vs {published}", m.published_at);
-    // 25 h after that release, i.e. in the window: the next check is fifteen minutes away.
-    assert!((m.next_check - m.last_check - WINDOW_CHECK_S).abs() < 1.0);
+fn a_failed_check_is_retried_after_an_hour() {
+    let now = 1_800_000_000.0;
+    let mut m = Memo::default();
+    m.checked(now, &Err(FetchError::Failed("offline".into())));
+    assert_eq!(m.next_check, now + RETRY_AFTER_FAILURE_S);
 }
 
 fn atom(entries: &[(&str, &str)]) -> Vec<u8> {
@@ -960,13 +890,12 @@ fn a_feed_304_makes_no_api_call() {
 }
 
 #[test]
-fn a_feed_with_nothing_new_keeps_the_schedule_without_the_api() {
+fn a_feed_with_nothing_new_needs_no_api_call() {
     let body = atom(&[("v0.20.0", "2026-10-29T08:00:00Z")]);
     let (get, calls) = host(Ok(Conditional::Modified { body, etag: Some("W/\"g\"".into()) }), api_release("v999.0.0"));
     let poll = FeedPoll { etag: None, known: "0.20.0" };
     match fetch_checked(None, None, Some(&get), None, Some(&poll)).unwrap() {
-        Checked::NoNews { published_at, feed_etag } => {
-            assert_eq!(published_at, parse_timestamp("2026-10-29T08:00:00Z").unwrap());
+        Checked::NoNews { feed_etag } => {
             assert_eq!(feed_etag, "W/\"g\"");
         }
         _ => panic!("nothing new"),
@@ -1002,7 +931,7 @@ fn a_failed_or_unreadable_feed_falls_back_to_the_api() {
 }
 
 #[test]
-fn without_the_near_release_option_the_feed_is_not_asked() {
+fn without_the_option_the_feed_is_not_asked() {
     let (get, calls) = host(Ok(Conditional::NotModified), api_release("v0.21.0"));
     let r = fetch_checked(None, None, Some(&get), None, None).unwrap();
     assert!(matches!(r, Checked::Fresh { .. }));
