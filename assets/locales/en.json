@@ -4642,6 +4642,7 @@
   "update.button": "Update",
   "update.button_version": "Update to {version}",
   "update.check_automatically": "Check for updates automatically",
+  "update.check_near_release": "Check more often around release time",
   "update.check_now": "Check now",
   "update.checking": "Checking…",
   "update.copy": "Copy",

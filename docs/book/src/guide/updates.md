@@ -17,10 +17,17 @@ room, then to its icon alone.
 - **Remind me later** hides it for three days.
 
 SolidCraft checks every time it starts, so a release that came out since you last opened it shows
-up straight away, and again once a day while it stays open.
+up straight away. While it stays open it checks again, and more often when a new release is
+likely: releases come about once a day, so the wait between checks shrinks as the time since the
+last release nears a day (at most six hours, then half the time left), and from an hour before
+that until six hours after it SolidCraft checks every ten minutes. After that it backs off again
+(an hour, doubling with each check, up to a day). A newly published release starts the count over.
 
-**Preferences ▸ General ▸ Updates** has **Check for updates automatically** (on by default) and
-**Check now**, which checks right away and shows the window even for a version you skipped.
+**Preferences ▸ General ▸ Updates** has **Check for updates automatically** (on by default),
+**Check more often around release time** (on by default; shown while the automatic check is on)
+and **Check now**, which checks right away and shows the window even for a version you skipped.
+Turning off **Check more often around release time** gives the plain schedule: at every start and
+once a day while SolidCraft stays open.
 
 ## Updating in one click
 
@@ -62,14 +69,22 @@ affected.
 
 ## What is sent
 
-One HTTPS request each time SolidCraft starts, and once a day while it stays open:
+One HTTPS request each time SolidCraft starts, and then while it stays open as often as the
+schedule above says (once a day with **Check more often around release time** off):
 
 ```text
 GET https://api.github.com/repos/tangency-labs/solidcraft/releases/latest
 User-Agent: SolidCraft-update-check
 Accept: application/vnd.github+json
 X-GitHub-Api-Version: 2022-11-28
+If-None-Match: "<ETag of the previous answer>"
 ```
+
+`If-None-Match` is sent only on the repeat checks of an open SolidCraft with that option on, and
+carries the ETag value GitHub itself gave with its last answer for this same public release page:
+it says nothing about you. When nothing changed, GitHub answers 304 with no body, and such
+answers don't count against its rate limit. The release's publication time, which the schedule
+uses, comes from GitHub's answer and is kept in your preferences on your computer.
 
 **Update now** then downloads `SHA256SUMS.txt` (and its signature) and the one package from the
 release's own `github.com/tangency-labs/solidcraft/releases/download/…` links, with the same

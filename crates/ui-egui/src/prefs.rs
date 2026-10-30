@@ -1199,6 +1199,9 @@ preference_settings! {
     color_vision: crate::theme::ColorVision = crate::theme::ColorVision::Off, PAGE_INTERFACE;
     /// Check for updates at start and once a day (docs/updates.md).
     check_updates: bool = true, 0;
+    /// Check more often around the time a release is expected (`update::wait_after_check`); off:
+    /// the start and once a day.
+    check_around_release: bool = true, 0;
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).
     update: crate::update::Memo = crate::update::Memo::default();
     /// The variant last started in each split tool family (Rectangle, Circle, Arc, Slot, Polygon, Line,

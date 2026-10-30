@@ -423,6 +423,7 @@ fn services(cc: &eframe::CreationContext<'_>, folder: &DialogFolder) -> Services
         graphics_path: graphics_path().map(|p| p.to_string_lossy().to_string()),
         window_system: window_system_now(),
         http_get: Some(std::sync::Arc::new(http_get)),
+        http_get_if_changed: Some(std::sync::Arc::new(http_get_if_changed)),
         http_download: Some(std::sync::Arc::new(http_download)),
         // Already an installed app: only the browser build offers to install.
         install_app: None,
@@ -460,6 +461,20 @@ fn http_get(url: &str) -> Result<Vec<u8>, solidcraft_ui_egui::update::FetchError
     use solidcraft_ui_egui::update::FetchError;
     let mut response = http_call(url, std::time::Duration::from_secs(15))?;
     response.body_mut().with_config().limit(1 << 20).read_to_vec().map_err(|e| FetchError::Failed(e.to_string()))
+}
+
+/// The update check's conditional GET: the same request with `If-None-Match` (the ETag GitHub
+/// gave the last answer). A 304 means unchanged and doesn't count against GitHub's rate limit.
+fn http_get_if_changed(url: &str, etag: Option<&str>) -> Result<solidcraft_ui_egui::update::Conditional, solidcraft_ui_egui::update::FetchError> {
+    use solidcraft_ui_egui::update::{Conditional, FetchError};
+    let mut response = http_call_with(url, std::time::Duration::from_secs(15), etag)?;
+    if response.status().as_u16() == 304 {
+        return Ok(Conditional::NotModified);
+    }
+    let etag =
+        response.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::trim).filter(|e| !e.is_empty() && e.len() <= 200).map(str::to_string);
+    let body = response.body_mut().with_config().limit(1 << 20).read_to_vec().map_err(|e| FetchError::Failed(e.to_string()))?;
+    Ok(Conditional::Modified { body, etag })
 }
 
 /// HTTPS download of an update package to `to` (docs/updates.md), reporting progress; stops when
@@ -574,6 +589,15 @@ impl solidcraft_ui_egui::agent_chat::backend::Secrets for Keychain {
 
 /// One GET to GitHub: a 200 answer, or why not (rate limits included).
 fn http_call(url: &str, timeout: std::time::Duration) -> Result<ureq::http::Response<ureq::Body>, solidcraft_ui_egui::update::FetchError> {
+    http_call_with(url, timeout, None)
+}
+
+/// `http_call` with an `If-None-Match` header; a 304 answer is returned as it is.
+fn http_call_with(
+    url: &str,
+    timeout: std::time::Duration,
+    if_none_match: Option<&str>,
+) -> Result<ureq::http::Response<ureq::Body>, solidcraft_ui_egui::update::FetchError> {
     use solidcraft_ui_egui::update::FetchError;
     use std::time::Duration;
     let tls = ureq::tls::TlsConfig::builder()
@@ -590,18 +614,20 @@ fn http_call(url: &str, timeout: std::time::Duration) -> Result<ureq::http::Resp
         .max_redirects(3)
         .build()
         .into();
-    let response = agent
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
-        .call()
-        .map_err(|e| FetchError::Failed(e.to_string()))?;
+    let mut request = agent.get(url).header("Accept", "application/vnd.github+json").header("X-GitHub-Api-Version", "2022-11-28");
+    if let Some(etag) = if_none_match {
+        request = request.header("If-None-Match", etag);
+    }
+    let response = request.call().map_err(|e| FetchError::Failed(e.to_string()))?;
     let status = response.status().as_u16();
     let header = |k: &str| response.headers().get(k).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
     if status == 429 || (status == 403 && (header("x-ratelimit-remaining") == Some(0) || header("retry-after").is_some())) {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let retry_after_s = header("retry-after").or_else(|| header("x-ratelimit-reset").map(|reset| reset.saturating_sub(now))).unwrap_or(3600);
         return Err(FetchError::RateLimited { retry_after_s });
+    }
+    if status == 304 && if_none_match.is_some() {
+        return Ok(response);
     }
     if status != 200 {
         return Err(FetchError::Failed(format!("GitHub answered HTTP {status}")));

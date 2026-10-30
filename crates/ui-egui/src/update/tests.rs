@@ -750,3 +750,127 @@ fn install_selection_refreshes_the_button_and_progress_before_completion() {
     assert!(h.app.updater.installed.is_none());
     tx.send(()).unwrap();
 }
+
+#[test]
+fn github_timestamps_parse_and_garbage_does_not() {
+    assert_eq!(parse_timestamp("1970-01-01T00:00:00Z"), Some(0.0));
+    assert_eq!(parse_timestamp("2026-10-29T13:36:12Z"), Some(1793280972.0));
+    for bad in [
+        "",
+        "garbage",
+        "2026-10-29",
+        "2026-13-29T13:36:12Z",
+        "2026-10-29T25:36:12Z",
+        "2026-10-29T13:36:12+00:00",
+        "2026-1x-29T13:36:12Z",
+        "日本語日本語日本語日本語日本語日本語日本語",
+    ] {
+        assert_eq!(parse_timestamp(bad), None, "{bad:?}");
+    }
+}
+
+#[test]
+fn checks_come_sooner_as_the_expected_release_time_nears() {
+    let published = 1_800_000_000.0;
+    let at = |t: f64| wait_after_check(published + t, published, true);
+    let h = 3600.0;
+    // Far from the window: half the time left, at most six hours.
+    assert_eq!(at(0.0), RAMP_MAX_S);
+    assert_eq!(at(5.0 * h), RAMP_MAX_S);
+    // Ramping: the wait halves as the window nears.
+    assert_eq!(at(12.0 * h), 5.5 * h);
+    assert_eq!(at(20.0 * h), 1.5 * h);
+    assert_eq!(at(22.0 * h), 0.5 * h);
+    assert_eq!(at(22.9 * h), RAMP_MIN_S, "never faster than ten minutes");
+    // In the window (23 h to 30 h): every ten minutes.
+    for t in [23.0 * h, 24.0 * h, 29.99 * h, 30.0 * h] {
+        assert_eq!(at(t), WINDOW_CHECK_S, "t = {t}");
+    }
+    // Past it: an hour, doubling, up to a day.
+    assert_eq!(at(30.0 * h + 1.0), BACKOFF_START_S);
+    assert_eq!(at(31.0 * h), 2.0 * h);
+    assert_eq!(at(33.0 * h), 4.0 * h);
+    assert_eq!(at(37.0 * h), 8.0 * h);
+    assert_eq!(at(45.0 * h), 16.0 * h);
+    assert_eq!(at(61.0 * h), CHECK_INTERVAL_S);
+    assert_eq!(at(1000.0 * 24.0 * h), CHECK_INTERVAL_S, "capped at a day");
+}
+
+#[test]
+fn an_unknown_or_unusable_release_time_keeps_the_daily_schedule() {
+    let now = 1_800_000_000.0;
+    for published in [0.0, -5.0, f64::NAN, f64::INFINITY, now + 3600.0] {
+        assert_eq!(wait_after_check(now, published, true), CHECK_INTERVAL_S, "{published}");
+    }
+    assert_eq!(wait_after_check(f64::NAN, now, true), CHECK_INTERVAL_S);
+    // Garbage in a feed gives no release time.
+    let dir = scratch();
+    let path = dir.0.join("latest.json");
+    std::fs::write(&path, json!({"tag_name": "v999.0.0", "published_at": "yesterday"}).to_string()).unwrap();
+    match fetch_checked(Some(&path), None, None, None) {
+        Ok(Checked::Fresh { published_at, .. }) => assert_eq!(published_at, 0.0),
+        _ => panic!("the feed should load"),
+    }
+}
+
+#[test]
+fn the_toggle_off_is_the_daily_schedule() {
+    let published = 1_800_000_000.0;
+    for t in [0.0, 12.0 * 3600.0, 24.0 * 3600.0, 40.0 * 3600.0] {
+        assert_eq!(wait_after_check(published + t, published, false), CHECK_INTERVAL_S);
+    }
+    let mut m = Memo { published_at: published, ..Memo::default() };
+    let now = published + 24.0 * 3600.0;
+    m.schedule(now, false);
+    assert_eq!(m.next_check, now + CHECK_INTERVAL_S);
+    m.schedule(now, true);
+    assert_eq!(m.next_check, now + WINDOW_CHECK_S);
+}
+
+#[test]
+fn a_rate_limit_wait_still_wins_over_the_window_schedule() {
+    let published = 1_800_000_000.0;
+    let now = published + 24.0 * 3600.0;
+    let mut m = Memo { published_at: published, ..Memo::default() };
+    m.checked(now, &Err(FetchError::RateLimited { retry_after_s: 1800 }));
+    // In the window, but GitHub said to wait: nothing is due before then, at launch or not.
+    for launch in [false, true] {
+        assert!(!m.due(now + 1700.0, launch));
+        assert!(m.due(now + 1800.0, launch));
+    }
+    // A later success can't schedule inside a wait that is still running.
+    m.schedule(now, true);
+    assert_eq!(m.next_check, now + 1800.0);
+}
+
+#[test]
+fn a_new_release_resets_the_schedule_and_the_etag_is_kept() {
+    let dir = scratch();
+    let (feed, _) = next_release_feed(&dir.0);
+    let mut h = crate::scenario::Harness::new();
+    h.app.updater.feed = Some(feed.clone());
+    let published = unix_now() - 25.0 * 3600.0;
+    let stamp = |secs: f64| {
+        let days = (secs / 86_400.0).floor();
+        let rest = secs - days * 86_400.0;
+        // civil date from days (inverse of parse_timestamp)
+        let z = days as i64 + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = yoe + era * 400 + i64::from(m <= 2);
+        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", (rest / 3600.0) as i64, (rest % 3600.0 / 60.0) as i64, (rest % 60.0) as i64)
+    };
+    let body = json!({"tag_name": "v999.0.0", "published_at": stamp(published)});
+    std::fs::write(&feed, body.to_string()).unwrap();
+    h.frame();
+    wait_for_check(&mut h);
+    let m = &h.app.preferences.update;
+    assert!((m.published_at - published.floor()).abs() <= 1.0, "{} vs {published}", m.published_at);
+    // 25 h after that release, i.e. in the window: the next check is ten minutes away.
+    assert!((m.next_check - m.last_check - WINDOW_CHECK_S).abs() < 1.0);
+}

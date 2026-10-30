@@ -409,6 +409,8 @@ pub struct Services {
     pub graphics_adapters: Vec<(String, String)>,
     /// HTTPS GET for the update check (`update`); None: never check (browser, tests).
     pub http_get: Option<update::HttpGet>,
+    /// Conditional HTTPS GET (`If-None-Match`) for the update check; None: plain requests only.
+    pub http_get_if_changed: Option<update::HttpGetIfChanged>,
     /// HTTPS download to a file, with progress, for one-click updates (`update::install`).
     pub http_download: Option<update::install::HttpDownload>,
     /// The browser's offer to install the web app (`install`); None: no Install button (desktop).

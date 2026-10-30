@@ -8,6 +8,13 @@
 //! `installed.json` records this installation. The checks run as before, but the window only says
 //! to update SolidCraft in that launcher: no Update now, no AppImage replacement, no Download.
 //!
+//! Releases come about once a day, so the open app checks more often around the time the next
+//! one is expected (`wait_after_check`): it ramps up as that time nears, checks every ten
+//! minutes in the release window, and backs off again after it. The requests are conditional
+//! (`If-None-Match` with GitHub's ETag), so an unchanged answer is a bodiless 304 that does not
+//! count against GitHub's rate limit. Preferences ▸ General ▸ Check more often around release
+//! time turns this off: then it is the start and once a day.
+//!
 //! The request is the only thing sent: no identifiers, no usage data. A short timeout keeps it
 //! from hanging, a failed check (offline, rate limited) stays silent and is retried later, and
 //! development builds never check. Turning off Preferences ▸ General ▸ Check for updates
@@ -47,6 +54,20 @@ fn is_release_url(url: &str) -> bool {
 
 /// While the app stays open, automatic checks run once a day (every start checks too).
 pub const CHECK_INTERVAL_S: f64 = 24.0 * 3600.0;
+/// How long after one release the next is expected (releases come about daily).
+pub const EXPECTED_RELEASE_S: f64 = 24.0 * 3600.0;
+/// The release window opens this long before the expected time.
+pub const WINDOW_LEAD_S: f64 = 3600.0;
+/// The release window closes this long after the expected time.
+pub const WINDOW_TAIL_S: f64 = 6.0 * 3600.0;
+/// Inside the release window the open app checks this often (ten minutes).
+pub const WINDOW_CHECK_S: f64 = 600.0;
+/// Before the window the wait is half the time left until it opens, but at least this (ten minutes)...
+pub const RAMP_MIN_S: f64 = 600.0;
+/// ...and at most this (six hours).
+pub const RAMP_MAX_S: f64 = 6.0 * 3600.0;
+/// After the window the wait starts at this (an hour), doubles with each check and stops at a day.
+pub const BACKOFF_START_S: f64 = 3600.0;
 /// Remind me later hides the button for three days.
 pub const REMIND_DELAY_S: f64 = 3.0 * 24.0 * 3600.0;
 /// Check now can't be pressed more often than this (GitHub allows 60 anonymous requests an hour).
@@ -85,6 +106,18 @@ impl std::fmt::Display for FetchError {
 
 /// The host's HTTP GET (HTTPS, short timeout): the body of a 200 answer, or why not.
 pub type HttpGet = Arc<dyn Fn(&str) -> Result<Vec<u8>, FetchError> + Send + Sync>;
+
+/// The answer to a conditional GET.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Conditional {
+    /// 304: unchanged since the ETag that was sent.
+    NotModified,
+    /// 200: the body, and the ETag GitHub gave it.
+    Modified { body: Vec<u8>, etag: Option<String> },
+}
+
+/// The host's conditional HTTP GET: the URL and the ETag to send as `If-None-Match` (if any).
+pub type HttpGetIfChanged = Arc<dyn Fn(&str, Option<&str>) -> Result<Conditional, FetchError> + Send + Sync>;
 
 // ---- versions ---------------------------------------------------------------------------------
 
@@ -575,6 +608,68 @@ pub struct Memo {
     pub skipped: String,
     /// Remind me later: no button before this time.
     pub remind_after: f64,
+    /// When the latest release was published (Unix seconds; 0: unknown). The schedule around
+    /// release time counts from it.
+    pub published_at: f64,
+    /// GitHub's ETag of the last answer, sent back as `If-None-Match`.
+    pub etag: String,
+}
+
+/// Seconds since the Unix epoch of a GitHub timestamp (`2026-10-29T13:36:12Z`), or None for
+/// anything else.
+pub fn parse_timestamp(s: &str) -> Option<f64> {
+    let b = s.as_bytes();
+    if b.len() != 20
+        || b.get(4) != Some(&b'-')
+        || b.get(7) != Some(&b'-')
+        || b.get(10) != Some(&b'T')
+        || b.get(13) != Some(&b':')
+        || b.get(16) != Some(&b':')
+        || b.get(19) != Some(&b'Z')
+    {
+        return None;
+    }
+    let num = |a: usize, z: usize| -> Option<i64> { s.get(a..z).filter(|d| d.bytes().all(|c| c.is_ascii_digit())).and_then(|d| d.parse().ok()) };
+    let (y, mo, d, h, mi, sec) = (num(0, 4)?, num(5, 7)?, num(8, 10)?, num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    if !(1970..=9999).contains(&y) || !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    // Days since 1970-01-01 (civil-from-days, shifted to start the year in March).
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((mo + 9) % 12) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some((days * 86_400 + h * 3600 + mi * 60 + sec) as f64)
+}
+
+/// How long the open app waits after a successful check. `published_at` is when the latest
+/// release came out (Unix seconds; 0 or anything unusable: unknown). Releases come about every
+/// `EXPECTED_RELEASE_S`, so the wait halves as that time nears (the ramp), is `WINDOW_CHECK_S`
+/// inside the release window, and after it starts at `BACKOFF_START_S` and doubles up to a day.
+/// Unknown, or `fast` off: a day.
+pub fn wait_after_check(now: f64, published_at: f64, fast: bool) -> f64 {
+    let t = now - published_at;
+    if !fast || !now.is_finite() || !published_at.is_finite() || published_at <= 0.0 || t < 0.0 {
+        return CHECK_INTERVAL_S;
+    }
+    let opens = EXPECTED_RELEASE_S - WINDOW_LEAD_S;
+    let closes = EXPECTED_RELEASE_S + WINDOW_TAIL_S;
+    if t < opens {
+        ((opens - t) / 2.0).clamp(RAMP_MIN_S, RAMP_MAX_S)
+    } else if t <= closes {
+        WINDOW_CHECK_S
+    } else {
+        // The checks fall at 1 h, 3 h, 7 h, ... after the window closes: the wait is whatever
+        // step `t` is in.
+        let late = t - closes;
+        let mut wait = BACKOFF_START_S;
+        while wait < CHECK_INTERVAL_S && late + BACKOFF_START_S >= 2.0 * wait {
+            wait *= 2.0;
+        }
+        wait.min(CHECK_INTERVAL_S)
+    }
 }
 
 impl Memo {
@@ -603,16 +698,27 @@ impl Memo {
     /// A check finished: the next one is a day later after a success, an hour after a failure,
     /// and after a rate limit as long as GitHub said (at least a minute, at most a day).
     pub fn checked(&mut self, now: f64, result: &Result<Release, FetchError>) {
+        self.finished(now, result.as_ref().err());
+    }
+
+    /// `checked` for any kind of successful answer: `error` is why the check failed, if it did.
+    pub fn finished(&mut self, now: f64, error: Option<&FetchError>) {
         self.last_check = now;
         self.next_check = now
-            + match result {
-                Ok(_) => CHECK_INTERVAL_S,
-                Err(FetchError::Failed(_)) => RETRY_AFTER_FAILURE_S,
-                Err(FetchError::RateLimited { retry_after_s }) => (*retry_after_s as f64).clamp(60.0, CHECK_INTERVAL_S),
+            + match error {
+                None => CHECK_INTERVAL_S,
+                Some(FetchError::Failed(_)) => RETRY_AFTER_FAILURE_S,
+                Some(FetchError::RateLimited { retry_after_s }) => (*retry_after_s as f64).clamp(60.0, CHECK_INTERVAL_S),
             };
-        if let Err(FetchError::RateLimited { .. }) = result {
+        if let Some(FetchError::RateLimited { .. }) = error {
             self.rate_limited_until = self.next_check;
         }
+    }
+
+    /// After a successful check: the next one comes `wait_after_check` later (a day when `fast`
+    /// is off), and never before GitHub's rate-limit wait is over.
+    pub fn schedule(&mut self, now: f64, fast: bool) {
+        self.next_check = (now + wait_after_check(now, self.published_at, fast)).max(self.rate_limited_until.min(now + CHECK_INTERVAL_S));
     }
 }
 
@@ -649,7 +755,7 @@ pub struct Updater {
     /// The Update window is open.
     pub open: bool,
     /// The check in flight, and whether Check now started it.
-    rx: Option<(Receiver<Result<Release, FetchError>>, bool)>,
+    rx: Option<(Receiver<Result<Checked, FetchError>>, bool)>,
     started: bool,
     /// An automatic check has started since launch (until then one is due at once).
     launch_checked: bool,
@@ -745,6 +851,10 @@ pub fn check_now(app: &mut SolveApp, ctx: &egui::Context) {
 
 /// Fetch the same bounded feed for automatic checks and an explicit installation.
 fn fetch_latest(feed: Option<&Path>, http: Option<&HttpGet>) -> Result<Release, FetchError> {
+    Release::parse(&fetch_body(feed, http)?)
+}
+
+fn fetch_body(feed: Option<&Path>, http: Option<&HttpGet>) -> Result<Vec<u8>, FetchError> {
     use std::io::Read;
     let body = match (feed, http) {
         (Some(path), _) => {
@@ -756,7 +866,34 @@ fn fetch_latest(feed: Option<&Path>, http: Option<&HttpGet>) -> Result<Release, 
         (None, Some(get)) => get(LATEST_API)?,
         (None, None) => return Err(FetchError::Failed("no network client".into())),
     };
-    Release::parse(&body)
+    Ok(body)
+}
+
+/// What a check found.
+enum Checked {
+    /// The ETag sent still matches: the release already known is the latest.
+    Unchanged,
+    Fresh {
+        release: Release,
+        published_at: f64,
+        etag: String,
+    },
+}
+
+/// One check: a conditional request when the host has one and `etag` is given, else the plain one.
+fn fetch_checked(feed: Option<&Path>, http: Option<&HttpGet>, cond: Option<&HttpGetIfChanged>, etag: Option<&str>) -> Result<Checked, FetchError> {
+    let (body, etag) = match (feed, cond, http) {
+        (None, Some(get), _) => match get(LATEST_API, etag)? {
+            Conditional::NotModified => return Ok(Checked::Unchanged),
+            Conditional::Modified { body, etag } => (body, etag.unwrap_or_default()),
+        },
+        _ => (fetch_body(feed, http)?, String::new()),
+    };
+    let published_at = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|v| v.get("published_at").and_then(Value::as_str).and_then(parse_timestamp))
+        .unwrap_or(0.0);
+    Ok(Checked::Fresh { release: Release::parse(&body)?, published_at, etag })
 }
 
 fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
@@ -765,7 +902,12 @@ fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
     app.updater.rx = Some((rx, manual));
     let feed = app.updater.feed.clone();
     let http = app.services.http_get.clone();
-    let fetch = move || fetch_latest(feed.as_deref(), http.as_ref());
+    let cond = app.services.http_get_if_changed.clone();
+    // Only the automatic checks of the near-release schedule are conditional, and only when the
+    // release the ETag belongs to is in memory (a 304 carries no release).
+    let etag = Some(app.preferences.update.etag.clone())
+        .filter(|e| !manual && app.preferences.check_around_release && app.updater.release.is_some() && !e.is_empty());
+    let fetch = move || fetch_checked(feed.as_deref(), http.as_ref(), cond.as_ref(), etag.as_deref());
     #[cfg(not(target_arch = "wasm32"))]
     {
         let ctx = ctx.clone();
@@ -795,9 +937,18 @@ fn poll(app: &mut SolveApp) {
         Err(TryRecvError::Disconnected) => Err(FetchError::Failed("the check stopped".into())),
     };
     app.updater.rx = None;
-    app.preferences.update.checked(unix_now(), &result);
+    let now = unix_now();
+    app.preferences.update.finished(now, result.as_ref().err());
+    let fast = app.preferences.check_around_release;
     match result {
-        Ok(release) => {
+        Ok(Checked::Unchanged) => {
+            app.preferences.update.schedule(now, fast);
+            app.updater.status = if offered_or_newer(app).is_some() { Status::Idle } else { Status::UpToDate };
+        }
+        Ok(Checked::Fresh { release, published_at, etag }) => {
+            app.preferences.update.published_at = published_at;
+            app.preferences.update.etag = etag;
+            app.preferences.update.schedule(now, fast);
             let newer = is_newer(&release.tag, current_version());
             app.updater.status = if newer { Status::Idle } else { Status::UpToDate };
             if newer && manual {
@@ -1114,6 +1265,9 @@ pub fn prefs_rows(app: &mut SolveApp, ui: &mut egui::Ui) {
     // Check now would do nothing: the note below says how this copy updates instead.
     if can {
         ui_kit::checkbox(ui, crate::i18n::tr("update.check_automatically"), &mut app.preferences.check_updates);
+        if app.preferences.check_updates {
+            ui_kit::checkbox(ui, crate::i18n::tr("update.check_near_release"), &mut app.preferences.check_around_release);
+        }
         ui.horizontal_wrapped(|ui| {
             let busy = app.updater.status == Status::Checking;
             let (status, warning) = match (&app.updater.status, offered_or_newer(app)) {
