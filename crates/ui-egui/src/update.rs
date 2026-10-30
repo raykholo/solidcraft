@@ -645,10 +645,12 @@ pub fn parse_timestamp(s: &str) -> Option<f64> {
 }
 
 /// How long the open app waits after a successful check. `published_at` is when the latest
-/// release came out (Unix seconds; 0 or anything unusable: unknown). Releases come about every
-/// `EXPECTED_RELEASE_S`, so the wait halves as that time nears (the ramp), is `WINDOW_CHECK_S`
-/// inside the release window, and after it starts at `BACKOFF_START_S` and doubles up to a day.
-/// Unknown, or `fast` off: a day.
+/// release came out (Unix seconds; 0 or anything unusable: unknown). A release is often followed
+/// within hours by a fix release, and the next one comes about `EXPECTED_RELEASE_S` later. So
+/// between the two the wait is half the time since the release or half the time left to the
+/// window, whichever is shorter: it doubles away from a release and halves toward the next window
+/// (a mirror image), is `WINDOW_CHECK_S` inside the release window, and after it starts at
+/// `BACKOFF_START_S` and doubles up to a day. Unknown, or `fast` off: a day.
 pub fn wait_after_check(now: f64, published_at: f64, fast: bool) -> f64 {
     let t = now - published_at;
     if !fast || !now.is_finite() || !published_at.is_finite() || published_at <= 0.0 || t < 0.0 {
@@ -657,7 +659,7 @@ pub fn wait_after_check(now: f64, published_at: f64, fast: bool) -> f64 {
     let opens = EXPECTED_RELEASE_S - WINDOW_LEAD_S;
     let closes = EXPECTED_RELEASE_S + WINDOW_TAIL_S;
     if t < opens {
-        ((opens - t) / 2.0).clamp(RAMP_MIN_S, RAMP_MAX_S)
+        (t.min(opens - t) / 2.0).clamp(RAMP_MIN_S, RAMP_MAX_S)
     } else if t <= closes {
         WINDOW_CHECK_S
     } else {

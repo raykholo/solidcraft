@@ -774,11 +774,18 @@ fn checks_come_sooner_as_the_expected_release_time_nears() {
     let published = 1_800_000_000.0;
     let at = |t: f64| wait_after_check(published + t, published, true);
     let h = 3600.0;
-    // Far from the window: half the time left, at most six hours.
-    assert_eq!(at(0.0), RAMP_MAX_S);
-    assert_eq!(at(5.0 * h), RAMP_MAX_S);
-    // Ramping: the wait halves as the window nears.
+    // Just after a release, when a fix release often follows: half the time since it, at least
+    // ten minutes, so the wait doubles away from the release.
+    assert_eq!(at(0.0), RAMP_MIN_S);
+    assert_eq!(at(0.25 * h), RAMP_MIN_S);
+    assert_eq!(at(1.0 * h), 0.5 * h);
+    assert_eq!(at(2.0 * h), 1.0 * h);
+    assert_eq!(at(4.0 * h), 2.0 * h);
+    // Midway: at most six hours.
+    assert_eq!(at(11.5 * h), 5.75 * h);
     assert_eq!(at(12.0 * h), 5.5 * h);
+    // Ramping: the wait halves as the window nears.
+    assert_eq!(at(16.0 * h), 3.5 * h);
     assert_eq!(at(20.0 * h), 1.5 * h);
     assert_eq!(at(22.0 * h), 0.5 * h);
     assert_eq!(at(22.9 * h), RAMP_MIN_S, "never faster than ten minutes");
