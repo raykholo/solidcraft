@@ -60,10 +60,12 @@ pub const EXPECTED_RELEASE_S: f64 = 24.0 * 3600.0;
 pub const WINDOW_LEAD_S: f64 = 3600.0;
 /// The release window closes this long after the expected time.
 pub const WINDOW_TAIL_S: f64 = 6.0 * 3600.0;
-/// Inside the release window the open app checks this often (ten minutes).
-pub const WINDOW_CHECK_S: f64 = 600.0;
-/// Before the window the wait is half the time left until it opens, but at least this (ten minutes)...
-pub const RAMP_MIN_S: f64 = 600.0;
+/// Inside the release window the open app checks this often (fifteen minutes: the tightest
+/// interval that keeps an office of SolidCraft users on one address under GitHub's anonymous
+/// limit of 60 requests an hour).
+pub const WINDOW_CHECK_S: f64 = 900.0;
+/// Before the window the wait is half the time left until it opens, but at least this (fifteen minutes)...
+pub const RAMP_MIN_S: f64 = 900.0;
 /// ...and at most this (six hours).
 pub const RAMP_MAX_S: f64 = 6.0 * 3600.0;
 /// After the window the wait starts at this (an hour), doubles with each check and stops at a day.

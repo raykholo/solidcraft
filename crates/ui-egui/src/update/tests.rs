@@ -775,7 +775,7 @@ fn checks_come_sooner_as_the_expected_release_time_nears() {
     let at = |t: f64| wait_after_check(published + t, published, true);
     let h = 3600.0;
     // Just after a release, when a fix release often follows: half the time since it, at least
-    // ten minutes, so the wait doubles away from the release.
+    // fifteen minutes, so the wait doubles away from the release.
     assert_eq!(at(0.0), RAMP_MIN_S);
     assert_eq!(at(0.25 * h), RAMP_MIN_S);
     assert_eq!(at(1.0 * h), 0.5 * h);
@@ -788,8 +788,8 @@ fn checks_come_sooner_as_the_expected_release_time_nears() {
     assert_eq!(at(16.0 * h), 3.5 * h);
     assert_eq!(at(20.0 * h), 1.5 * h);
     assert_eq!(at(22.0 * h), 0.5 * h);
-    assert_eq!(at(22.9 * h), RAMP_MIN_S, "never faster than ten minutes");
-    // In the window (23 h to 30 h): every ten minutes.
+    assert_eq!(at(22.9 * h), RAMP_MIN_S, "never faster than fifteen minutes");
+    // In the window (23 h to 30 h): every fifteen minutes.
     for t in [23.0 * h, 24.0 * h, 29.99 * h, 30.0 * h] {
         assert_eq!(at(t), WINDOW_CHECK_S, "t = {t}");
     }
@@ -878,6 +878,6 @@ fn a_new_release_resets_the_schedule_and_the_etag_is_kept() {
     wait_for_check(&mut h);
     let m = &h.app.preferences.update;
     assert!((m.published_at - published.floor()).abs() <= 1.0, "{} vs {published}", m.published_at);
-    // 25 h after that release, i.e. in the window: the next check is ten minutes away.
+    // 25 h after that release, i.e. in the window: the next check is fifteen minutes away.
     assert!((m.next_check - m.last_check - WINDOW_CHECK_S).abs() < 1.0);
 }

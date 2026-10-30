@@ -19,9 +19,9 @@ room, then to its icon alone.
 SolidCraft checks every time it starts, so a release that came out since you last opened it shows
 up straight away. While it stays open it checks again, and more often when a new release is
 likely. A release is often followed within hours by a fix release, and the next one comes about a
-day later, so right after a release it checks every ten minutes and the wait doubles from there
+day later, so right after a release it checks every fifteen minutes and the wait doubles from there
 (half the time since the release, at most six hours), then shrinks again as a day nears (half the
-time left), and from an hour before that until six hours after it SolidCraft checks every ten
+time left), and from an hour before that until six hours after it SolidCraft checks every fifteen
 minutes. After that it backs off again
 (an hour, doubling with each check, up to a day). A newly published release starts the count over.
 
