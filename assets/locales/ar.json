@@ -4642,6 +4642,7 @@
   "update.button": "تحديث",
   "update.button_version": "التحديث إلى {version}",
   "update.check_automatically": "التحقق من التحديثات تلقائيًا",
+  "update.check_near_release": "التحقق أكثر قرب موعد الإصدارات",
   "update.check_now": "تحقق الآن",
   "update.checking": "جارٍ التحقق…",
   "update.copy": "نسخ",

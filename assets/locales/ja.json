@@ -4642,6 +4642,7 @@
   "update.button": "アップデート",
   "update.button_version": "{version} にアップデート",
   "update.check_automatically": "アップデートを自動的に確認",
+  "update.check_near_release": "リリース時期の前後はより頻繁に確認",
   "update.check_now": "今すぐ確認",
   "update.checking": "確認中…",
   "update.copy": "コピー",

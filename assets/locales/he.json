@@ -4642,6 +4642,7 @@
   "update.button": "עדכון",
   "update.button_version": "עדכון ל־{version}",
   "update.check_automatically": "בדיקת עדכונים אוטומטית",
+  "update.check_near_release": "בדיקה תכופה יותר סביב מועד הגרסאות",
   "update.check_now": "בדיקה עכשיו",
   "update.checking": "בבדיקה…",
   "update.copy": "העתקה",

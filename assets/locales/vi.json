@@ -4642,6 +4642,7 @@
   "update.button": "Cập nhật",
   "update.button_version": "Cập nhật lên {version}",
   "update.check_automatically": "Tự động kiểm tra bản cập nhật",
+  "update.check_near_release": "Kiểm tra thường xuyên hơn quanh thời điểm phát hành",
   "update.check_now": "Kiểm tra ngay",
   "update.checking": "Đang kiểm tra…",
   "update.copy": "Sao chép",
