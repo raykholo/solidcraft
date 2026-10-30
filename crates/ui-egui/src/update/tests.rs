@@ -814,7 +814,7 @@ fn an_unknown_or_unusable_release_time_keeps_the_daily_schedule() {
     let dir = scratch();
     let path = dir.0.join("latest.json");
     std::fs::write(&path, json!({"tag_name": "v999.0.0", "published_at": "yesterday"}).to_string()).unwrap();
-    match fetch_checked(Some(&path), None, None, None) {
+    match fetch_checked(Some(&path), None, None, None, None) {
         Ok(Checked::Fresh { published_at, .. }) => assert_eq!(published_at, 0.0),
         _ => panic!("the feed should load"),
     }
@@ -880,4 +880,131 @@ fn a_new_release_resets_the_schedule_and_the_etag_is_kept() {
     assert!((m.published_at - published.floor()).abs() <= 1.0, "{} vs {published}", m.published_at);
     // 25 h after that release, i.e. in the window: the next check is fifteen minutes away.
     assert!((m.next_check - m.last_check - WINDOW_CHECK_S).abs() < 1.0);
+}
+
+fn atom(entries: &[(&str, &str)]) -> Vec<u8> {
+    let mut s = String::from("<?xml version=\"1.0\"?><feed xmlns=\"http://www.w3.org/2005/Atom\"><title>Releases</title>");
+    for (tag, updated) in entries {
+        s += &format!(
+            "<entry><id>tag:github.com,2008:Repository/1/{tag}</id><updated>{updated}</updated>\
+             <link rel=\"alternate\" type=\"text/html\" href=\"https://github.com/tangency-labs/solidcraft/releases/tag/{tag}\"/>\
+             <title>{tag}</title><content type=\"html\">&lt;p&gt;notes&lt;/p&gt;</content></entry>"
+        );
+    }
+    (s + "</feed>").into_bytes()
+}
+
+#[test]
+fn the_feed_gives_the_newest_stable_release() {
+    let body = atom(&[
+        ("v0.21.0-nightly.20261029.1.1", "2026-10-29T10:00:00Z"),
+        ("v0.20.1", "2026-10-28T09:00:00Z"),
+        ("v0.20.10", "2026-10-29T08:00:00Z"),
+        ("v0.20.9", "2026-10-27T09:00:00Z"),
+        ("v0.22.0-rc.1", "2026-10-29T11:00:00Z"),
+        ("nightly", "2026-10-29T12:00:00Z"),
+    ]);
+    let top = parse_feed(&body).unwrap();
+    assert_eq!(top.tag, "v0.20.10", "newest by version, not by position or text order; suffixed tags skipped");
+    assert_eq!(top.updated, parse_timestamp("2026-10-29T08:00:00Z").unwrap());
+    // Only unsuitable tags: nothing.
+    assert_eq!(parse_feed(&atom(&[("nightly", "2026-10-29T12:00:00Z"), ("v1.2", "2026-10-29T12:00:00Z")])), None);
+}
+
+#[test]
+fn the_feed_parser_survives_garbage_and_huge_input() {
+    for bad in [&b""[..], b"<entry", b"<entry><link href=\"", b"\xff\xfe<entry><title>v1.2.3", b"<entry><title>v1.2.3</title></entry>x</entry>"] {
+        let _ = parse_feed(bad);
+    }
+    // A title alone is enough; a missing or bad time is unknown.
+    let top = parse_feed(b"<entry><title>v1.2.3</title><updated>soon</updated></entry>").unwrap();
+    assert_eq!((top.tag.as_str(), top.updated), ("v1.2.3", 0.0));
+    assert_eq!(parse_feed(&vec![b'<'; MAX_FEED_BYTES + 1]), None);
+    let long = format!("<entry><title>v{}.0.0</title></entry>", "9".repeat(MAX_FEED_FIELD + 10));
+    assert_eq!(parse_feed(long.as_bytes()), None);
+    let many = "<entry><title>v0.0.1</title></entry>".repeat(MAX_FEED_ENTRIES * 3);
+    assert!(parse_feed(many.as_bytes()).is_some());
+}
+
+/// A host whose answers per URL are given; counts the requests per URL.
+type Calls = std::sync::Arc<std::sync::Mutex<Vec<(String, Option<String>)>>>;
+fn host(feed: Result<Conditional, FetchError>, api: Result<Conditional, FetchError>) -> (HttpGetIfChanged, Calls) {
+    let calls: Calls = Default::default();
+    let log = calls.clone();
+    let get: HttpGetIfChanged = Arc::new(move |url, etag| {
+        if let Ok(mut l) = log.lock() {
+            l.push((url.to_string(), etag.map(str::to_string)));
+        }
+        if url == RELEASES_FEED { feed.clone() } else { api.clone() }
+    });
+    (get, calls)
+}
+
+fn api_release(tag: &str) -> Result<Conditional, FetchError> {
+    let body = json!({"tag_name": tag, "html_url": format!("https://github.com/tangency-labs/solidcraft/releases/tag/{tag}"), "assets": [], "published_at": "2026-10-29T08:00:00Z"});
+    Ok(Conditional::Modified { body: body.to_string().into_bytes(), etag: Some("\"api\"".into()) })
+}
+
+fn api_calls(calls: &Calls) -> usize {
+    calls.lock().map(|l| l.iter().filter(|(u, _)| u == LATEST_API).count()).unwrap_or(99)
+}
+
+#[test]
+fn a_feed_304_makes_no_api_call() {
+    let (get, calls) = host(Ok(Conditional::NotModified), api_release("v999.0.0"));
+    let poll = FeedPoll { etag: Some("W/\"f\""), known: "v999.0.0" };
+    let r = fetch_checked(None, None, Some(&get), Some("\"api\""), Some(&poll)).unwrap();
+    assert!(matches!(r, Checked::Unchanged));
+    assert_eq!(api_calls(&calls), 0);
+    assert_eq!(calls.lock().unwrap().first().unwrap().1.as_deref(), Some("W/\"f\""), "the feed ETag is sent back");
+}
+
+#[test]
+fn a_feed_with_nothing_new_keeps_the_schedule_without_the_api() {
+    let body = atom(&[("v0.20.0", "2026-10-29T08:00:00Z")]);
+    let (get, calls) = host(Ok(Conditional::Modified { body, etag: Some("W/\"g\"".into()) }), api_release("v999.0.0"));
+    let poll = FeedPoll { etag: None, known: "0.20.0" };
+    match fetch_checked(None, None, Some(&get), None, Some(&poll)).unwrap() {
+        Checked::NoNews { published_at, feed_etag } => {
+            assert_eq!(published_at, parse_timestamp("2026-10-29T08:00:00Z").unwrap());
+            assert_eq!(feed_etag, "W/\"g\"");
+        }
+        _ => panic!("nothing new"),
+    }
+    assert_eq!(api_calls(&calls), 0);
+}
+
+#[test]
+fn a_new_tag_in_the_feed_calls_the_api_once() {
+    let body = atom(&[("v0.21.0", "2026-10-29T08:00:00Z"), ("v0.20.0", "2026-10-28T08:00:00Z")]);
+    let (get, calls) = host(Ok(Conditional::Modified { body, etag: Some("W/\"h\"".into()) }), api_release("v0.21.0"));
+    let poll = FeedPoll { etag: None, known: "v0.20.0" };
+    match fetch_checked(None, None, Some(&get), Some("\"old\""), Some(&poll)).unwrap() {
+        Checked::Fresh { release, feed_etag, etag, .. } => {
+            assert_eq!(release.tag, "v0.21.0");
+            assert_eq!(feed_etag.as_deref(), Some("W/\"h\""));
+            assert_eq!(etag, "\"api\"");
+        }
+        _ => panic!("a new release"),
+    }
+    assert_eq!(api_calls(&calls), 1);
+}
+
+#[test]
+fn a_failed_or_unreadable_feed_falls_back_to_the_api() {
+    for feed in [Err(FetchError::Failed("offline".into())), Ok(Conditional::Modified { body: b"<html>not a feed</html>".to_vec(), etag: None })] {
+        let (get, calls) = host(feed, api_release("v0.21.0"));
+        let poll = FeedPoll { etag: None, known: "v0.20.0" };
+        let r = fetch_checked(None, None, Some(&get), None, Some(&poll)).unwrap();
+        assert!(matches!(r, Checked::Fresh { feed_etag: None, .. }));
+        assert_eq!(api_calls(&calls), 1);
+    }
+}
+
+#[test]
+fn without_the_near_release_option_the_feed_is_not_asked() {
+    let (get, calls) = host(Ok(Conditional::NotModified), api_release("v0.21.0"));
+    let r = fetch_checked(None, None, Some(&get), None, None).unwrap();
+    assert!(matches!(r, Checked::Fresh { .. }));
+    assert_eq!(calls.lock().unwrap().iter().filter(|(u, _)| u == RELEASES_FEED).count(), 0);
 }

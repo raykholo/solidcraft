@@ -12,7 +12,9 @@
 //! one is expected (`wait_after_check`): it ramps up as that time nears, checks every ten
 //! minutes in the release window, and backs off again after it. The requests are conditional
 //! (`If-None-Match` with GitHub's ETag), so an unchanged answer is a bodiless 304 that does not
-//! count against GitHub's rate limit. Preferences ▸ General ▸ Check more often around release
+//! count against GitHub's rate limit. Those near-release checks poll the releases Atom feed
+//! (`RELEASES_FEED`, not rate limited, ETag-conditional) and call the API only when the feed
+//! shows a release newer than the one known. Preferences ▸ General ▸ Check more often around release
 //! time turns this off: then it is the start and once a day.
 //!
 //! The request is the only thing sent: no identifiers, no usage data. A short timeout keeps it
@@ -39,6 +41,9 @@ use crate::ui_kit;
 pub const REPO: &str = "tangency-labs/solidcraft";
 /// The one request an update check makes.
 pub const LATEST_API: &str = "https://api.github.com/repos/tangency-labs/solidcraft/releases/latest";
+/// The releases Atom feed: not rate limited, and a conditional request that finds nothing new is a
+/// bodiless 304. The near-release checks poll it and call the API only when it shows a new release.
+pub const RELEASES_FEED: &str = "https://github.com/tangency-labs/solidcraft/releases.atom";
 /// Where Download goes when no package fits this installation.
 pub const RELEASES_PAGE: &str = "https://github.com/tangency-labs/solidcraft/releases/latest";
 /// Release pages and assets must be on GitHub, under this repository. The repository moved to the
@@ -593,6 +598,63 @@ impl Release {
     }
 }
 
+// ---- the releases feed ------------------------------------------------------------------------
+
+/// The newest stable release the feed lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeedRelease {
+    /// The tag, `vX.Y.Z`.
+    pub tag: String,
+    /// When the entry was last updated (Unix seconds; 0: unknown).
+    pub updated: f64,
+}
+
+/// Caps on what the feed may make us do (it comes from the network).
+const MAX_FEED_BYTES: usize = 2 * 1024 * 1024;
+const MAX_FEED_ENTRIES: usize = 100;
+const MAX_FEED_FIELD: usize = 300;
+
+/// The text between the first `open` and the next `close` in `s`, at most `MAX_FEED_FIELD` long.
+fn between<'a>(s: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let rest = s.get(s.find(open)? + open.len()..)?;
+    let text = rest.get(..rest.find(close)?)?;
+    (text.len() <= MAX_FEED_FIELD).then_some(text)
+}
+
+/// A plain stable tag: `v`, then three numbers (no suffix: nightlies and candidates are skipped).
+fn stable_tag(tag: &str) -> bool {
+    let Some(v) = tag.strip_prefix('v') else { return false };
+    let mut parts = v.split('.');
+    let numbers = parts.by_ref().take(3).filter(|p| !p.is_empty() && p.len() <= 9 && p.bytes().all(|c| c.is_ascii_digit())).count();
+    numbers == 3 && parts.next().is_none()
+}
+
+/// The newest plain stable release in the releases Atom feed, read with a small scan over its
+/// `<entry>` blocks (the tag from the release link, else the title; the time from `<updated>`).
+/// None when the feed holds no such entry. Bounded: huge input and long fields are refused.
+pub fn parse_feed(body: &[u8]) -> Option<FeedRelease> {
+    if body.len() > MAX_FEED_BYTES {
+        return None;
+    }
+    let text = String::from_utf8_lossy(body);
+    let mut best: Option<(semver::Version, FeedRelease)> = None;
+    for entry in text.split("<entry").skip(1).take(MAX_FEED_ENTRIES) {
+        let entry = entry.split("</entry>").next().unwrap_or_default();
+        let from_link = entry
+            .split("<link")
+            .skip(1)
+            .filter_map(|l| between(l, "href=\"", "\""))
+            .find_map(|href| href.split_once("/releases/tag/").map(|(_, tag)| tag));
+        let Some(tag) = from_link.or_else(|| between(entry, "<title>", "</title>")).map(str::trim).filter(|t| stable_tag(t)) else { continue };
+        let Some(version) = parse_version(tag) else { continue };
+        let updated = between(entry, "<updated>", "</updated>").and_then(|u| parse_timestamp(u.trim())).unwrap_or(0.0);
+        if best.as_ref().is_none_or(|(v, _)| version > *v) {
+            best = Some((version, FeedRelease { tag: tag.to_string(), updated }));
+        }
+    }
+    best.map(|(_, r)| r)
+}
+
 // ---- what is remembered -----------------------------------------------------------------------
 
 /// Update bookkeeping, kept with the preferences (not design data). Times are Unix seconds.
@@ -615,6 +677,8 @@ pub struct Memo {
     pub published_at: f64,
     /// GitHub's ETag of the last answer, sent back as `If-None-Match`.
     pub etag: String,
+    /// The same for the releases feed (a separate request with its own ETag).
+    pub feed_etag: String,
 }
 
 /// Seconds since the Unix epoch of a GitHub timestamp (`2026-10-29T13:36:12Z`), or None for
@@ -881,11 +945,50 @@ enum Checked {
         release: Release,
         published_at: f64,
         etag: String,
+        /// The releases feed's ETag, when the feed led to this answer.
+        feed_etag: Option<String>,
     },
+    /// The feed shows nothing newer than what is known: no API call was made.
+    NoNews { published_at: f64, feed_etag: String },
+}
+
+/// What the near-release automatic checks know when they poll the releases feed.
+struct FeedPoll<'a> {
+    /// The feed's ETag from the last answer, when the release it showed is in memory.
+    etag: Option<&'a str>,
+    /// The newest version already known (the release in memory or this build).
+    known: &'a str,
 }
 
 /// One check: a conditional request when the host has one and `etag` is given, else the plain one.
-fn fetch_checked(feed: Option<&Path>, http: Option<&HttpGet>, cond: Option<&HttpGetIfChanged>, etag: Option<&str>) -> Result<Checked, FetchError> {
+/// With `poll`, the releases feed is asked first and the API only when the feed shows a release
+/// newer than `poll.known` (or the feed can't be used).
+fn fetch_checked(
+    feed: Option<&Path>,
+    http: Option<&HttpGet>,
+    cond: Option<&HttpGetIfChanged>,
+    etag: Option<&str>,
+    poll: Option<&FeedPoll>,
+) -> Result<Checked, FetchError> {
+    let mut feed_etag = None;
+    let mut etag = etag;
+    if let (None, Some(get), Some(poll)) = (feed, cond, poll) {
+        match get(RELEASES_FEED, poll.etag) {
+            Ok(Conditional::NotModified) => return Ok(Checked::Unchanged),
+            Ok(Conditional::Modified { body, etag: new }) => {
+                if let Some(top) = parse_feed(&body) {
+                    if !is_newer(&top.tag, poll.known) {
+                        return Ok(Checked::NoNews { published_at: top.updated, feed_etag: new.unwrap_or_default() });
+                    }
+                    // A new release: the API gives its assets and notes. Its old ETag can't match.
+                    feed_etag = Some(new.unwrap_or_default());
+                    etag = None;
+                }
+            }
+            // The feed failed: this cycle asks the API as before.
+            Err(e) => log::info!("update check (feed): {e}"),
+        }
+    }
     let (body, etag) = match (feed, cond, http) {
         (None, Some(get), _) => match get(LATEST_API, etag)? {
             Conditional::NotModified => return Ok(Checked::Unchanged),
@@ -897,7 +1000,7 @@ fn fetch_checked(feed: Option<&Path>, http: Option<&HttpGet>, cond: Option<&Http
         .ok()
         .and_then(|v| v.get("published_at").and_then(Value::as_str).and_then(parse_timestamp))
         .unwrap_or(0.0);
-    Ok(Checked::Fresh { release: Release::parse(&body)?, published_at, etag })
+    Ok(Checked::Fresh { release: Release::parse(&body)?, published_at, etag, feed_etag })
 }
 
 fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
@@ -911,7 +1014,18 @@ fn start(app: &mut SolveApp, ctx: &egui::Context, manual: bool) {
     // release the ETag belongs to is in memory (a 304 carries no release).
     let etag = Some(app.preferences.update.etag.clone())
         .filter(|e| !manual && app.preferences.check_around_release && app.updater.release.is_some() && !e.is_empty());
-    let fetch = move || fetch_checked(feed.as_deref(), http.as_ref(), cond.as_ref(), etag.as_deref());
+    // The near-release checks ask the releases feed first (its own ETag, usable only when the
+    // release it showed is in memory); the API is called only when the feed shows a newer release.
+    let known = match &app.updater.release {
+        Some(r) if is_newer(&r.tag, current_version()) => r.tag.clone(),
+        _ => current_version().to_string(),
+    };
+    let feed_etag = Some(app.preferences.update.feed_etag.clone()).filter(|e| !e.is_empty() && app.updater.release.is_some());
+    let poll_feed = !manual && app.preferences.check_around_release && cond.is_some();
+    let fetch = move || {
+        let poll = FeedPoll { etag: feed_etag.as_deref(), known: &known };
+        fetch_checked(feed.as_deref(), http.as_ref(), cond.as_ref(), etag.as_deref(), poll_feed.then_some(&poll))
+    };
     #[cfg(not(target_arch = "wasm32"))]
     {
         let ctx = ctx.clone();
@@ -949,9 +1063,20 @@ fn poll(app: &mut SolveApp) {
             app.preferences.update.schedule(now, fast);
             app.updater.status = if offered_or_newer(app).is_some() { Status::Idle } else { Status::UpToDate };
         }
-        Ok(Checked::Fresh { release, published_at, etag }) => {
+        Ok(Checked::NoNews { published_at, feed_etag }) => {
+            if published_at > 0.0 {
+                app.preferences.update.published_at = published_at;
+            }
+            app.preferences.update.feed_etag = feed_etag;
+            app.preferences.update.schedule(now, fast);
+            app.updater.status = if offered_or_newer(app).is_some() { Status::Idle } else { Status::UpToDate };
+        }
+        Ok(Checked::Fresh { release, published_at, etag, feed_etag }) => {
             app.preferences.update.published_at = published_at;
             app.preferences.update.etag = etag;
+            if let Some(e) = feed_etag {
+                app.preferences.update.feed_etag = e;
+            }
             app.preferences.update.schedule(now, fast);
             let newer = is_newer(&release.tag, current_version());
             app.updater.status = if newer { Status::Idle } else { Status::UpToDate };

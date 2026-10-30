@@ -82,6 +82,19 @@ X-GitHub-Api-Version: 2022-11-28
 If-None-Match: "<ETag of the previous answer>"
 ```
 
+With **Check more often around release time** on, the repeat checks of an open SolidCraft first
+ask GitHub's releases feed, which is not rate limited, so many people behind one address don't
+use up the API's limit. The checks still run at most every fifteen minutes.
+
+```text
+GET https://github.com/tangency-labs/solidcraft/releases.atom
+User-Agent: SolidCraft-update-check
+If-None-Match: "<ETag of the previous feed answer>"
+```
+
+The API request above is made only when the feed shows a release newer than the one already known
+(or when the feed can't be read), and at the start of each run and once a day with the option off.
+
 `If-None-Match` is sent only on the repeat checks of an open SolidCraft with that option on, and
 carries the ETag value GitHub itself gave with its last answer for this same public release page:
 it says nothing about you. When nothing changed, GitHub answers 304 with no body, and such
