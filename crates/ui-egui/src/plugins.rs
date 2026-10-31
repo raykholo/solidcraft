@@ -360,7 +360,9 @@ fn resource_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     let mut selected = chosen.and_then(|c| LimitPreset::ALL.iter().position(|p| *p == c)).unwrap_or(LimitPreset::ALL.len());
     let before = selected;
-    crate::ui_kit::row(ui, app.tr("prefs.plugin_limits_choice"), |ui| {
+    // The question in full, then the choice (a row label would cut it short).
+    crate::ui_kit::text(ui, app.tr("prefs.plugin_limits_choice"), crate::ui_kit::Text::Report("plugin_limits_choice", false));
+    crate::ui_kit::row(ui, app.tr("prefs.plugin_limits_short"), |ui| {
         let r = crate::ui_kit::dropdown(ui, "plugin_limits_choice", &mut selected, &options);
         crate::scenario::publish_handle("prefs:plugin_limits_choice", r.rect.center());
     });

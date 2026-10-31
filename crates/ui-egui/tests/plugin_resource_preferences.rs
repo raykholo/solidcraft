@@ -61,7 +61,7 @@ fn visible_resource_fields_confirm_exact_integers_and_refuse_invalid_ok() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/plugin-resource-preferences");
     std::fs::create_dir_all(&dir).unwrap();
     // Share only the settings and their explanation, never the user's plugin folder or list.
-    let rect = scenario::rect_of("dialog:row:How much a plugin may do before it's stopped")
+    let rect = scenario::rect_of("dialog:row:Limit")
         .unwrap()
         .union(scenario::rect_of("dialog:row:Time limit (seconds)").unwrap())
         .union(scenario::rect_of("dialog:hint:plugin_limits_note").unwrap())
