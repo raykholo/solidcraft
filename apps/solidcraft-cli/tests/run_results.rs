@@ -759,7 +759,7 @@ fn explicit_plugin_host_settings_allow_reviewed_larger_requests_and_reject_bad_p
     let run = json!({"path":package,"approval":inspected["approval"],"entry":"make"}).to_string();
     let refused = cli().args(["exec", "plugin.run", &run]).output().unwrap();
     assert!(!refused.status.success());
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("user host limits"));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("more than the plugin settings allow"));
     let policy = scratch.0.join("limits.json");
     std::fs::write(&policy, json!({"max_fuel":u64::MAX,"max_memory_mib":512}).to_string()).unwrap();
     let high = json_output(cli().arg("--plugin-limits").arg(&policy).args(["exec", "plugin.inspect", &args]).output().unwrap());

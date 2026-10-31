@@ -117,12 +117,26 @@ not a measured minimum or a guarantee that every plugin fits.
 
 ### Change the host ceilings without rebuilding
 
-The native GUI persists `plugin_max_fuel` and `plugin_max_memory_mib` in user preferences.
-**Preferences > Plugins** presents exact decimal text fields (**Max plugin fuel** and
-**Max plugin memory (MiB)**). Enter, Apply or OK validates and accepts both integers together;
+The native GUI persists `plugin_max_fuel`, `plugin_max_memory_mib` and `plugin_max_seconds` in
+user preferences. **Preferences > Plugins** asks one plain question, **How much a plugin may do
+before it's stopped**, with three choices, and says what the choice allows ("Up to 128 MB of
+memory and 30 seconds per run") and why: a plugin that runs longer or uses more memory is
+stopped, so a broken plugin can't freeze SolidCraft.
+
+| Choice | Work (fuel) | Memory | Time per run |
+|---|---|---|---|
+| Normal (the default) | 100,000,000,000 | 128 MiB | 30 s |
+| Large | 1,000,000,000,000 | 2048 MiB | 30 s |
+| Largest (trusted plugins only) | 18446744073709551615 | 4096 MiB | 30 s |
+
+Thirty seconds is the most any run may take, so the choices differ in work and memory; a lower
+time limit can be set by hand. Under **Advanced** are the exact numbers: **Work limit
+(instructions)**, **Memory limit (MiB)** and **Time limit (seconds)**; numbers that match no
+choice show as Custom. Enter, Apply or OK validates and accepts the three together;
 an incomplete or invalid field cannot silently save a numeric prefix. Cancel restores the last
 Apply/open snapshot. Restore defaults resets this page to the original host ceilings. The
-`ui.prefs` control method uses the same strict validation. Agent chat cannot change preferences;
+`ui.prefs` control method uses the same strict validation, and takes the choice itself as
+`{"plugin_limits": "normal" | "large" | "largest"}`. Agent chat cannot change preferences;
 guests have no preference or host-policy command.
 
 A standalone CLI or `mcp --headless` process can read the same two ceiling concepts from an
@@ -138,7 +152,7 @@ solidcraft-cli --plugin-limits plugin-limits.json mcp --headless --allow-path /p
 ```
 
 This UTF-8 JSON file is at most 16 KiB; a UTF-8 BOM is accepted for Windows editors. Its keys are
-`max_fuel` and `max_memory_mib`; missing keys use the original host defaults, while unknown keys,
+`max_fuel`, `max_memory_mib` and `max_deadline_ms` (1..30000); missing keys use the original host defaults, while unknown keys,
 zero, fractional and out-of-range values are refused. The CLI reads it once before creating
 local sessions. Omit the flag to use the original ceilings. `--connect` and non-headless `mcp`
 refuse this flag because the connected desktop owns its preferences. GUI preferences and CLI
@@ -295,7 +309,8 @@ The reply carries `plugin`, `plugin_version`, `payload` (`design` or `step`), `f
 `plugin.install {path, replace?}` copies a package folder into the plugins folder. It runs and
 allows nothing. Preferences > Plugins shows each package with code: an importer's formats (or a
 command plugin's commands), the fuel, memory and time it asks for, a warning when that exceeds
-the ceilings above, and **Allow** / **Revoke**. Allow records the approval hash of the package as
+the ceilings above, in words ("Needs up to about 1 GB of memory and 30 seconds per import", and
+which choice above runs it when the current one does not), and **Allow** / **Revoke**. Allow records the approval hash of the package as
 it is now in the `plugin_approvals` preference; a changed manifest or component no longer
 matches and must be allowed again. **Install plugin…** on the same page asks for a package's
 `plugin.json` and installs its folder. The control channel's `ui.prefs` takes

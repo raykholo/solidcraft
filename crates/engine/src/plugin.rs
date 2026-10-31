@@ -28,28 +28,66 @@ pub const MAX_MEMORY_MIB: usize = 4096;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostLimits {
+    /// The most work (Wasm instructions, counted as fuel) one run may do.
     pub max_fuel: u64,
     pub max_memory_mib: usize,
+    /// The longest one run may take, in milliseconds (1..30000).
+    pub max_deadline_ms: u64,
 }
 impl Default for HostLimits {
     fn default() -> Self {
-        Self { max_fuel: 100_000_000_000, max_memory_mib: 128 }
+        LimitPreset::Normal.limits()
     }
 }
+
+/// The plain choices for the host ceilings: how much a plugin may do before it is stopped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LimitPreset {
+    /// Enough for small command plugins: the original ceilings.
+    Normal,
+    /// For importers and other large plugins: 2 GiB and ten times the work.
+    Large,
+    /// For trusted plugins: everything the host allows.
+    Largest,
+}
+
+/// The longest any run may take, whatever the ceilings: 30 seconds.
+pub const MAX_DEADLINE_MS: u64 = 30_000;
+
+impl LimitPreset {
+    pub const ALL: [LimitPreset; 3] = [LimitPreset::Normal, LimitPreset::Large, LimitPreset::Largest];
+    pub fn limits(self) -> HostLimits {
+        match self {
+            LimitPreset::Normal => HostLimits { max_fuel: 100_000_000_000, max_memory_mib: 128, max_deadline_ms: MAX_DEADLINE_MS },
+            LimitPreset::Large => HostLimits { max_fuel: 1_000_000_000_000, max_memory_mib: 2048, max_deadline_ms: MAX_DEADLINE_MS },
+            LimitPreset::Largest => HostLimits { max_fuel: u64::MAX, max_memory_mib: MAX_MEMORY_MIB, max_deadline_ms: MAX_DEADLINE_MS },
+        }
+    }
+    /// The preset these ceilings are exactly, if any (`None`: set by hand).
+    pub fn of(limits: &HostLimits) -> Option<LimitPreset> {
+        Self::ALL.into_iter().find(|p| p.limits() == *limits)
+    }
+}
+
 impl HostLimits {
     pub fn validate(&self) -> Result<()> {
-        if self.max_fuel == 0 || !(1..=MAX_MEMORY_MIB).contains(&self.max_memory_mib) {
-            return Err(error("host limits require positive integer max_fuel and max_memory_mib 1..4096 (Wasm32)"));
+        if self.max_fuel == 0 || !(1..=MAX_MEMORY_MIB).contains(&self.max_memory_mib) || !(1..=MAX_DEADLINE_MS).contains(&self.max_deadline_ms) {
+            return Err(error("host limits require positive integer max_fuel, max_memory_mib 1..4096 (Wasm32) and max_deadline_ms 1..30000"));
         }
         Ok(())
     }
     pub fn check(&self, requested: &Limits) -> Result<()> {
         self.validate()?;
         requested.validate()?;
-        if requested.fuel > self.max_fuel || requested.memory_mib > self.max_memory_mib {
+        if requested.fuel > self.max_fuel || requested.memory_mib > self.max_memory_mib || requested.deadline_ms > self.max_deadline_ms {
             return Err(error(format!(
-                "requested fuel {} / memory {} MiB exceeds user host limits {} / {} MiB; explicitly change the host settings and review the package before running",
-                requested.fuel, requested.memory_mib, self.max_fuel, self.max_memory_mib
+                "this plugin needs up to {} MiB of memory, {} s and {} instructions, more than the plugin settings allow ({} MiB, {} s, {} instructions); choose a larger setting in Preferences > Plugins (or --plugin-limits) if you trust it",
+                requested.memory_mib,
+                requested.deadline_ms as f64 / 1000.0,
+                requested.fuel,
+                self.max_memory_mib,
+                self.max_deadline_ms as f64 / 1000.0,
+                self.max_fuel
             )));
         }
         Ok(())

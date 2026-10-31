@@ -68,7 +68,8 @@ input format and assembly parts that keep an unchecked history hidden.
 1. In SolidCraft, open **Preferences › Plugins** and click **Install plugin…**.
 2. Pick this folder's `plugin.json` (with `plugin.wasm` beside it).
 3. Check what the page lists: the formats it imports and the fuel, memory and time it asks
-   for. It asks for 1024 MiB: raise **Max plugin memory (MiB)** to at least that.
+   for: about 1 GB of memory and 30 seconds per import. Under **How much a plugin may do before
+   it's stopped**, choose **Large**.
 4. Click **Allow**. The approval is for this exact manifest and component; a rebuilt
    component must be allowed again.
 

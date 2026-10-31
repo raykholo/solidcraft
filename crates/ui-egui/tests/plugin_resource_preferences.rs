@@ -40,8 +40,11 @@ fn visible_resource_fields_confirm_exact_integers_and_refuse_invalid_ok() {
         raster::paint(&mut h, &mut textures, vec![]);
     }
     let original = h.app.session.plugin_limits;
-    let fuel = "dialog:control:Max plugin fuel";
-    let memory = "dialog:control:Max plugin memory (MiB)";
+    // The exact numbers are under Advanced.
+    click(&mut h, &mut textures, "prefs:plugin_limits_advanced");
+    raster::paint(&mut h, &mut textures, vec![]);
+    let fuel = "dialog:control:Work limit (instructions)";
+    let memory = "dialog:control:Memory limit (MiB)";
     for target in [fuel, memory] {
         let rect = scenario::rect_of(target).unwrap();
         assert!(scenario::rect_of("prefs:page_body").unwrap().contains_rect(rect), "{target} must be fully visible");
@@ -58,10 +61,10 @@ fn visible_resource_fields_confirm_exact_integers_and_refuse_invalid_ok() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/plugin-resource-preferences");
     std::fs::create_dir_all(&dir).unwrap();
     // Share only the settings and their explanation, never the user's plugin folder or list.
-    let rect = scenario::rect_of("dialog:row:Max plugin fuel")
+    let rect = scenario::rect_of("dialog:row:How much a plugin may do before it's stopped")
         .unwrap()
-        .union(scenario::rect_of("dialog:row:Max plugin memory (MiB)").unwrap())
-        .union(scenario::rect_of("dialog:hint:plugin_limits").unwrap())
+        .union(scenario::rect_of("dialog:row:Time limit (seconds)").unwrap())
+        .union(scenario::rect_of("dialog:hint:plugin_limits_note").unwrap())
         .expand(4.0)
         .intersect(h.ctx.viewport_rect());
     let ppp = h.ctx.pixels_per_point();

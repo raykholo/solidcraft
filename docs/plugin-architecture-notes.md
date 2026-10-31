@@ -180,3 +180,25 @@ changed in SolidCraft.
 **Still missing.** `.iam` and `.sldasm` assemblies are still not claimed: their parts are other
 files, which the sandboxed importer cannot read. That needs a host API that hands an importer
 the files an assembly names (with the user's consent), not designed yet.
+
+## Plugin limits in plain words
+
+**Feature.** Preferences › Plugins asks one question, **How much a plugin may do before it's
+stopped**: Normal, Large or Largest (trusted plugins only), with what the choice allows ("Up to
+2 GB of memory and 30 seconds per run") and why ("A plugin that runs longer or uses more memory
+than this is stopped, so a broken plugin can't freeze SolidCraft."). The exact numbers are under
+**Advanced**: Work limit (instructions), Memory limit (MiB), Time limit (seconds). Each card says
+what its plugin needs in words ("Needs up to about 1 GB of memory and 30 seconds per import"),
+and which choice runs it when the current one does not. "Fuel" appears nowhere else.
+
+**Architecture needed.**
+- Engine: `HostLimits` gained `max_deadline_ms` (default 30 s, the most a run may take); a
+  request over it is refused like one over work or memory. `LimitPreset` names the three choices
+  and finds which one exact ceilings are. A limits file without the new key still reads.
+- Preferences: `plugin_max_seconds`; `ui.prefs {"plugin_limits": "normal|large|largest"}`.
+
+**Why.** Fuel is an implementation detail of the sandbox; users decide how much they trust a
+plugin, not instruction counts.
+
+**Still missing.** All three choices allow 30 seconds, since that is the most any run may take;
+a longer ceiling would need the per-run maximum raised, which is a separate decision.

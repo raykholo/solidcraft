@@ -91,12 +91,12 @@ mod native {
         let inspection = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
         assert_eq!(inspection["within_host_limits"], false);
         assert_eq!(inspection["host_limits"]["max_memory_mib"], 128);
-        assert!(inspection["limits_error"].as_str().unwrap().contains("user host limits"));
+        assert!(inspection["limits_error"].as_str().unwrap().contains("more than the plugin settings allow"));
         let before = s.doc.to_json();
-        assert!(f.run(&mut s).unwrap_err().to_string().contains("user host limits"));
+        assert!(f.run(&mut s).unwrap_err().to_string().contains("more than the plugin settings allow"));
         assert_eq!(s.doc.to_json(), before);
         assert!(s.undo.is_empty());
-        s.plugin_limits = HostLimits { max_fuel: 200_000_000_000, max_memory_mib: 256 };
+        s.plugin_limits = HostLimits { max_fuel: 200_000_000_000, max_memory_mib: 256, ..Default::default() };
         let approved = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
         assert_eq!(approved["within_host_limits"], true);
         assert_eq!(approved["approval"], inspection["approval"], "approval pins the exact request; a ceiling change never changes its budget");
@@ -310,19 +310,39 @@ fn evaluated_mesh_transfer_refuses_an_oversized_input_without_truncation() {
 #[test]
 fn host_resource_policy_is_exact_user_state_and_never_design_data() {
     let defaults = HostLimits::default();
-    assert_eq!((defaults.max_fuel, defaults.max_memory_mib), (100_000_000_000, 128));
+    assert_eq!((defaults.max_fuel, defaults.max_memory_mib, defaults.max_deadline_ms), (100_000_000_000, 128, 30_000));
+    // The plain choices, each exact ceilings, and the default is Normal.
+    assert_eq!(LimitPreset::of(&defaults), Some(LimitPreset::Normal));
+    assert_eq!((LimitPreset::Large.limits().max_fuel, LimitPreset::Large.limits().max_memory_mib), (1_000_000_000_000, 2048));
+    assert_eq!((LimitPreset::Largest.limits().max_fuel, LimitPreset::Largest.limits().max_memory_mib), (u64::MAX, 4096));
+    for preset in LimitPreset::ALL {
+        assert!(preset.limits().validate().is_ok());
+        assert_eq!(LimitPreset::of(&preset.limits()), Some(preset));
+    }
+    assert_eq!(LimitPreset::of(&HostLimits { max_memory_mib: 300, ..defaults }), None, "hand-set ceilings are no preset");
+    // A request over the time ceiling is refused like one over memory or work.
+    let slow = Limits { deadline_ms: 20_000, ..Limits::default() };
+    assert!(defaults.check(&slow).is_ok());
+    assert!(HostLimits { max_deadline_ms: 10_000, ..defaults }.check(&slow).unwrap_err().to_string().contains("20 s"));
+    // A limits file written before the time ceiling existed still reads, with 30 s.
+    let old: HostLimits = serde_json::from_str(r#"{"max_fuel": 5, "max_memory_mib": 64}"#).unwrap();
+    assert_eq!(old.max_deadline_ms, 30_000);
     let request = Limits::default();
     assert_eq!((request.fuel, request.memory_mib, request.deadline_ms), (10_000_000, 64, 5000));
     assert!(defaults.check(&request).is_ok());
-    for limits in
-        [HostLimits { max_fuel: 0, ..defaults }, HostLimits { max_memory_mib: 0, ..defaults }, HostLimits { max_memory_mib: 4097, ..defaults }]
-    {
+    for limits in [
+        HostLimits { max_fuel: 0, ..defaults },
+        HostLimits { max_memory_mib: 0, ..defaults },
+        HostLimits { max_memory_mib: 4097, ..defaults },
+        HostLimits { max_deadline_ms: 0, ..defaults },
+        HostLimits { max_deadline_ms: 30_001, ..defaults },
+    ] {
         assert!(limits.validate().is_err());
     }
     let mut m = manifest();
     m["runtime"]["limits"] = json!({"fuel":u64::MAX,"memory_mib":4096,"deadline_ms":30000});
     assert!(parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").is_ok());
-    let policy = HostLimits { max_fuel: u64::MAX, max_memory_mib: 4096 };
+    let policy = HostLimits { max_fuel: u64::MAX, max_memory_mib: 4096, max_deadline_ms: 20_000 };
     assert_eq!(serde_json::from_str::<HostLimits>(&serde_json::to_string(&policy).unwrap()).unwrap(), policy);
     let mut s = Session { plugin_limits: policy, ..Default::default() };
     assert_eq!(s.scratch().plugin_limits, policy);

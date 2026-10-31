@@ -147,10 +147,12 @@ For the desktop:
 
 1. Inspect the package with `plugin.inspect` and read `manifest.runtime.limits`, `host_limits`,
    `within_host_limits` and any `limits_error`. This step does not execute code.
-2. Open **Preferences > Plugins**. Enter a positive integer in **Max plugin fuel** and in
-   **Max plugin memory (MiB)**, large enough for the specific request you reviewed. For
-   example, a request of 200,000,000,000 fuel and 256 MiB fits ceilings of 200000000000 and 512.
-3. Choose **Apply** to accept both fields and keep the dialog open, or **OK** to accept and
+2. Open **Preferences > Plugins**. Under **How much a plugin may do before it's stopped**,
+   choose **Large** (or **Largest** for a plugin you trust), or open **Advanced** and enter a
+   positive integer in **Work limit (instructions)**, **Memory limit (MiB)** and **Time limit
+   (seconds)**, large enough for the specific request you reviewed. For example, a request of
+   200,000,000,000 fuel and 256 MiB fits Large, or ceilings of 200000000000 and 512.
+3. A choice applies at once. For numbers under Advanced, choose **Apply** to accept the fields and keep the dialog open, or **OK** to accept and
    close it. Enter also accepts both fields. Invalid or incomplete values keep the dialog open.
    **Cancel** restores changes since the last Apply; **Restore defaults** resets this page.
 4. Inspect the package again to check `within_host_limits: true`. Review its exact manifest,

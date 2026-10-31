@@ -211,19 +211,73 @@ pub fn scan(dir: &Path) -> (Vec<Plugin>, Vec<Skipped>) {
     (plugins, skipped)
 }
 
-/// Exact integer controls retain all u64 fuel values, without a float slider conversion.
+/// Exact integer controls (Advanced) retain all u64 work values, without a float slider conversion.
 pub(crate) struct LimitInputs {
     applied: solidcraft_engine::plugin::HostLimits,
     fuel: String,
     memory: String,
+    seconds: String,
 }
 impl From<solidcraft_engine::plugin::HostLimits> for LimitInputs {
     fn from(applied: solidcraft_engine::plugin::HostLimits) -> Self {
-        Self { fuel: applied.max_fuel.to_string(), memory: applied.max_memory_mib.to_string(), applied }
+        Self {
+            fuel: applied.max_fuel.to_string(),
+            memory: applied.max_memory_mib.to_string(),
+            seconds: (applied.max_deadline_ms / 1000).to_string(),
+            applied,
+        }
     }
 }
 pub(crate) fn host_limits(p: &crate::prefs::Prefs) -> solidcraft_engine::plugin::HostLimits {
-    solidcraft_engine::plugin::HostLimits { max_fuel: p.plugin_max_fuel, max_memory_mib: p.plugin_max_memory_mib }
+    solidcraft_engine::plugin::HostLimits {
+        max_fuel: p.plugin_max_fuel,
+        max_memory_mib: p.plugin_max_memory_mib,
+        max_deadline_ms: p.plugin_max_seconds.saturating_mul(1000),
+    }
+}
+
+use solidcraft_engine::plugin::LimitPreset;
+
+/// The plain choice a control client names: `normal`, `large` or `largest`.
+pub(crate) fn preset_named(name: &str) -> Option<LimitPreset> {
+    match name {
+        "normal" => Some(LimitPreset::Normal),
+        "large" => Some(LimitPreset::Large),
+        "largest" => Some(LimitPreset::Largest),
+        _ => None,
+    }
+}
+
+/// A preset's name on the page.
+fn preset_label(preset: Option<LimitPreset>) -> &'static str {
+    crate::i18n::tr(match preset {
+        Some(LimitPreset::Normal) => "prefs.plugin_limits_normal",
+        Some(LimitPreset::Large) => "prefs.plugin_limits_large",
+        Some(LimitPreset::Largest) => "prefs.plugin_limits_largest",
+        None => "prefs.plugin_limits_custom",
+    })
+}
+
+/// An amount of memory in words: "512 MB", "about 1 GB", "about 2.5 GB".
+pub(crate) fn memory_words(mib: usize) -> String {
+    if mib < 1024 {
+        return crate::i18n::format("prefs.memory_mb", &[("mb", &mib.to_string())]);
+    }
+    let gb = mib as f64 / 1024.0;
+    let gb = if (gb - gb.round()).abs() < 0.05 { format!("{}", gb.round()) } else { format!("{gb:.1}") };
+    crate::i18n::format("prefs.memory_gb", &[("gb", &gb)])
+}
+
+/// What a plugin asks for, in words: memory and time per import (or run).
+pub(crate) fn needs_words(limits: &solidcraft_engine::plugin::Limits, importer: bool) -> String {
+    let seconds = format!("{}", (limits.deadline_ms as f64 / 1000.0 * 10.0).round() / 10.0);
+    let key = if importer { "ui.plugins_needs_import" } else { "ui.plugins_needs_run" };
+    crate::i18n::format(key, &[("memory", &memory_words(limits.memory_mib)), ("seconds", &seconds)])
+}
+
+/// The smallest plain choice that lets a plugin asking for `limits` run, if any.
+pub(crate) fn preset_for(limits: &solidcraft_engine::plugin::Limits) -> Option<LimitPreset> {
+    LimitPreset::ALL.into_iter().find(|p| p.limits().check(limits).is_ok())
 }
 pub(crate) fn sync_policy(app: &mut SolveApp) {
     app.session.disabled_plugins.clone_from(&app.preferences.disabled_plugins);
@@ -255,15 +309,22 @@ pub(crate) fn sync_contributions(app: &SolveApp, force: bool) {
     *last = Some(policy);
 }
 fn parsed_limits(input: &LimitInputs) -> Option<solidcraft_engine::plugin::HostLimits> {
-    let limits =
-        solidcraft_engine::plugin::HostLimits { max_fuel: input.fuel.trim().parse().ok()?, max_memory_mib: input.memory.trim().parse().ok()? };
+    let seconds: u64 = input.seconds.trim().parse().ok()?;
+    let limits = solidcraft_engine::plugin::HostLimits {
+        max_fuel: input.fuel.trim().parse().ok()?,
+        max_memory_mib: input.memory.trim().parse().ok()?,
+        max_deadline_ms: seconds.checked_mul(1000)?,
+    };
     limits.validate().ok()?;
     Some(limits)
 }
 pub(crate) fn resource_pending(app: &SolveApp) -> bool {
     let current = host_limits(&app.preferences);
     app.prefs_window.plugin_limit_inputs.as_ref().is_some_and(|input| {
-        input.applied == current && (input.fuel != current.max_fuel.to_string() || input.memory != current.max_memory_mib.to_string())
+        input.applied == current
+            && (input.fuel != current.max_fuel.to_string()
+                || input.memory != current.max_memory_mib.to_string()
+                || input.seconds != (current.max_deadline_ms / 1000).to_string())
     })
 }
 /// Enter, Apply and OK commit both exact integers together. An incomplete edit cannot save a prefix.
@@ -277,26 +338,73 @@ pub(crate) fn commit_resource_inputs(app: &mut SolveApp) -> Result<(), String> {
         app.prefs_window.plugin_limit_inputs = Some(input);
         return Err(app.tr("prefs.plugin_limits_invalid").to_string());
     };
+    set_limits(app, limits);
+    Ok(())
+}
+
+/// Use these ceilings now.
+fn set_limits(app: &mut SolveApp, limits: solidcraft_engine::plugin::HostLimits) {
     app.preferences.plugin_max_fuel = limits.max_fuel;
     app.preferences.plugin_max_memory_mib = limits.max_memory_mib;
+    app.preferences.plugin_max_seconds = limits.max_deadline_ms / 1000;
     app.prefs_window.plugin_limit_inputs = Some(limits.into());
     sync_policy(app);
-    Ok(())
 }
 fn resource_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
     let current = host_limits(&app.preferences);
-    let mut input = app.prefs_window.plugin_limit_inputs.take().filter(|v| v.applied == current).unwrap_or_else(|| current.into());
-    let (fuel_enter, _) = crate::ui_kit::text_row(ui, app.tr("prefs.plugin_max_fuel"), &mut input.fuel, "");
-    let (memory_enter, _) = crate::ui_kit::text_row(ui, app.tr("prefs.plugin_max_memory"), &mut input.memory, "");
-    if parsed_limits(&input).is_none() {
-        crate::ui_kit::text(ui, app.tr("prefs.plugin_limits_invalid"), crate::ui_kit::Text::Error("plugin_limits"));
+    // The plain choice: how much a plugin may do before it is stopped.
+    let chosen = LimitPreset::of(&current);
+    let mut options: Vec<&str> = LimitPreset::ALL.iter().map(|p| preset_label(Some(*p))).collect();
+    if chosen.is_none() {
+        options.push(preset_label(None));
     }
-    crate::ui_kit::text(ui, app.tr("prefs.plugin_limits_note"), crate::ui_kit::Text::Hint("plugin_limits"));
-    app.prefs_window.plugin_limit_inputs = Some(input);
-    if (fuel_enter || memory_enter)
-        && let Err(error) = commit_resource_inputs(app)
+    let mut selected = chosen.and_then(|c| LimitPreset::ALL.iter().position(|p| *p == c)).unwrap_or(LimitPreset::ALL.len());
+    let before = selected;
+    crate::ui_kit::row(ui, app.tr("prefs.plugin_limits_choice"), |ui| {
+        let r = crate::ui_kit::dropdown(ui, "plugin_limits_choice", &mut selected, &options);
+        crate::scenario::publish_handle("prefs:plugin_limits_choice", r.rect.center());
+    });
+    if selected != before
+        && let Some(preset) = LimitPreset::ALL.get(selected)
     {
-        app.set_status(error, true);
+        set_limits(app, preset.limits());
+    }
+    let current = host_limits(&app.preferences);
+    crate::ui_kit::text(
+        ui,
+        &crate::i18n::format(
+            "prefs.plugin_limits_summary",
+            &[("memory", &memory_words(current.max_memory_mib)), ("seconds", &(current.max_deadline_ms / 1000).to_string())],
+        ),
+        crate::ui_kit::Text::Hint("plugin_limits_summary"),
+    );
+    crate::ui_kit::text(ui, app.tr("prefs.plugin_limits_why"), crate::ui_kit::Text::Hint("plugin_limits"));
+    // The exact numbers, folded away.
+    let open_id = egui::Id::new("plugin_limits_advanced");
+    let mut open = ui.ctx().data(|d| d.get_temp::<bool>(open_id)).unwrap_or(false);
+    let label = format!("{} {}", if open { "\u{25be}" } else { "\u{25b8}" }, app.tr("prefs.plugin_limits_advanced"));
+    let toggle = crate::ui_kit::button(ui, &label, crate::ui_kit::Button::Ghost);
+    crate::scenario::publish_handle("prefs:plugin_limits_advanced", toggle.rect.center());
+    crate::scenario::publish_rect("prefs:plugin_limits_advanced", toggle.rect);
+    if toggle.clicked() {
+        open = !open;
+        ui.ctx().data_mut(|d| d.insert_temp(open_id, open));
+    }
+    if open {
+        let mut input = app.prefs_window.plugin_limit_inputs.take().filter(|v| v.applied == current).unwrap_or_else(|| current.into());
+        let (fuel_enter, _) = crate::ui_kit::text_row(ui, app.tr("prefs.plugin_max_fuel"), &mut input.fuel, "");
+        let (memory_enter, _) = crate::ui_kit::text_row(ui, app.tr("prefs.plugin_max_memory"), &mut input.memory, "");
+        let (seconds_enter, _) = crate::ui_kit::text_row(ui, app.tr("prefs.plugin_max_seconds"), &mut input.seconds, "");
+        if parsed_limits(&input).is_none() {
+            crate::ui_kit::text(ui, app.tr("prefs.plugin_limits_invalid"), crate::ui_kit::Text::Error("plugin_limits"));
+        }
+        crate::ui_kit::text(ui, app.tr("prefs.plugin_limits_note"), crate::ui_kit::Text::Hint("plugin_limits_note"));
+        app.prefs_window.plugin_limit_inputs = Some(input);
+        if (fuel_enter || memory_enter || seconds_enter)
+            && let Err(error) = commit_resource_inputs(app)
+        {
+            app.set_status(error, true);
+        }
     }
     ui.separator();
 }
@@ -324,21 +432,14 @@ fn runtime_rows(app: &mut SolveApp, ui: &mut egui::Ui, plugin: &Plugin, runtime:
         }
     }
     let limits = &runtime.limits;
-    let seconds = format!("{}", limits.deadline_ms as f64 / 1000.0);
-    small(
-        ui,
-        crate::i18n::format(
-            "ui.plugins_limits",
-            &[
-                ("fuel", &limits.fuel.to_string()),
-                ("memory", &limits.memory_mib.to_string()),
-                ("seconds", &seconds),
-                ("size", &limits.component_mib.to_string()),
-            ],
-        ),
-    );
-    if let Err(e) = host_limits(&app.preferences).check(limits) {
-        crate::ui_kit::text(ui, &e.to_string(), crate::ui_kit::Text::Error("plugin_over_limits"));
+    small(ui, needs_words(limits, runtime.kind == Kind::Importer));
+    small(ui, crate::i18n::format("ui.plugins_code_size", &[("size", &limits.component_mib.to_string())]));
+    if host_limits(&app.preferences).check(limits).is_err() {
+        let text = match preset_for(limits) {
+            Some(preset) => crate::i18n::format("ui.plugins_needs_more", &[("choice", preset_label(Some(preset)))]),
+            None => crate::i18n::tr("ui.plugins_needs_too_much").to_string(),
+        };
+        crate::ui_kit::text(ui, &text, crate::ui_kit::Text::Error("plugin_over_limits"));
     }
     let allowed = app.preferences.plugin_approvals.contains_key(&plugin.id);
     ui.horizontal(|ui| {
@@ -654,12 +755,44 @@ mod tests {
         assert_eq!(read.language, "en");
     }
     #[test]
+    fn the_plain_limit_choices_set_exact_ceilings_and_cards_say_what_a_plugin_needs() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"language":"en"}));
+        assert_eq!(LimitPreset::of(&host_limits(&h.app.preferences)), Some(LimitPreset::Normal), "Normal is the default");
+        for (name, preset) in [("large", LimitPreset::Large), ("largest", LimitPreset::Largest), ("normal", LimitPreset::Normal)] {
+            assert_eq!(h.call("ui.prefs", json!({"plugin_limits": name}))["ok"], true);
+            assert_eq!(h.app.session.plugin_limits, preset.limits(), "{name}");
+        }
+        assert_eq!(h.call("ui.prefs", json!({"plugin_limits": "huge"}))["ok"], false);
+        // A time limit set by hand is no longer one of the choices, and the runtime keeps it.
+        assert_eq!(h.call("ui.prefs", json!({"plugin_max_seconds": 10}))["ok"], true);
+        assert_eq!(h.app.session.plugin_limits.max_deadline_ms, 10_000);
+        assert_eq!(LimitPreset::of(&h.app.session.plugin_limits), None);
+        for bad in [json!({"plugin_max_seconds": 0}), json!({"plugin_max_seconds": 31})] {
+            assert_eq!(h.call("ui.prefs", bad)["ok"], false);
+        }
+        // What a card says, in words: memory and time, never the work count.
+        let dutchman = solidcraft_engine::plugin::Limits { fuel: 100_000_000_000, memory_mib: 1024, deadline_ms: 30_000, component_mib: 48 };
+        assert_eq!(needs_words(&dutchman, true), "Needs up to about 1 GB of memory and 30 seconds per import.");
+        let small = solidcraft_engine::plugin::Limits::default();
+        assert_eq!(needs_words(&small, false), "Needs up to 64 MB of memory and 5 seconds per run.");
+        assert_eq!(memory_words(2560), "about 2.5 GB");
+        // The smallest choice that runs it.
+        assert_eq!(preset_for(&small), Some(LimitPreset::Normal));
+        assert_eq!(preset_for(&dutchman), Some(LimitPreset::Large));
+        let biggest = solidcraft_engine::plugin::Limits { fuel: u64::MAX, memory_mib: 4096, ..dutchman };
+        assert_eq!(preset_for(&biggest), Some(LimitPreset::Largest));
+    }
+
+    #[test]
     fn resource_text_edits_require_complete_valid_confirmation() {
         use serde_json::json;
         let mut h = crate::scenario::Harness::new();
         h.call("ui.prefs", json!({"open":"Plugins"}));
         let initial = host_limits(&h.app.preferences);
-        h.app.prefs_window.plugin_limit_inputs = Some(LimitInputs { applied: initial, fuel: u64::MAX.to_string(), memory: "512".into() });
+        h.app.prefs_window.plugin_limit_inputs =
+            Some(LimitInputs { applied: initial, fuel: u64::MAX.to_string(), memory: "512".into(), seconds: "30".into() });
         assert!(resource_pending(&h.app));
         assert_eq!(h.app.session.plugin_limits, initial, "typing alone does not authorize a higher ceiling");
         assert_eq!(h.call("ui.prefs", json!({}))["result"]["apply_enabled"], true);
@@ -668,7 +801,7 @@ mod tests {
         assert_eq!(h.app.session.plugin_limits.max_memory_mib, 512);
         let applied = h.app.session.plugin_limits;
         for text in ["", "0", "18446744073709551616", "1.5"] {
-            h.app.prefs_window.plugin_limit_inputs = Some(LimitInputs { applied, fuel: text.into(), memory: "1024".into() });
+            h.app.prefs_window.plugin_limit_inputs = Some(LimitInputs { applied, fuel: text.into(), memory: "1024".into(), seconds: "30".into() });
             assert_eq!(h.call("ui.prefs", json!({"button":"ok"}))["ok"], false);
             assert!(h.app.prefs_window.open);
             assert_eq!(h.app.session.plugin_limits, applied);
