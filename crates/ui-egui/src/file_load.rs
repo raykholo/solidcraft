@@ -442,6 +442,11 @@ fn start(app: &mut SolveApp) {
     if insert {
         scratch.selection = app.session.selection.clone();
     }
+    // An open may run an importer plugin: it does so under the user's plugin policy.
+    scratch.disabled_plugins.clone_from(&app.session.disabled_plugins);
+    scratch.plugin_limits = app.session.plugin_limits;
+    scratch.plugin_approvals.clone_from(&app.session.plugin_approvals);
+    scratch.plugins_dir.clone_from(&app.session.plugins_dir);
     if update {
         // Link paths are kept relative to the design's own file.
         scratch.path.clone_from(&app.session.path);
