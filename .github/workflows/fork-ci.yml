@@ -60,9 +60,9 @@ jobs:
       - name: Clippy (engine, UI, CLI)
         run: cargo clippy -p solidcraft-engine -p solidcraft-ui-egui -p solidcraft-cli --all-targets -- -D warnings
       - name: Engine plugin and file tests
-        run: cargo test -p solidcraft-engine --lib -- plugin:: cmd::file
+        run: 'cargo test -p solidcraft-engine --lib -- plugin:: cmd::file'
       - name: UI plugin, dialog, toolbar and i18n tests
-        run: cargo test -p solidcraft-ui-egui --lib -- plugins dialogs_plugin plugin_report toolbar workspace i18n icon_svg file_load agent_chat::gate control::
+        run: 'cargo test -p solidcraft-ui-egui --lib -- plugins dialogs_plugin plugin_report toolbar workspace i18n icon_svg file_load agent_chat::gate control::'
 
   wasm:
     name: Compile WebAssembly
