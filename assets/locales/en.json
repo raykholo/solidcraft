@@ -4660,7 +4660,7 @@
   "ui.plugins_desktop": "Plugins are available in the desktop app.",
   "ui.plugins_empty": "No plugins installed.",
   "ui.plugins_none": "No plugins match this search.",
-  "ui.plugins_note": "Each plugin is a folder inside {path} with a plugin.json. SolidCraft reads that file and does not run any code from the folder. Turning a plugin off keeps it installed.",
+  "ui.plugins_note": "Each plugin is a folder inside {path} with a plugin.json. A plugin's code runs only once you allow it, within the limits below. Turning a plugin off keeps it installed.",
   "ui.plugins_search": "Search plugins",
   "ui.plugins_skipped": "{count} folder(s) could not be read.",
   "ui.plugins_version": "{version}",

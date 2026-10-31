@@ -19,3 +19,5 @@ mutants.out*/
 # Separately compiled original plugin example.
 /examples/plugins/example-box/target/
 /examples/plugins/example-box/plugin.wasm
+/examples/plugins/dutchman-convert/target/
+/examples/plugins/dutchman-convert/plugin.wasm

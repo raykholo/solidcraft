@@ -661,6 +661,10 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
                         ui.close();
                     }
                 });
+                if item(ui, &format!("{}…", app.tr_label("Import")), "", "import") {
+                    app.start("file.import");
+                    close = true;
+                }
                 if item_if(ui, "Insert STEP…", "", "import", shown) {
                     FileAction::Command("file.insert_step").run(app);
                     close = true;

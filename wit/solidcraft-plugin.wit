@@ -25,9 +25,34 @@ interface command {
     use types.{json, plugin-error};
     execute: func(entry: string, params: json) -> result<json, plugin-error>;
 }
+/// File importers: one file's bytes in, a design out. An importer reads nothing else: the
+/// host reads the file the user chose and hands over its contents, and the world grants no
+/// files, network or engine commands.
+interface importer {
+    use types.{plugin-error};
+    /// What an import produced.
+    variant payload {
+        /// A SolidCraft design container (the `.sc` file the app opens), so imported feature
+        /// history stays editable.
+        design(list<u8>),
+        /// STEP text, for an importer that carries geometry only.
+        step(list<u8>),
+    }
+    record imported {
+        payload: payload,
+        /// What did not come across, as plain text for the user (at most 64 KiB).
+        notes: string,
+    }
+    /// Convert the file named `file-name` (its name only, without folders) from `bytes`.
+    %import: func(file-name: string, bytes: list<u8>) -> result<imported, plugin-error>;
+}
 world command-plugin {
     import engine;
     import log;
     import store;
     export command;
+}
+world importer-plugin {
+    import log;
+    export importer;
 }

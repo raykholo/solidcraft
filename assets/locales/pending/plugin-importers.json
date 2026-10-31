@@ -1,0 +1,28 @@
+{
+  "en": {
+    "cmd.file.import": "Import",
+    "cmd.plugin.install": "Install Plugin",
+    "ui.plugins_allow": "Allow",
+    "ui.plugins_allowed": "Allowed to run",
+    "ui.plugins_commands": "Runs commands: {commands}",
+    "ui.plugins_importer": "Imports {formats}",
+    "ui.plugins_install": "Install plugin…",
+    "ui.plugins_installed": "Installed {name}. Allow it in Preferences › Plugins to run it.",
+    "ui.plugins_limits": "Asks for up to {fuel} fuel, {memory} MiB and {seconds} s",
+    "ui.plugins_not_allowed": "Not allowed to run",
+    "ui.plugins_revoke": "Revoke"
+  },
+  "de": {
+    "cmd.file.import": "Importieren",
+    "cmd.plugin.install": "Plugin installieren",
+    "ui.plugins_allow": "Zulassen",
+    "ui.plugins_allowed": "Darf ausgeführt werden",
+    "ui.plugins_commands": "Führt Befehle aus: {commands}",
+    "ui.plugins_importer": "Importiert {formats}",
+    "ui.plugins_install": "Plugin installieren…",
+    "ui.plugins_installed": "{name} installiert. Unter Einstellungen › Plugins zulassen, um es auszuführen.",
+    "ui.plugins_limits": "Fordert bis zu {fuel} Fuel, {memory} MiB und {seconds} s an",
+    "ui.plugins_not_allowed": "Darf nicht ausgeführt werden",
+    "ui.plugins_revoke": "Widerrufen"
+  }
+}

@@ -1,9 +1,10 @@
 //! Preferences › Plugins: packages installed under the per-user data folder.
 //!
 //! A plugin is a directory of `{data}/plugins/<id>/plugin.json`. The page searches that list.
-//! It reads `plugin.json` and records which ids are turned off. It does not load or run anything
-//! from the folder. Explicit `plugin.run` calls use the native component host and honour
-//! `disabled_plugins`; listing or enabling a package never executes its code.
+//! It reads `plugin.json` and records which ids are turned off and which packages the user
+//! allowed to run (`plugin_approvals`: each id with the approval hash of the exact content
+//! allowed). Listing, installing or enabling a package never executes its code. `plugin.run`
+//! and importers (`file.import`) use the native component host and honour both.
 
 use std::path::{Path, PathBuf};
 
@@ -24,6 +25,8 @@ pub struct Plugin {
     pub name: String,
     pub version: String,
     pub description: String,
+    /// What it runs, when it has code: its kind, grants, formats and requested limits.
+    pub runtime: Option<solidcraft_engine::plugin::RuntimeManifest>,
 }
 
 /// A folder under the plugins directory that is not a plugin.
@@ -82,7 +85,7 @@ fn check(m: Manifest, folder: &str) -> Result<Plugin, String> {
     if description.chars().count() > 240 || description.chars().any(|c| c.is_control()) {
         return Err("the description must be at most 240 characters with no line breaks".into());
     }
-    Ok(Plugin { id: m.id, name: name.to_string(), version: version.to_string(), description: description.to_string() })
+    Ok(Plugin { id: m.id, name: name.to_string(), version: version.to_string(), description: description.to_string(), runtime: None })
 }
 
 fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
@@ -93,7 +96,24 @@ fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
     }
     let text = std::fs::read_to_string(&path).map_err(|e| format!("plugin.json could not be read ({e})"))?;
     let parsed = solidcraft_engine::plugin::parse_manifest(text.as_bytes(), folder).map_err(|e| e.to_string())?;
-    check(Manifest { id: parsed.id, name: parsed.name, version: parsed.version, description: parsed.description }, folder)
+    let runtime = parsed.runtime;
+    let mut plugin = check(Manifest { id: parsed.id, name: parsed.name, version: parsed.version, description: parsed.description }, folder)?;
+    plugin.runtime = runtime;
+    Ok(plugin)
+}
+
+/// An approval a preferences file may hold: a plugin id and a SHA-256 hash in lowercase hex.
+pub fn valid_approval(id: &str, hash: &str) -> bool {
+    valid_id(id) && hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+
+/// The approval hash of installed plugin `id` as it is now (manifest and component).
+pub fn current_approval(id: &str) -> Result<String, String> {
+    if !valid_id(id) {
+        return Err(format!("`{id}` is not a plugin id"));
+    }
+    let dir = plugins_dir().ok_or("this build has no plugins folder")?;
+    solidcraft_engine::plugin::read_package(&dir.join(id).to_string_lossy()).map(|p| p.approval).map_err(|e| e.to_string())
 }
 
 /// The plugins in `dir`, and the folders that were not. A missing directory is an empty list.
@@ -141,6 +161,7 @@ pub(crate) fn host_limits(p: &crate::prefs::Prefs) -> solidcraft_engine::plugin:
 }
 pub(crate) fn sync_policy(app: &mut SolveApp) {
     app.session.disabled_plugins.clone_from(&app.preferences.disabled_plugins);
+    app.session.plugin_approvals.clone_from(&app.preferences.plugin_approvals);
     app.session.plugin_limits = host_limits(&app.preferences);
 }
 fn parsed_limits(input: &LimitInputs) -> Option<solidcraft_engine::plugin::HostLimits> {
@@ -195,6 +216,57 @@ pub fn enabled(app: &SolveApp, id: &str) -> bool {
     !app.preferences.disabled_plugins.contains(id)
 }
 
+/// What a plugin with code does and asks for, and whether the user allowed it to run.
+fn runtime_rows(app: &mut SolveApp, ui: &mut egui::Ui, plugin: &Plugin, runtime: &solidcraft_engine::plugin::RuntimeManifest) {
+    use solidcraft_engine::plugin::Kind;
+    let t = crate::theme::Tokens::get();
+    let small = |ui: &mut egui::Ui, text: String| {
+        ui.add(egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).wrap());
+    };
+    match runtime.kind {
+        Kind::Importer => {
+            let formats = runtime.formats.iter().map(|f| format!("{} (.{})", f.name, f.extension)).collect::<Vec<_>>().join(", ");
+            small(ui, crate::i18n::format("ui.plugins_importer", &[("formats", &formats)]));
+        }
+        Kind::Command => {
+            let commands = runtime.commands.iter().cloned().collect::<Vec<_>>().join(", ");
+            small(ui, crate::i18n::format("ui.plugins_commands", &[("commands", &commands)]));
+        }
+    }
+    let limits = &runtime.limits;
+    let seconds = format!("{}", limits.deadline_ms as f64 / 1000.0);
+    small(
+        ui,
+        crate::i18n::format(
+            "ui.plugins_limits",
+            &[("fuel", &limits.fuel.to_string()), ("memory", &limits.memory_mib.to_string()), ("seconds", &seconds)],
+        ),
+    );
+    if let Err(e) = host_limits(&app.preferences).check(limits) {
+        crate::ui_kit::text(ui, &e.to_string(), crate::ui_kit::Text::Error("plugin_over_limits"));
+    }
+    let allowed = app.preferences.plugin_approvals.contains_key(&plugin.id);
+    ui.horizontal(|ui| {
+        let (state, button) = if allowed { ("ui.plugins_allowed", "ui.plugins_revoke") } else { ("ui.plugins_not_allowed", "ui.plugins_allow") };
+        ui.label(RichText::new(crate::i18n::tr(state)).size(t.font_small).color(if allowed { t.text } else { t.text_dim }));
+        let clicked = crate::ui_kit::button(ui, crate::i18n::tr(button), crate::ui_kit::Button::Normal);
+        crate::scenario::publish_handle(&format!("prefs:plugin_allow:{}", plugin.id), clicked.rect.center());
+        if clicked.clicked() {
+            if allowed {
+                app.preferences.plugin_approvals.remove(&plugin.id);
+            } else {
+                match current_approval(&plugin.id) {
+                    Ok(hash) => {
+                        app.preferences.plugin_approvals.insert(plugin.id.clone(), hash);
+                    }
+                    Err(e) => app.set_status(e, true),
+                }
+            }
+            sync_policy(app);
+        }
+    });
+}
+
 fn matches_query(plugin: &Plugin, query: &str) -> bool {
     let query = query.trim();
     if query.is_empty() {
@@ -233,6 +305,18 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     resource_controls(app, ui);
     ui.add_space(8.0);
+    if !searching && crate::ui_kit::button(ui, crate::i18n::tr("ui.plugins_install"), crate::ui_kit::Button::Normal).clicked() {
+        // A package is a folder: pick its plugin.json.
+        app.pick_open_for(&["json"], |app, path| {
+            let Some(path) = path else { return };
+            let folder = Path::new(&path).parent().map(|p| p.display().to_string()).unwrap_or_default();
+            match app.run("plugin.install", serde_json::json!({"path": folder, "replace": true})) {
+                Ok(r) => app
+                    .set_status(crate::i18n::format("ui.plugins_installed", &[("name", r["manifest"]["name"].as_str().unwrap_or_default())]), false),
+                Err(e) => app.set_status(e, true),
+            }
+        });
+    }
     if !searching && crate::ui_kit::button(ui, crate::i18n::tr_label("Show in folder"), crate::ui_kit::Button::Normal).clicked() {
         // `show_in_folder` opens the parent of the path it is given, so the argument is a name
         // inside the plugins directory (it need not exist).
@@ -276,6 +360,9 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
                 );
                 if !plugin.description.is_empty() {
                     ui.label(RichText::new(&plugin.description).size(t.font_small).color(t.text_dim));
+                }
+                if let Some(runtime) = &plugin.runtime {
+                    runtime_rows(app, ui, plugin, runtime);
                 }
             });
         });
@@ -442,6 +529,7 @@ mod tests {
             name: "FTC and FRC parts".into(),
             version: "0.1.0".into(),
             description: "Commercial robot parts.".into(),
+            runtime: None,
         };
         assert!(matches_query(&plugin, ""));
         assert!(matches_query(&plugin, " frc "));

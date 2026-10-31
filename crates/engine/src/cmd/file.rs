@@ -29,6 +29,10 @@ pub static COMMANDS: &[CommandSpec] = &[
         .key("Ctrl+O")
         .noundo()
         .params("path: .sc design (or a .solidcraft design from an earlier release), .dxf/.svg drawing (opens as a new, unsaved design with an XY sketch, using sketch.insert_dxf/sketch.insert_svg units and defaults), or a .step/.stp/.igs/.fcstd/.3dm/.3mf/.stl/.obj/.glb/.gltf file (STEP, IGES, FreeCAD, Rhino, 3MF, STL, OBJ or glTF; opens as a new design holding the file as a component named after it, as file.insert_step and file.insert_mesh make), or a .ply/.xyz/.pts point cloud (opens as a new design holding it, as pointcloud.insert makes; its `units` and `max_points` as there); up?: z|y for a STEP, IGES, FreeCAD, Rhino or glTF file (see file.insert_step and file.insert_mesh); names?: auto|solid|product|instance for a STEP, IGES, FreeCAD or Rhino file (see file.insert_step); read_only?: bool (a design: saving to its own file is refused, file.save_as keeps the changes elsewhere) → open_elsewhere: {host, user, app, opened} when another SolidCraft has the design open (its lock file is fresh)"),
+    CommandSpec::new("file.import", "Import", import_file)
+        .icon("import")
+        .noundo()
+        .params("path: a file to open as a new, unsaved design. A format SolidCraft reads itself opens as doc.open opens it; any other extension goes to the installed importer plugin that claims it (enabled, and allowed in Preferences > Plugins for its exact content), which is given the file's bytes and nothing else and returns a SolidCraft design (its feature history kept) or STEP geometry. plugin?: an installed importer's id, to use it even for a format SolidCraft reads, or a package folder together with approval (the hash plugin.inspect returns, after reviewing it) to run a package that is not installed → plugin, plugin_version, features, errors, name, notes (what the importer says did not come across). A failed import leaves the open design as it was"),
     CommandSpec::new("file.insert_step", "Insert STEP", insert_step)
         .at("SOLID", "INSERT")
         .icon("import")
@@ -334,6 +338,12 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
         }
         return Ok(out);
     }
+    // A file SolidCraft does not read itself, in a format an installed importer converts.
+    if !is_design_path(path)
+        && let Some(installed) = crate::plugin::importer_for(s, path)
+    {
+        return import_with(s, path, &installed.path.to_string_lossy(), None);
+    }
     let read_only = bool_(p, "read_only").unwrap_or(false);
     // Stamped before it is read: a write while it is being read is a change too.
     let disk = solidcraft_io::design_lock::stamp(path);
@@ -361,6 +371,114 @@ const DEFAULT_NAME: &str = "Untitled";
 
 /// A design still under the default name takes its file's name (`bracket.sc` →
 /// "bracket"); a name the user chose is kept. `None` when nothing changes.
+/// Whether `path` names a SolidCraft design (or JSON), which doc.open always reads itself.
+fn is_design_path(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| ["sc", "solidcraft", "solvecraft", "json"].iter().any(|d| e.eq_ignore_ascii_case(d)))
+}
+
+/// Whether doc.open reads `path` itself, without a plugin.
+fn opens_natively(path: &str) -> bool {
+    is_design_path(path)
+        || super::drawing_import_command(path).is_some()
+        || solidcraft_io::is_point_cloud_path(path)
+        || solidcraft_io::is_step_path(path)
+        || solidcraft_io::is_mesh_path(path)
+}
+
+fn import_file(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = path_arg(p, "file.import")?;
+    let approval = str_(p, "approval");
+    match str_(p, "plugin").filter(|x| !x.trim().is_empty()) {
+        // A package that is not installed, approved for this call.
+        Some(folder) if approval.is_some() => import_with(s, path, folder, approval),
+        Some(id) => {
+            let dir = s.plugins_dir.clone().ok_or_else(|| bad("file.import", "this build has no plugins folder"))?;
+            let installed = crate::plugin::installed(&dir)
+                .into_iter()
+                .find(|p| p.manifest.id == id)
+                .ok_or_else(|| bad("file.import", format!("no installed plugin `{id}`")))?;
+            if s.plugin_approvals.get(id) != Some(&installed.approval) {
+                return Err(bad("file.import", format!("plugin `{id}` is not allowed to run: allow it in Preferences > Plugins")));
+            }
+            import_with(s, path, &installed.path.to_string_lossy(), None)
+        }
+        None if opens_natively(path) => {
+            let mut q = p.clone();
+            if let Some(q) = q.as_object_mut() {
+                q.remove("plugin");
+                q.remove("approval");
+            }
+            open(s, &q)
+        }
+        None => {
+            let installed = crate::plugin::importer_for(s, path).ok_or_else(|| {
+                let ext = std::path::Path::new(path).extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default();
+                bad("file.import", format!("no importer for .{ext} files: install one and allow it in Preferences > Plugins"))
+            })?;
+            import_with(s, path, &installed.path.to_string_lossy(), None)
+        }
+    }
+}
+
+/// Convert `path` with the importer package in `folder` and open the result as a new, unsaved
+/// design. `approval`: the hash a package that is not installed was reviewed under. Nothing
+/// changes unless the whole import succeeds.
+fn import_with(s: &mut Session, path: &str, folder: &str, approval: Option<&str>) -> Result<Value> {
+    let package = crate::plugin::read_package(folder)?;
+    if let Some(approval) = approval
+        && approval != package.approval
+    {
+        return Err(bad("file.import", "approval does not match this manifest and component; inspect and review again"));
+    }
+    if approval.is_none() && s.plugin_approvals.get(&package.manifest.id) != Some(&package.approval) {
+        return Err(bad("file.import", format!("plugin `{}` is not allowed to run: allow it in Preferences > Plugins", package.manifest.id)));
+    }
+    let bytes = solidcraft_io::vfs::read(path, crate::plugin::MAX_IMPORT_BYTES).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
+    let file_name = std::path::Path::new(path).file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+    let imported = crate::plugin::import(s, &package, &file_name, bytes)?;
+    let stem = std::path::Path::new(path).file_stem().map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|| "Untitled".into());
+    let fresh = match &imported.payload {
+        crate::plugin::Payload::Design(bytes) => {
+            let mut doc = solidcraft_io::read_design(bytes).map_err(|e| EngineError::Other(format!("{path}: the importer's design: {e}")))?;
+            if doc.name.trim().is_empty() {
+                doc.name = stem;
+            }
+            Session::new(doc)
+        }
+        crate::plugin::Payload::Step(bytes) => {
+            let mut fresh = Session::new(Document::new(&stem));
+            let sf = solidcraft_io::step_import_feature_named(bytes, path, solidcraft_io::StepNames::default())
+                .map_err(|e| EngineError::Other(format!("{path}: the importer's STEP: {e}")))?;
+            let cname = import::component_name(path, None);
+            let (_, placed) = import::add_in_component(&mut fresh, sf.kind, &sf.name, sf.body_names, &cname, import::Tree::Step(&sf.import))?;
+            let mut out = json!({});
+            placed.report(&mut out);
+            if let Some(c) = out["component"].as_u64() {
+                fresh.active_component = c;
+                fresh.active_occurrence_path = Some(fresh.doc.first_path(c));
+            }
+            fresh
+        }
+    };
+    let mut fresh = fresh;
+    fresh.undo.clear();
+    s.replace_design(fresh);
+    let errors = s.model.results.iter().filter(|r| r.error.is_some()).count();
+    Ok(json!({
+        "path": path,
+        "plugin": package.manifest.id,
+        "plugin_version": package.manifest.version,
+        "payload": match imported.payload { crate::plugin::Payload::Design(_) => "design", crate::plugin::Payload::Step(_) => "step" },
+        "features": s.doc.features.len(),
+        "errors": errors,
+        "name": s.doc.name,
+        "notes": imported.notes,
+    }))
+}
+
 fn default_name_for(name: &str, path: &str) -> Option<String> {
     let name = name.trim();
     if !name.is_empty() && name != DEFAULT_NAME {

@@ -73,7 +73,7 @@ fn reads_only(id: &str) -> bool {
 /// Commands that read or write a file by their nature: any string they are given in a path
 /// parameter is a file, whatever it looks like.
 fn is_file_verb(id: &str) -> bool {
-    if id == "plugin.inspect" {
+    if matches!(id, "plugin.inspect" | "plugin.install") {
         return true;
     }
     id.starts_with("library.") || ["export", "import", "save", "open", "insert", "load", "write", "recover"].iter().any(|v| id.contains(v))

@@ -19,7 +19,23 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("plugin.run", "Run Plugin", checked!("plugin.run", run)).icon("play")
         .contract(&TypedContract::<RunParams>::new()).output(output_schema_for::<RunResult>)
         .params("path, approval: exact hash from plugin.inspect after reviewing permissions, entry, params?: JSON; explicit native Wasm component execution, one undo step; errors discard all edits"),
+    CommandSpec::new("plugin.install", "Install Plugin", install).icon("import").noundo()
+        .params("path: plugin package folder (plugin.json and its component); replace?: bool (replace an installed copy with the same id) → id, approval, manifest, folder. Copies the package into the plugins folder; it runs nothing and allows nothing: the user allows a plugin to run in Preferences > Plugins, for its exact content"),
 ];
+fn install(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = p.get("path").and_then(Value::as_str).filter(|x| !x.trim().is_empty()).ok_or_else(|| bad("plugin.install", "`path` is required"))?;
+    let replace = p.get("replace").and_then(Value::as_bool).unwrap_or(false);
+    let dir = s.plugins_dir.clone().ok_or_else(|| bad("plugin.install", "this build has no plugins folder"))?;
+    let installed = plugin::install(path, &dir, replace)?;
+    let allowed = s.plugin_approvals.get(&installed.manifest.id) == Some(&installed.approval);
+    Ok(serde_json::json!({
+        "id": installed.manifest.id,
+        "approval": installed.approval,
+        "manifest": installed.manifest,
+        "folder": installed.path.to_string_lossy(),
+        "allowed": allowed,
+    }))
+}
 fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
     let p: InspectParams = serde_json::from_value(p.clone()).map_err(|e| bad("plugin.inspect", e.to_string()))?;
     let package = plugin::read_package(&p.path)?;

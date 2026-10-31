@@ -1392,6 +1392,10 @@ preference_settings! {
     drive_joints_ghost: bool = true, PAGE_DESIGN;
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
     disabled_plugins: std::collections::BTreeSet<String> = std::collections::BTreeSet::new(), PAGE_PLUGINS;
+    /// Installed plugins allowed to run (Preferences › Plugins › Allow), by id: the approval
+    /// hash of the exact manifest and component the user allowed. A changed package needs
+    /// allowing again.
+    plugin_approvals: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new(), PAGE_PLUGINS;
     /// User ceilings, not automatic increases to a package's approved execution budget.
     plugin_max_fuel: u64 = solidcraft_engine::plugin::HostLimits::default().max_fuel, PAGE_PLUGINS;
     plugin_max_memory_mib: usize = solidcraft_engine::plugin::HostLimits::default().max_memory_mib, PAGE_PLUGINS;
@@ -3160,6 +3164,16 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
             Ok::<_, String>(id)
         })
         .transpose()?;
+    // Allow an installed plugin to run, for its exact content as installed now; or stop it.
+    if let Some(id) = rest.remove("plugin_allow") {
+        let id = id.as_str().ok_or("`plugin_allow` must be an installed plugin's id")?;
+        let approval = crate::plugins::current_approval(id)?;
+        staged.plugin_approvals.insert(id.to_string(), approval);
+    }
+    if let Some(id) = rest.remove("plugin_revoke") {
+        let id = id.as_str().ok_or("`plugin_revoke` must be a plugin id")?;
+        staged.plugin_approvals.remove(id);
+    }
     if let Some(id) = rest.remove("theme_remove") {
         let id = id.as_str().unwrap_or_default();
         let i = staged.custom_themes.iter().position(|t| t.id == id).ok_or_else(|| format!("no imported theme `{id}`"))?;
@@ -3761,6 +3775,10 @@ fn limit_disabled_plugins(mut p: Prefs) -> Prefs {
     if p.disabled_plugins.len() > crate::plugins::MAX_DISABLED {
         p.disabled_plugins = p.disabled_plugins.into_iter().take(crate::plugins::MAX_DISABLED).collect();
     }
+    p.plugin_approvals.retain(|id, hash| crate::plugins::valid_approval(id, hash));
+    if p.plugin_approvals.len() > crate::plugins::MAX_DISABLED {
+        p.plugin_approvals = p.plugin_approvals.into_iter().take(crate::plugins::MAX_DISABLED).collect();
+    }
     p
 }
 
@@ -3908,6 +3926,11 @@ fn prepare_preferences(
     }
     if new.disabled_plugins.len() > crate::plugins::MAX_DISABLED || new.disabled_plugins.iter().any(|id| !crate::plugins::valid_id(id)) {
         return Err(format!("`disabled_plugins` must be at most {} ids of lowercase letters, digits and hyphens", crate::plugins::MAX_DISABLED));
+    }
+    if new.plugin_approvals.len() > crate::plugins::MAX_DISABLED
+        || new.plugin_approvals.iter().any(|(id, hash)| !crate::plugins::valid_approval(id, hash))
+    {
+        return Err(format!("`plugin_approvals` must be at most {} plugin ids, each with its approval hash", crate::plugins::MAX_DISABLED));
     }
     if new.max_step_file_mb != app.preferences.max_step_file_mb || new.max_design_file_mb != app.preferences.max_design_file_mb {
         let mb = solidcraft_engine::io::limits::MB;

@@ -201,3 +201,152 @@ pub(super) fn run(session: &mut Session, package: &Package, entry: &str, params:
     }
     Ok(value)
 }
+
+mod importer_bindings {
+    wasmtime::component::bindgen!({ path: "../../wit", world: "importer-plugin" });
+}
+
+/// What an importer may do: write to the log, within a budget.
+struct ImportState {
+    limits: StoreLimits,
+    log_bytes: usize,
+    messages: Vec<String>,
+}
+impl importer_bindings::solidcraft::plugin::types::Host for ImportState {}
+impl importer_bindings::solidcraft::plugin::log::Host for ImportState {
+    fn log(&mut self, _level: importer_bindings::solidcraft::plugin::log::Level, message: String) {
+        if message.len() > 1024 || self.log_bytes.saturating_add(message.len()) > 64 * 1024 {
+            return;
+        }
+        self.log_bytes += message.len();
+        self.messages.push(message.chars().filter(|c| !c.is_control()).collect());
+    }
+}
+
+/// The importers' engine and the components it compiled, by approval hash: compiling a large
+/// importer takes longer than running it, and its code never changes under one hash.
+struct Compiled {
+    engine: Engine,
+    components: Vec<(String, Component)>,
+}
+static IMPORTERS: std::sync::Mutex<Option<Compiled>> = std::sync::Mutex::new(None);
+/// How many compiled importers are kept.
+const KEEP_COMPILED: usize = 4;
+/// The native stack an importer runs on, and how much of it Wasm frames may use.
+const IMPORT_THREAD_STACK: usize = 64 * 1024 * 1024;
+const IMPORT_WASM_STACK: usize = 16 * 1024 * 1024;
+
+fn compiled(package: &Package) -> Result<(Engine, Component)> {
+    let mut guard = IMPORTERS.lock().map_err(|_| error("the importer cache failed"))?;
+    if guard.is_none() {
+        let mut config = Config::new();
+        config.consume_fuel(true).epoch_interruption(true).wasm_memory64(false).wasm_multi_memory(false).max_wasm_stack(IMPORT_WASM_STACK);
+        *guard = Some(Compiled { engine: Engine::new(&config).map_err(|e| error(e.to_string()))?, components: Vec::new() });
+    }
+    let cache = guard.as_mut().ok_or_else(|| error("the importer cache failed"))?;
+    if let Some((_, component)) = cache.components.iter().find(|(hash, _)| *hash == package.approval) {
+        return Ok((cache.engine.clone(), component.clone()));
+    }
+    // Compilation is native work, outside guest fuel and deadline. Size is capped by read_package.
+    let component = Component::from_binary(&cache.engine, &package.component).map_err(|e| error(format!("component compilation failed: {e}")))?;
+    if cache.components.len() >= KEEP_COMPILED {
+        cache.components.remove(0);
+    }
+    cache.components.push((package.approval.clone(), component.clone()));
+    Ok((cache.engine.clone(), component))
+}
+
+/// Run an importer component on its own thread (a decoder may recurse deeply), under the
+/// package's fuel, memory and deadline. Nothing but `file_name` and `bytes` goes in.
+pub(super) fn import(package: &Package, file_name: &str, bytes: Vec<u8>) -> Result<super::Imported> {
+    let runtime = package.manifest.runtime.as_ref().ok_or_else(|| error("no runtime"))?;
+    let limits = runtime.limits.clone();
+    let (engine, component) = compiled(package)?;
+    let name = file_name.to_string();
+    let worker = std::thread::Builder::new()
+        .name("plugin-import".into())
+        .stack_size(IMPORT_THREAD_STACK)
+        .spawn(move || import_on_this_thread(&engine, &component, &limits, &name, &bytes))
+        .map_err(|e| error(format!("could not start the importer: {e}")))?;
+    worker.join().map_err(|_| error("the importer failed"))?
+}
+
+fn import_on_this_thread(engine: &Engine, component: &Component, limits: &super::Limits, file_name: &str, bytes: &[u8]) -> Result<super::Imported> {
+    use importer_bindings::exports::solidcraft::plugin::importer::Payload;
+    let deadline = Instant::now() + Duration::from_millis(limits.deadline_ms);
+    let state = ImportState {
+        limits: StoreLimitsBuilder::new()
+            .memory_size(limits.memory_mib.checked_mul(1024 * 1024).ok_or_else(|| error("memory limit cannot be represented on this host"))?)
+            .instances(16)
+            .memories(1)
+            .tables(4)
+            .table_elements(100_000)
+            .trap_on_grow_failure(true)
+            .build(),
+        log_bytes: 0,
+        messages: Vec::new(),
+    };
+    let mut store = Store::new(engine, state);
+    store.limiter(|s| &mut s.limits);
+    store.set_fuel(limits.fuel).map_err(|e| error(e.to_string()))?;
+    // The engine is shared: every run bumps the epoch at its own deadline, and each store
+    // only stops once its own deadline has passed.
+    store.set_epoch_deadline(1);
+    store.epoch_deadline_callback(move |_| {
+        if Instant::now() >= deadline { Err(wasmtime::Error::msg("entry deadline exceeded")) } else { Ok(wasmtime::UpdateDeadline::Continue(1)) }
+    });
+    let mut linker = Linker::new(engine);
+    importer_bindings::ImporterPlugin::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |s| s).map_err(|e| error(e.to_string()))?;
+    let (stop, stopped) = mpsc::channel::<()>();
+    let timer_engine = engine.clone();
+    let wait = Duration::from_millis(limits.deadline_ms);
+    let clock = std::thread::Builder::new()
+        .name("plugin-deadline".into())
+        .spawn(move || {
+            if stopped.recv_timeout(wait).is_err() {
+                timer_engine.increment_epoch();
+            }
+        })
+        .map_err(|e| error(format!("could not start the deadline worker: {e}")))?;
+    let response = (|| {
+        let guest = importer_bindings::ImporterPlugin::instantiate(&mut store, component, &linker)?;
+        guest.solidcraft_plugin_importer().call_import(&mut store, file_name, bytes)
+    })();
+    let _ = stop.send(());
+    if clock.join().is_err() {
+        return Err(error("deadline worker failed"));
+    }
+    let response = response.map_err(|e| execution_error(&e, store.get_fuel().ok(), limits))?;
+    let imported = response.map_err(|e| error(format!("the importer failed: {}", plugin_error_text(&e))))?;
+    if Instant::now() >= deadline {
+        return Err(error("entry deadline exceeded"));
+    }
+    let payload = match imported.payload {
+        Payload::Design(bytes) => super::Payload::Design(bytes),
+        Payload::Step(bytes) => super::Payload::Step(bytes),
+    };
+    let (super::Payload::Design(made) | super::Payload::Step(made)) = &payload;
+    if made.len() > super::MAX_IMPORT_BYTES {
+        return Err(error("the imported design exceeds 512 MiB"));
+    }
+    let mut notes: String = imported.notes.chars().filter(|c| *c == '\n' || !c.is_control()).collect();
+    if notes.len() > super::MAX_NOTES_BYTES {
+        return Err(error("the importer's notes exceed 64 KiB"));
+    }
+    for message in store.into_data().messages {
+        notes.push_str(&message);
+        notes.push('\n');
+    }
+    Ok(super::Imported { payload, notes })
+}
+
+fn plugin_error_text(e: &importer_bindings::solidcraft::plugin::types::PluginError) -> String {
+    use importer_bindings::solidcraft::plugin::types::PluginError as E;
+    let (kind, text) = match e {
+        E::Failed(t) => ("failed", t),
+        E::Denied(t) => ("denied", t),
+        E::Limit(t) => ("limit", t),
+        E::Invalid(t) => ("invalid", t),
+    };
+    format!("{kind}: {}", text.chars().filter(|c| !c.is_control()).take(2048).collect::<String>())
+}

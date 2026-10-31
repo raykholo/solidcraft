@@ -461,6 +461,11 @@ pub struct Session {
     pub disabled_plugins: std::collections::BTreeSet<String>,
     /// User resource ceilings; never loaded from or saved in a design.
     pub plugin_limits: plugin::HostLimits,
+    /// Installed plugins the user allowed to run, by id: the approval hash of the exact
+    /// content allowed. Host preferences; never saved in a design.
+    pub plugin_approvals: std::collections::BTreeMap<String, String>,
+    /// Where installed plugins are (`None`: nowhere, as in the browser).
+    pub plugins_dir: Option<std::path::PathBuf>,
     /// How calls that break a command's parameter contract are treated (off by default). It
     /// belongs to the session, not the design, so it survives opening and starting designs.
     pub param_check: schema::ParamCheck,
@@ -684,6 +689,8 @@ impl Session {
             auto_project: true,
             disabled_plugins: Default::default(),
             plugin_limits: plugin::default_host_limits(),
+            plugin_approvals: Default::default(),
+            plugins_dir: plugin::default_plugins_dir(),
             param_check: schema::ParamCheck::Off,
             easyprint_upload: None,
             live_links: None,
@@ -739,6 +746,8 @@ impl Session {
         let single_surface_analysis = self.single_surface_analysis;
         let disabled_plugins = self.disabled_plugins.clone();
         let plugin_limits = self.plugin_limits;
+        let plugin_approvals = std::mem::take(&mut self.plugin_approvals);
+        let plugins_dir = self.plugins_dir.take();
         let param_check = self.param_check;
         let easyprint_upload = self.easyprint_upload.take();
         let render_viewport = self.render_viewport.clone();
@@ -755,6 +764,8 @@ impl Session {
         self.set_single_surface_analysis(single_surface_analysis);
         self.disabled_plugins = disabled_plugins;
         self.plugin_limits = plugin_limits;
+        self.plugin_approvals = plugin_approvals;
+        self.plugins_dir = plugins_dir;
         self.param_check = param_check;
         self.easyprint_upload = easyprint_upload;
         self.render_viewport = render_viewport;
@@ -1596,6 +1607,8 @@ impl Session {
             auto_project: self.auto_project,
             disabled_plugins: self.disabled_plugins.clone(),
             plugin_limits: self.plugin_limits,
+            plugin_approvals: self.plugin_approvals.clone(),
+            plugins_dir: self.plugins_dir.clone(),
             param_check: self.param_check,
             easyprint_upload: self.easyprint_upload.clone(),
             live_links: None,

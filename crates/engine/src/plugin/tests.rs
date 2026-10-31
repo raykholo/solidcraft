@@ -331,3 +331,203 @@ fn host_resource_policy_is_exact_user_state_and_never_design_data() {
     assert!(!s.doc.to_json().contains("max_fuel"));
     assert!(!allowed_command("plugin.configure"));
 }
+
+fn importer_manifest(extensions: &[&str]) -> Value {
+    let formats: Vec<Value> = extensions.iter().map(|e| json!({"extension": e, "name": format!("Test {e}")})).collect();
+    json!({"id":"fixture-importer", "name":"Fixture importer", "version":"0.1.0", "runtime":{
+        "api":API,"module":"plugin.wasm","kind":"importer","formats":formats,
+        "limits":{"fuel":10_000_000,"memory_mib":4,"deadline_ms":5000}}})
+}
+
+#[test]
+fn an_importer_declares_formats_and_is_granted_no_commands() {
+    let m = parse_manifest(&serde_json::to_vec(&importer_manifest(&[".FIXD", "fixs"])).unwrap(), "fixture-importer").unwrap();
+    let runtime = m.runtime.unwrap();
+    assert_eq!(runtime.kind, Kind::Importer);
+    assert_eq!(runtime.formats.iter().map(|f| f.extension.as_str()).collect::<Vec<_>>(), ["fixd", "fixs"]);
+    for mutate in [
+        |m: &mut Value| m["runtime"]["commands"] = json!(["solid.box"]),
+        |m: &mut Value| m["runtime"]["entries"] = json!(["make"]),
+        |m: &mut Value| m["runtime"]["formats"] = json!([]),
+        |m: &mut Value| m["runtime"]["formats"] = json!([{"extension":"a/b","name":"Slash"}]),
+        |m: &mut Value| m["runtime"]["formats"] = json!([{"extension":"fixd","name":"A"},{"extension":"FIXD","name":"B"}]),
+        |m: &mut Value| m["runtime"]["formats"][0]["reads_folder"] = json!(true),
+    ] {
+        let mut m = importer_manifest(&["fixd"]);
+        mutate(&mut m);
+        assert!(parse_manifest(&serde_json::to_vec(&m).unwrap(), "fixture-importer").is_err(), "{m}");
+    }
+    // A command plugin cannot claim file formats.
+    let mut command = manifest();
+    command["runtime"]["formats"] = json!([{"extension":"fixd","name":"Test"}]);
+    assert!(parse_manifest(&serde_json::to_vec(&command).unwrap(), "sample").is_err());
+}
+
+#[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod importer {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Hands the file's bytes back as the payload `case` (0 design, 1 STEP), with the file
+    /// name it was given as its notes.
+    fn echo(case: u8) -> String {
+        format!(
+            "i32.const 0 i32.const 0 i32.store8 i32.const 4 i32.const {case} i32.store8 \
+             i32.const 8 local.get $bytes i32.store i32.const 12 local.get $bytes_len i32.store \
+             i32.const 16 local.get $name i32.store i32.const 20 local.get $name_len i32.store i32.const 0"
+        )
+    }
+    fn component(body: &str, extra_import: &str) -> Vec<u8> {
+        let template = include_str!("importer_fixture.wat").replace("\r\n", "\n");
+        assert!(template.contains(";; BODY") && template.contains(";; EXTRA-IMPORT"));
+        wat::parse_str(template.replacen(";; BODY", body, 1).replacen(";; EXTRA-IMPORT", extra_import, 1)).unwrap()
+    }
+
+    /// A plugins folder, a package folder to install from, and files to import.
+    struct Setup {
+        root: std::path::PathBuf,
+    }
+    impl Setup {
+        fn new(body: &str, extensions: &[&str]) -> Self {
+            Self::with_import(body, extensions, "")
+        }
+        fn with_import(body: &str, extensions: &[&str], extra_import: &str) -> Self {
+            let root =
+                solidcraft_io::vfs::temp_dir().join(format!("solidcraft-importer-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            let package = root.join("package/fixture-importer");
+            std::fs::create_dir_all(&package).unwrap();
+            std::fs::create_dir_all(root.join("plugins")).unwrap();
+            std::fs::write(package.join("plugin.json"), serde_json::to_vec(&importer_manifest(extensions)).unwrap()).unwrap();
+            std::fs::write(package.join("plugin.wasm"), component(body, extra_import)).unwrap();
+            Self { root }
+        }
+        fn file(&self, name: &str) -> String {
+            self.root.join(name).to_string_lossy().into_owned()
+        }
+        /// A session with the importer installed, and allowed when `allow`.
+        fn session(&self, allow: bool) -> Session {
+            let mut s = Session { plugins_dir: Some(self.root.join("plugins")), ..Default::default() };
+            let installed = s.execute("plugin.install", &json!({"path": self.file("package/fixture-importer")})).unwrap();
+            assert_eq!(installed["allowed"], false, "installing allows nothing");
+            if allow {
+                s.plugin_approvals.insert("fixture-importer".into(), installed["approval"].as_str().unwrap().to_string());
+            }
+            s
+        }
+    }
+    impl Drop for Setup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn boxed() -> Session {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":20,"width":10,"height":3})).unwrap();
+        s
+    }
+
+    #[test]
+    fn an_allowed_importer_is_picked_by_extension_and_its_design_keeps_its_history() {
+        let f = Setup::new(&echo(0), &["fixd"]);
+        let mut source = boxed();
+        source.execute("file.save", &json!({"path": f.file("source.sc")})).unwrap();
+        std::fs::copy(f.file("source.sc"), f.file("part.fixd")).unwrap();
+
+        // Installed but not allowed: nothing runs, and the design on screen stays.
+        let mut s = f.session(false);
+        s.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+        let before = s.doc.to_json();
+        assert!(s.execute("doc.open", &json!({"path": f.file("part.fixd")})).is_err());
+        assert!(s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string().contains("Preferences > Plugins"));
+        assert_eq!(s.doc.to_json(), before);
+
+        let mut s = f.session(true);
+        for command in ["doc.open", "file.import"] {
+            let out = s.execute(command, &json!({"path": f.file("part.fixd")})).unwrap();
+            assert_eq!(out["plugin"], "fixture-importer", "{command}: {out}");
+            assert_eq!(out["payload"], "design");
+            // The importer is given the file's name, never its folders.
+            assert_eq!(out["notes"], "part.fixd");
+            assert_eq!(s.doc.features.len(), source.doc.features.len());
+            assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 600.);
+            assert!(s.path.is_none(), "an import is a new, unsaved design");
+        }
+        // Turned off in Preferences: no longer picked.
+        s.disabled_plugins.insert("fixture-importer".into());
+        assert!(s.execute("file.import", &json!({"path": f.file("part.fixd")})).is_err());
+    }
+
+    #[test]
+    fn a_step_payload_imports_as_geometry_and_native_formats_keep_their_own_path() {
+        let f = Setup::new(&echo(1), &["fixs", "step"]);
+        let mut source = boxed();
+        source.execute("file.export", &json!({"path": f.file("source.step")})).unwrap();
+        std::fs::copy(f.file("source.step"), f.file("part.fixs")).unwrap();
+        let mut s = f.session(true);
+        let out = s.execute("file.import", &json!({"path": f.file("part.fixs")})).unwrap();
+        assert_eq!(out["payload"], "step");
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().map(|v| (v - 600.).abs() < 1e-6), Some(true));
+        // SolidCraft reads STEP itself; the plugin's claim does not take it over.
+        let native = s.execute("file.import", &json!({"path": f.file("source.step")})).unwrap();
+        assert!(native.get("plugin").is_none(), "{native}");
+        // Unless the caller names the importer.
+        let named = s.execute("file.import", &json!({"path": f.file("source.step"), "plugin": "fixture-importer"})).unwrap();
+        assert_eq!(named["plugin"], "fixture-importer");
+    }
+
+    #[test]
+    fn a_trapping_or_over_budget_importer_leaves_the_design_untouched() {
+        for body in [
+            "unreachable",
+            "(loop $spin (br $spin)) i32.const 0",
+            "i32.const 1024 memory.grow drop i32.const 0",
+            // A result pointing outside the importer's memory.
+            "i32.const 0 i32.const 0 i32.store8 i32.const 8 i32.const -16 i32.store i32.const 12 i32.const 64 i32.store i32.const 0",
+        ] {
+            let f = Setup::new(body, &["fixd"]);
+            std::fs::write(f.file("part.fixd"), b"not a design").unwrap();
+            let mut s = f.session(true);
+            s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+            let (before, undo) = (s.doc.to_json(), s.undo.len());
+            assert!(s.execute("doc.open", &json!({"path": f.file("part.fixd")})).is_err(), "{body}");
+            assert_eq!(s.doc.to_json(), before, "{body}");
+            assert_eq!(s.undo.len(), undo);
+            // The session still works.
+            s.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+        }
+        // An importer whose design does not read is refused the same way.
+        let f = Setup::new(&echo(0), &["fixd"]);
+        std::fs::write(f.file("part.fixd"), b"not a design").unwrap();
+        let mut s = f.session(true);
+        let before = s.doc.to_json();
+        assert!(s.execute("doc.open", &json!({"path": f.file("part.fixd")})).is_err());
+        assert_eq!(s.doc.to_json(), before);
+    }
+
+    #[test]
+    fn an_importer_cannot_reach_files_or_anything_beyond_its_world() {
+        // A component asking for a file system (or any import outside the importer world)
+        // never starts: the host links only the plugin types and the log.
+        let f = Setup::with_import(
+            &echo(0),
+            &["fixd"],
+            r#"(import "wasi:filesystem/preopens@0.2.0" (instance (export "get-directories" (func (result u32)))))"#,
+        );
+        std::fs::write(f.file("part.fixd"), b"x").unwrap();
+        let mut s = f.session(true);
+        let before = s.doc.to_json();
+        let err = s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string();
+        assert!(err.contains("wasi:filesystem"), "{err}");
+        assert_eq!(s.doc.to_json(), before);
+        // Only the file's name crosses, never the folders it is in.
+        let f = Setup::new(&echo(0), &["fixd"]);
+        let mut source = boxed();
+        std::fs::create_dir_all(f.root.join("deep")).unwrap();
+        source.execute("file.save", &json!({"path": f.file("deep/part.fixd"), "format": "container"})).unwrap();
+        let mut s = f.session(true);
+        let out = s.execute("file.import", &json!({"path": f.file("deep/part.fixd")})).unwrap();
+        assert_eq!(out["notes"], "part.fixd");
+    }
+}

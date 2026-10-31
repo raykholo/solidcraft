@@ -58,6 +58,9 @@ pub struct Request {
     /// The saved design this request is for, when it must not run on another: one shown in its
     /// place by the time the request starts drops it.
     pub design: Option<String>,
+    /// An open through `file.import`: a file an importer plugin converts (or one SolidCraft
+    /// reads, as doc.open), opened as a new design in its own tab.
+    pub import: bool,
 }
 
 impl Request {
@@ -70,6 +73,7 @@ impl Request {
             options: Default::default(),
             allow_hosts: Vec::new(),
             design: None,
+            import: false,
         }
     }
     fn insert(&self) -> bool {
@@ -83,6 +87,7 @@ impl Request {
     }
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
+            Kind::Open if self.import => ("file.import", self.params()),
             Kind::Open => ("doc.open", self.params()),
             Kind::Insert if solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert if solidcraft_engine::io::is_point_cloud_path(&self.path) => ("pointcloud.insert", self.params()),
@@ -235,6 +240,14 @@ impl FileLoad {
     }
 }
 
+/// Import `path` as a new design through `file.import` (an importer plugin, or SolidCraft's own
+/// reader for a format it reads), off the window thread.
+pub fn begin_import(app: &mut SolveApp, path: &str) {
+    let mut request = Request::new(path, Kind::Open);
+    request.import = true;
+    let _ = begin_request(app, request);
+}
+
 pub fn begin(app: &mut SolveApp, path: &str, insert: bool) {
     let _ = begin_request(app, Request::new(path, if insert { Kind::Insert } else { Kind::Open }));
 }
@@ -346,7 +359,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
     }
     let command = req.params.get("command").or(req.params.get("id")).and_then(Value::as_str);
     let kind = match command {
-        Some("doc.open") => Kind::Open,
+        Some("doc.open" | "file.import") => Kind::Open,
         Some("file.insert_step" | "file.insert_mesh" | "pointcloud.insert") => Kind::Insert,
         Some("file.export_view_dxf") => Kind::ExportDxf,
         _ => return Some(req),
@@ -371,7 +384,8 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         options.remove("path");
         options.retain(|_, v| !v.is_null());
     }
-    let request = Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options, allow_hosts: Vec::new(), design: None };
+    let import = command == Some("file.import");
+    let request = Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options, allow_hosts: Vec::new(), design: None, import };
     let _ = begin_request(app, request);
     None
 }

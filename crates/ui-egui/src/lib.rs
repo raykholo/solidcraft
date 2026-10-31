@@ -1750,6 +1750,14 @@ impl SolveApp {
             linked_source::start_selected(self);
             return;
         }
+        if id == "file.import" {
+            self.pick_open(|app, path| {
+                if let Some(path) = path {
+                    file_load::begin_import(app, &path);
+                }
+            });
+            return;
+        }
         if matches!(id, "file.insert_step" | "file.insert_mesh" | "pointcloud.insert") {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
