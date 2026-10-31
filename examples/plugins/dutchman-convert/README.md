@@ -51,7 +51,7 @@ branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
   SolidCraft CLI in the sandbox the history cannot be checked against the original, so the
   plugin does what Dutchman does when a check fails: the original geometry is the visible
   model and the mapped history sits in a hidden "Editable history (unverified)" part. Show it
-  in the browser to edit it. (`Cargo.toml` pins Dutchman's `plugin-dutchman-pin` branch for
+  in the browser to edit it. (`Cargo.toml` pins Dutchman main, which has
   `read_bytes` and `hide_unverified_history`.)
   - `M3 Parametric FHCS.f3d`: Sketch 1, Revolve 1, Sketch 2 and Extrude 1 are in the hidden
     part. With cadmpeg main its Extrude 1 cuts the hex socket in the shank, not the head

@@ -13,8 +13,8 @@ crate-type = ["cdylib"]
 [dependencies]
 wit-bindgen = "0.54"
 # Dutchman with `dutchman_core::read_bytes` (a design from its contents alone, no file system).
-dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "fc52be6448999198bdf49f1db0a90904cc346d73" }
-dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "fc52be6448999198bdf49f1db0a90904cc346d73" }
+dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "fda0d7bd297c44e670ad4870fde2ec795f0a7159" }
+dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "fda0d7bd297c44e670ad4870fde2ec795f0a7159" }
 
 # No LTO: linking every decoder with fat or thin LTO needs more than 12 GiB of memory. The
 # linker still drops unused code.
