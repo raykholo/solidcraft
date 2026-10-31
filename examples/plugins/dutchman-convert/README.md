@@ -43,6 +43,18 @@ Dutchman reads files from disk; the plugin calls `dutchman_core::read_bytes`, Du
 entry point for a file's contents alone (a small addition on Dutchman's `wasm-read-bytes`
 branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
 
+## Known limits
+
+- **Fusion feature history does not come across yet.** With the cadmpeg revision Dutchman
+  pins (raykholo/cadmpeg `9bc00b9`), cadmpeg's Fusion decoder built for `wasm32-wasip2` returns
+  no feature timeline: for `M3 Parametric FHCS.f3d` the same Dutchman revision built natively
+  decodes four features (two sketches, a revolve, an extrude), the component none, and the
+  sketches lose their Fusion names. The design the plugin returns therefore holds the exact
+  body as an import plus the source's two sketches, and its notes say "history: flattened".
+  Dutchman's writer itself builds and runs in the sandbox; the gap is in decoding.
+- The first import compiles the component (about three minutes for 65 MiB); SolidCraft keeps
+  the compiled importer in memory, so later imports in the same session take about a second.
+
 ## Install
 
 1. In SolidCraft, open **Preferences › Plugins** and click **Install plugin…**.
