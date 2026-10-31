@@ -160,7 +160,7 @@ converts the file in the sandbox and opens the result as a new design, with its 
 when the importer hands over a SolidCraft design. The importer is given the file's bytes and
 nothing else. See [the importer reference](docs/plugin-runtime.md#importer-plugins) and the
 [Dutchman Convert example](examples/plugins/dutchman-convert), which opens Fusion, Inventor,
-SolidWorks and FreeCAD files with their history.
+SolidWorks and FreeCAD files through Dutchman.
 
 ### Run explicitly
 

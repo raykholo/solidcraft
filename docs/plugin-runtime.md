@@ -293,7 +293,8 @@ keeps up to four compiled importers in memory by approval hash: compiling a larg
 take longer than running it. It never stores compiled code on disk.
 
 The [Dutchman Convert example](../examples/plugins/dutchman-convert/README.md) is a full
-importer: Fusion, Inventor, SolidWorks and FreeCAD files with their feature history.
+importer: Fusion, Inventor, SolidWorks and FreeCAD files through Dutchman's design writer, with
+the feature history Dutchman maps (see its known limits).
 
 ## Author an original plugin
 
