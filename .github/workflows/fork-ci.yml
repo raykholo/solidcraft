@@ -65,6 +65,8 @@ jobs:
       # assertion), not because of the plugins work.
       - name: UI plugin, dialog, toolbar and i18n tests
         run: 'cargo test -p solidcraft-ui-egui --lib -- plugins dialogs_plugin plugin_report toolbar workspace i18n icon_svg file_load agent_chat::gate control:: --skip persistent_grid_deferred_paint_retains_partial_and_offscreen_scroll_clips'
+      - name: Plugin limit preferences, drawn
+        run: cargo test -p solidcraft-ui-egui --test plugin_resource_preferences
 
   wasm:
     name: Compile WebAssembly
