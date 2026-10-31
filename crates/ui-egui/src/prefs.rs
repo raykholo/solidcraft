@@ -1392,6 +1392,9 @@ preference_settings! {
     drive_joints_ghost: bool = true, PAGE_DESIGN;
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
     disabled_plugins: std::collections::BTreeSet<String> = std::collections::BTreeSet::new(), PAGE_PLUGINS;
+    /// User ceilings, not automatic increases to a package's approved execution budget.
+    plugin_max_fuel: u64 = solidcraft_engine::plugin::HostLimits::default().max_fuel, PAGE_PLUGINS;
+    plugin_max_memory_mib: usize = solidcraft_engine::plugin::HostLimits::default().max_memory_mib, PAGE_PLUGINS;
 }
 
 /// What a middle-button double-click in the view does.
@@ -1442,6 +1445,7 @@ pub struct PrefsWindow {
     font_filter: String,
     /// Search text on the Plugins page.
     pub(crate) plugin_query: String,
+    pub(crate) plugin_limit_inputs: Option<crate::plugins::LimitInputs>,
     /// The followed theme file's state (#7573): its last good theme and why a read failed.
     pub(crate) follow: crate::theme_files::Follow,
     /// Filters every page. Empty leaves the selected page as it is.
@@ -1530,6 +1534,7 @@ fn set_theme_follow(app: &mut SolveApp, value: &serde_json::Value, available: bo
 
 /// Open the dialog at a page.
 pub fn open_at(app: &mut SolveApp, page: usize) {
+    app.prefs_window.plugin_limit_inputs = None;
     app.prefs_window.open = true;
     app.prefs_window.section = page.min(PAGES.len() - 1);
 }
@@ -1585,6 +1590,7 @@ impl Snapshot {
         // Update bookkeeping isn't a setting: a check that finished while the dialog was open stays.
         let update = std::mem::take(&mut app.preferences.update);
         app.preferences = self.prefs;
+        crate::plugins::sync_policy(app);
         sync_surface_analysis(app);
         app.preferences.update = update;
         if units_changed {
@@ -1662,7 +1668,7 @@ fn apply_pending(app: &mut SolveApp) -> bool {
     };
     // Update bookkeeping isn't a setting and Cancel keeps it (`restore`), so it isn't a change.
     snapshot.prefs.update.clone_from(&app.preferences.update);
-    app.prefs_window.snapshot.as_ref().is_some_and(|s| !s.matches(app))
+    app.prefs_window.snapshot.as_ref().is_some_and(|s| !s.matches(app)) || crate::plugins::resource_pending(app)
 }
 
 /// The saved-settings keys whose values the snapshot holds, as [`SolveApp::prefs`] writes them.
@@ -1941,6 +1947,10 @@ fn defaults(app: &mut SolveApp, page: usize) {
     let (msaa, window_system, adapter) = (app.preferences.msaa, app.preferences.window_system.clone(), app.preferences.graphics_adapter.clone());
     let units = app.preferences.default_units.clone();
     reset_preferences(&mut app.preferences, page);
+    if page == PAGE_PLUGINS {
+        app.prefs_window.plugin_limit_inputs = None;
+    }
+    crate::plugins::sync_policy(app);
     sync_surface_analysis(app);
     if app.preferences.default_units != units {
         default_units_changed(app);
@@ -2034,6 +2044,7 @@ fn sync_window_theme(app: &mut SolveApp, ctx: &egui::Context, follows_system: bo
 
 pub fn apply(app: &mut SolveApp, ctx: &egui::Context) {
     sync_surface_analysis(app);
+    crate::plugins::sync_policy(app);
     apply_network(&app.preferences);
     apply_file_limits(&app.preferences);
     // The viewport's display quality (an unknown saved value draws at Normal).
@@ -2456,6 +2467,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     if app.preferences.up_axis != before.up_axis {
         up_axis_changed(app);
     }
+    if matches!(button, Some("apply" | "ok"))
+        && let Err(error) = crate::plugins::commit_resource_inputs(app)
+    {
+        app.set_status(error, true);
+        ctx.request_repaint();
+        return;
+    }
     match button {
         Some("defaults") => defaults(app, app.prefs_window.section),
         Some("apply") => app.prefs_window.snapshot = Some(Snapshot::take(app)),
@@ -2483,6 +2501,7 @@ pub(crate) fn close(app: &mut SolveApp, revert: bool) {
         }
     }
     app.prefs_window.open = false;
+    app.prefs_window.plugin_limit_inputs = None;
     app.prefs_window.filter.clear();
     app.prefs_window.search_from = None;
     app.prefs_window.land_on = None;
@@ -3191,6 +3210,9 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
     }
     app.prefs_window.follow = follow;
     let mut out = apply_preferences(app, new, &serde_json::Value::Object(rest))?;
+    if matches!(button.as_ref().and_then(|b| b.as_str()), Some("apply" | "ok")) {
+        crate::plugins::commit_resource_inputs(app)?;
+    }
     match button.as_ref().and_then(|b| b.as_str()) {
         Some("ok") => close(app, false),
         Some("cancel") => close(app, true),
@@ -3723,6 +3745,13 @@ pub fn migrate(mut p: Prefs) -> Prefs {
 /// so a hand-edited preferences file cannot carry a huge or nonsense list. `set` still refuses
 /// those instead of dropping them.
 fn limit_disabled_plugins(mut p: Prefs) -> Prefs {
+    let defaults = solidcraft_engine::plugin::HostLimits::default();
+    if p.plugin_max_fuel == 0 {
+        p.plugin_max_fuel = defaults.max_fuel;
+    }
+    if !(1..=solidcraft_engine::plugin::MAX_MEMORY_MIB).contains(&p.plugin_max_memory_mib) {
+        p.plugin_max_memory_mib = defaults.max_memory_mib;
+    }
     // The file size limits, likewise, are brought into range (#4086).
     let limits = file_limits(&p);
     let mb = solidcraft_engine::io::limits::MB;
@@ -3837,6 +3866,7 @@ fn prepare_preferences(
         return Err("`wheel_zoom_speed` must be 0.25…4".into());
     }
     let new = migrate(new);
+    crate::plugins::host_limits(&new).validate().map_err(|e| format!("plugin_max_fuel / plugin_max_memory_mib: {e}"))?;
     if !UNITS.contains(&new.default_units.as_str()) {
         return Err(format!("units must be one of {}", UNITS.join(", ")));
     }
@@ -3947,6 +3977,7 @@ fn apply_preferences(app: &mut SolveApp, new: Prefs, p: &serde_json::Value) -> R
         crate::select_other::close(app);
     }
     app.preferences = new;
+    crate::plugins::sync_policy(app);
     sync_surface_analysis(app);
     apply_file_limits(&app.preferences);
     if units_changed {
