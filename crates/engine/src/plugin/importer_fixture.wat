@@ -1,5 +1,5 @@
 ;; Original test component for the importer world, written by hand in the component text
-;; format. The core module's `$import` body is replaced by each test (`;; BODY`).
+;; format. Each test supplies the core `$import` body and an optional extra import.
 (component
   (type $ty-types (instance
     (type (;0;) string)

@@ -1,0 +1,24 @@
+[package]
+name = "solidcraft-dutchman-convert"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = "0.54"
+dutchman-core = { path = "/home/ray/builds/worktrees/dutchman-wasm/crates/dutchman-core" }
+dutchman-solidcraft = { path = "/home/ray/builds/worktrees/dutchman-wasm/crates/dutchman-solidcraft" }
+
+# Thin LTO: a fat-LTO link of every decoder needs more than 12 GiB of memory.
+[profile.release]
+opt-level = "z"
+codegen-units = 16
+lto = "thin"
+strip = true
+debug = 0

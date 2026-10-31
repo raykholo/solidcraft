@@ -318,7 +318,7 @@ fn compiled(package: &Package) -> Result<(Engine, Component)> {
         return Ok((cache.engine.clone(), component.clone()));
     }
     // Compilation is native work, outside guest fuel and deadline. Size is capped by read_package.
-    let component = Component::from_binary(&cache.engine, &package.component).map_err(|e| error(format!("component compilation failed: {e}")))?;
+    let component = Component::from_binary(&cache.engine, &package.component).map_err(|e| error(format!("component compilation failed: {e:#}")))?;
     if cache.components.len() >= KEEP_COMPILED {
         cache.components.remove(0);
     }

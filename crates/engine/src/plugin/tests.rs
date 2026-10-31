@@ -408,7 +408,7 @@ mod importer {
         /// A session with the importer installed, and allowed when `allow`.
         fn session(&self, allow: bool) -> Session {
             let mut s = Session { plugins_dir: Some(self.root.join("plugins")), ..Default::default() };
-            let installed = s.execute("plugin.install", &json!({"path": self.file("package/fixture-importer")})).unwrap();
+            let installed = s.execute("plugin.install", &json!({"path": self.file("package/fixture-importer"), "replace": true})).unwrap();
             assert_eq!(installed["allowed"], false, "installing allows nothing");
             if allow {
                 s.plugin_approvals.insert("fixture-importer".into(), installed["approval"].as_str().unwrap().to_string());
