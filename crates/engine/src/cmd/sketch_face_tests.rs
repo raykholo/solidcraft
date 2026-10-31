@@ -828,7 +828,7 @@ fn a_sketch_on_the_ring_of_a_lid_underside_parted_by_its_lip_keeps_the_cap() {
 #[test]
 fn sketches_move_to_the_part_whose_face_they_are_on() {
     let mut s = Session::default();
-    let part = run(&mut s, "component.create", json!({"name":"Part","parent":0}));
+    let part = run(&mut s, "component.create", json!({"name":"Part","parent":0,"grounded":false}));
     let (component, occurrence) = (part["component"].as_u64().unwrap(), part["occurrence"].as_u64().unwrap());
     run(&mut s, "solid.box", json!({"length":10,"width":10,"height":10,"body_name":"Base"}));
     run(&mut s, "occurrence.move", json!({"occurrence":occurrence,"translate":[30,0,0]}));
