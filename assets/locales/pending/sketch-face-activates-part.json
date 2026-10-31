@@ -1,0 +1,26 @@
+{
+  "en": {
+    "prefs.sketch_face_activates_part": "Sketching on a part's face makes that part active",
+    "prefs.sketch_face_activates_part_note": "A sketch started on a face of another component's body activates that component first, so the sketch belongs to it and stays with that part in the browser. The part stays active afterwards. Off: the sketch belongs to the active component."
+  },
+  "ar": {
+    "prefs.sketch_face_activates_part": "الرسم على وجه جزء يجعل ذلك الجزء نشطًا",
+    "prefs.sketch_face_activates_part_note": "الرسم الذي يبدأ على وجه جسم في مكوّن آخر ينشّط ذلك المكوّن أولًا، فينتمي الرسم إليه ويبقى مع ذلك الجزء في المستعرض. ويبقى الجزء نشطًا بعد ذلك. عند الإيقاف: ينتمي الرسم إلى المكوّن النشط."
+  },
+  "he": {
+    "prefs.sketch_face_activates_part": "שרטוט על פאה של חלק הופך את החלק לפעיל",
+    "prefs.sketch_face_activates_part_note": "שרטוט שמתחיל על פאה של גוף ברכיב אחר מפעיל קודם את הרכיב הזה, כך שהשרטוט שייך לו ונשאר עם החלק בסייר. החלק נשאר פעיל אחר כך. כבוי: השרטוט שייך לרכיב הפעיל."
+  },
+  "ja": {
+    "prefs.sketch_face_activates_part": "部品の面にスケッチするとその部品をアクティブにする",
+    "prefs.sketch_face_activates_part_note": "別のコンポーネントのボディの面で始めたスケッチは、先にそのコンポーネントをアクティブにし、スケッチはそのコンポーネントに属してブラウザでその部品の下に表示されます。部品はその後もアクティブのままです。オフ：スケッチはアクティブなコンポーネントに属します。"
+  },
+  "vi": {
+    "prefs.sketch_face_activates_part": "Phác thảo trên mặt của một chi tiết sẽ kích hoạt chi tiết đó",
+    "prefs.sketch_face_activates_part_note": "Bản phác thảo bắt đầu trên mặt của một khối thuộc thành phần khác sẽ kích hoạt thành phần đó trước, nên bản phác thảo thuộc về nó và nằm cùng chi tiết đó trong trình duyệt. Chi tiết vẫn được kích hoạt sau đó. Tắt: bản phác thảo thuộc thành phần đang hoạt động."
+  },
+  "zh": {
+    "prefs.sketch_face_activates_part": "在零件的面上绘制草图时激活该零件",
+    "prefs.sketch_face_activates_part_note": "在另一个组件的实体面上开始的草图会先激活该组件，因此草图属于它，并在浏览器中留在该零件下。之后该零件保持激活。关闭时：草图属于当前激活的组件。"
+  }
+}

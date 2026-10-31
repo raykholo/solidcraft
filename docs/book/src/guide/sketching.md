@@ -12,6 +12,16 @@ an edited one goes back to how it was, as one step that Undo brings back.
 
 Opening a sketch turns the view to face it; to keep the view as it is and face the sketch only with **Look At**, turn off Preferences › Sketch › **Turn to face a sketch when it opens**. When the sketch ends, the view stays where it is by default. Preferences › Sketch › **When a sketch ends** changes that: **Return to the previous view** goes back to the view from before the sketch, and **Return unless rotated** goes back only when you panned or zoomed the sketch view but didn't turn it.
 
+In an assembly a new sketch belongs to the active component and is listed in its Sketches
+folder. Turn on Preferences › Sketch › **Sketching on a part's face makes that part active** to
+keep sketches with the part they are drawn on: a sketch started on a face of another component's
+body first activates that component, at the placement you picked, and is made there, as if you had
+activated the part yourself. The part stays active afterwards, so an extrude or cut made from the
+sketch lands in the same part; activate the design or another part again as usual. Off (the
+default), the sketch belongs to the active component. In scripts the same is
+`sketch.create {"plane": {"face": …}, "activate_part": true}`; the reply's `activated` names the
+component and placement it activated.
+
 In scripts, `XY`, `XZ`, `YZ` and their `Top`, `Front`, `Right` aliases name origin planes.
 Preferences › Interface › **Origin plane names** shows them as Top, Front and Right in the
 browser, dialogs and lists; scripts and saved designs keep XY, XZ and YZ.

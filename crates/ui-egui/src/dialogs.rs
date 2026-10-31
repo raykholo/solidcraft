@@ -3476,7 +3476,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     {
         plane["fixed"] = json!(true);
         let before = app.settled_cam();
-        match app.run("sketch.create", json!({"plane":plane})) {
+        let mut params = json!({"plane":plane});
+        if app.preferences.sketch_face_activates_part {
+            params["activate_part"] = json!(true);
+        }
+        match app.run("sketch.create", params) {
             Ok(_) => {
                 app.look_at_opened_sketch(before);
                 cancel = true;
@@ -3887,7 +3891,10 @@ fn hole_defaults(s: &Session) -> Kind {
 pub fn start_sketch(app: &mut SolveApp, sel: &Sel) -> Result<(), String> {
     let mut params = match sel {
         Sel::Plane { name } => json!({ "plane": shown_origin_plane(app, name).unwrap_or_else(|| json!(name)) }),
-        Sel::Face { .. } => json!({ "plane": crate::sketch_attachment_ui::face_plane(app, sel).ok_or("Selected face placement no longer exists")? }),
+        Sel::Face { .. } => json!({
+            "plane": crate::sketch_attachment_ui::face_plane(app, sel).ok_or("Selected face placement no longer exists")?,
+            "activate_part": app.preferences.sketch_face_activates_part,
+        }),
         _ => return Err("Select an origin plane, construction plane or planar body face".into()),
     };
     if let Sel::Plane { name } = sel

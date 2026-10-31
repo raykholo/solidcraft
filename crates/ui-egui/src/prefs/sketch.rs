@@ -19,6 +19,8 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         if ui_kit::checkbox(ui, crate::i18n::tr_label("Project face edges into new sketches"), &mut auto).changed() {
             let _ = app.run("sketch.auto_project", json!({"value": auto}));
         }
+        let owner = setting::sketch_face_activates_part(app, ui).on_hover_text(app.tr("prefs.sketch_face_activates_part_note"));
+        crate::scenario::publish_target("prefs:sketch_face_activates_part", owner.rect);
         ui_kit::checkbox(ui, app.tr("prefs.project_options_dialog"), &mut app.preferences.project_options_dialog)
             .on_hover_text(app.tr("prefs.project_options_dialog_note"));
         ui_kit::checkbox(ui, crate::i18n::tr_label("Pressing a tool's shortcut again switches its mode"), &mut app.preferences.shortcut_cycles_modes)

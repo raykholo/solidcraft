@@ -37,7 +37,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("sketch.create", "Create Sketch", create_sketch)
         .at("SOLID", "CREATE")
         .icon("sketch")
-        .params("plane: XY|XZ|YZ | construction plane name or id | {origin?: [x,y,z] numbers in mm, default [0,0,0] (not an expression), x_dir, y_dir} (in world coordinates unless frame says otherwise; a named plane is the active component's own) | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), frame?: world (default) | component (which coordinates an explicit plane is in; the reply's `frame` says which, with a `note` when the active component is moved or turned), project_edges?: bool, name?"),
+        .params("plane: XY|XZ|YZ | construction plane name or id | {origin?: [x,y,z] numbers in mm, default [0,0,0] (not an expression), x_dir, y_dir} (in world coordinates unless frame says otherwise; a named plane is the active component's own) | {face: [world x,y,z], body?: exact world body, index?: face index, path?: complete occurrence ids, fixed?: bool}; new face attachments require a unique certified source (a flat face of a sheet metal body attaches to its panel instead, in the flat pattern's coordinates), fixed:true explicitly freezes the selected plane; offset?: expr, flip?: bool | \"x\" | \"y\" (not on a face: sketch the plane from its other side, so the normal and the default extrude direction are reversed; a half turn about the plane's own x or y axis, true picks the one keeping the sketch's y axis upward; offset still moves along the unflipped normal), frame?: world (default) | component (which coordinates an explicit plane is in; the reply's `frame` says which, with a `note` when the active component is moved or turned), project_edges?: bool, activate_part?: bool (default false; on a face of a body of another component than the active one: activate that component at the picked placement first, as component.activate would, and make the sketch there; it stays active afterwards and the reply's `activated` names it), name?"),
     CommandSpec::new("sketch.edit", "Edit Sketch", edit_sketch).noundo().icon("sketch").params("sketch: id or name"),
     CommandSpec::new("sketch.finish", "Finish Sketch", finish_sketch).at("SKETCH", "FINISH SKETCH").icon("finish").enabled(in_sketch).noundo(),
     CommandSpec::new("sketch.cancel", "Cancel Sketch", cancel_sketch)
@@ -821,8 +821,43 @@ fn create_sketch(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(cmd, format!("`{key}` belongs inside `plane`: {example}")));
         }
     }
+    let activate = match p.get("activate_part") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(on)) => *on,
+        Some(_) => return Err(bad(cmd, "`activate_part` must be true or false")),
+    };
     let frame = plane_frame(p, cmd)?;
-    let mut plane = plane_ref(s, p, cmd)?;
+    let plane = plane_ref(s, p, cmd)?;
+    // On a face of another component's body, `activate_part` activates that component at the
+    // picked placement first, as `component.activate` would, and the sketch is made there. It
+    // stays active, as after an explicit activate, so what is built from the sketch lands in the
+    // same part. On an error the active component goes back to what it was.
+    let owner = match p.get("plane") {
+        Some(value) if activate && face::is_face(p) => face::pick_owner(s, value, &plane, cmd)?,
+        _ => None,
+    };
+    let Some((component, path)) = owner.filter(|(component, _)| *component != s.active_component) else {
+        return create_sketch_on(s, p, plane, frame, cmd);
+    };
+    let before = (s.active_component, s.active_occurrence_path.clone());
+    s.active_component = component;
+    s.active_occurrence_path = (!path.is_empty()).then(|| path.clone());
+    s.revision += 1;
+    let made = plane_ref(s, p, cmd).and_then(|plane| create_sketch_on(s, p, plane, frame, cmd));
+    match made {
+        Ok(mut out) => {
+            out["activated"] = json!({"component": component, "path": path});
+            Ok(out)
+        }
+        Err(error) => {
+            (s.active_component, s.active_occurrence_path) = before;
+            Err(error)
+        }
+    }
+}
+
+/// The rest of `sketch.create` once the active component is settled: `flip`, the sketch, the reply's `frame`.
+fn create_sketch_on(s: &mut Session, p: &Value, mut plane: PlaneRef, frame: Option<&str>, cmd: &str) -> Result<Value> {
     if let Some(about_y) = flip_param(s, p, &plane, cmd)? {
         plane = PlaneRef::Flipped { base: Box::new(plane), about_y };
     }
