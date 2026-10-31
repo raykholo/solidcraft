@@ -46,12 +46,14 @@ branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
 ## Known limits
 
 - **Fusion feature history does not come across yet.** With the cadmpeg revision Dutchman
-  pins (raykholo/cadmpeg `9bc00b9`), cadmpeg's Fusion decoder built for `wasm32-wasip2` returns
-  no feature timeline: for `M3 Parametric FHCS.f3d` the same Dutchman revision built natively
-  decodes four features (two sketches, a revolve, an extrude), the component none, and the
-  sketches lose their Fusion names. The design the plugin returns therefore holds the exact
-  body as an import plus the source's two sketches, and its notes say "history: flattened".
-  Dutchman's writer itself builds and runs in the sandbox; the gap is in decoding.
+  pins (raykholo/cadmpeg `9bc00b9`), cadmpeg's Fusion decoder built for 32-bit wasm drops every
+  parameter scope: its scope parser reads a candidate reference-table count at each offset, and
+  an arbitrary count whose `count * stride` overflows a 32-bit `usize` ended the whole parse
+  instead of moving to the next offset. For `M3 Parametric FHCS.f3d` the native build decodes
+  four features and the component none. The fix is on raykholo/cadmpeg branch
+  `f3d-wasm32-scope-count`; with it the wasm32 decode matches the native one. Until Dutchman pins
+  a cadmpeg with that fix, the design holds the exact body as an import plus the source's
+  sketches, and its notes say "history: flattened".
 - The first import compiles the component (about three minutes for 65 MiB); SolidCraft keeps
   the compiled importer in memory, so later imports in the same session take about a second.
 
