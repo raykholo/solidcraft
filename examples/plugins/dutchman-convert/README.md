@@ -45,15 +45,18 @@ branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
 
 ## Known limits
 
-- **Fusion feature history does not come across yet.** With the cadmpeg revision Dutchman
-  pins (raykholo/cadmpeg `9bc00b9`), cadmpeg's Fusion decoder built for 32-bit wasm drops every
-  parameter scope: its scope parser reads a candidate reference-table count at each offset, and
-  an arbitrary count whose `count * stride` overflows a 32-bit `usize` ended the whole parse
-  instead of moving to the next offset. For `M3 Parametric FHCS.f3d` the native build decodes
-  four features and the component none. The fix is on raykholo/cadmpeg branch
-  `f3d-wasm32-scope-count`; with it the wasm32 decode matches the native one. Until Dutchman pins
-  a cadmpeg with that fix, the design holds the exact body as an import plus the source's
-  sketches, and its notes say "history: flattened".
+- **Fusion history comes across, unverified.** `Cargo.toml` patches Dutchman's cadmpeg pin to
+  cadmpeg main, which carries the wasm32 fix for Fusion parameter scopes (cadmpeg #645); before
+  it, a 32-bit build decoded no feature timeline at all. Dutchman's own pin is unchanged.
+  - `M3 Parametric FHCS.f3d`: Sketch 1, Revolve 1, Sketch 2 and Extrude 1 come across as
+    editable features, with the original geometry kept as a suppressed import. The history is
+    not checked against the original (no SolidCraft CLI in the sandbox), and here it differs:
+    Extrude 1 cuts the hex socket 1 mm in the negative direction, away from the head, and the
+    body is 51.59 mm³ against the original's 49.86 mm³.
+  - `M3 Parametric BHCS.f3d`: the same four features are kept as a hidden "Editable history"
+    prefix; Thread 1 (a cosmetic thread with no resolved standard and pitch) stops the history,
+    so the visible body is the imported final shape.
+  - Fillets and chamfers are left out, since finding their edges needs the SolidCraft CLI.
 - The first import compiles the component (about three minutes for 65 MiB); SolidCraft keeps
   the compiled importer in memory, so later imports in the same session take about a second.
 
