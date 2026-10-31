@@ -418,7 +418,7 @@ dependencies = [
 [[package]]
 name = "dutchman-core"
 version = "0.2.5"
-source = "git+https://github.com/dutchman-cad/dutchman?rev=18b909dd02ba9847113334b231f0d1ccd39aa775#18b909dd02ba9847113334b231f0d1ccd39aa775"
+source = "git+https://github.com/dutchman-cad/dutchman?rev=fc52be6448999198bdf49f1db0a90904cc346d73#fc52be6448999198bdf49f1db0a90904cc346d73"
 dependencies = [
  "cadmpeg-codec-f3d",
  "cadmpeg-core",
@@ -433,7 +433,7 @@ dependencies = [
 [[package]]
 name = "dutchman-solidcraft"
 version = "0.2.5"
-source = "git+https://github.com/dutchman-cad/dutchman?rev=18b909dd02ba9847113334b231f0d1ccd39aa775#18b909dd02ba9847113334b231f0d1ccd39aa775"
+source = "git+https://github.com/dutchman-cad/dutchman?rev=fc52be6448999198bdf49f1db0a90904cc346d73#fc52be6448999198bdf49f1db0a90904cc346d73"
 dependencies = [
  "cadmpeg-ir",
  "cadmpeg-registry",

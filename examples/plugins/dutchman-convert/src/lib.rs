@@ -4,8 +4,8 @@
 //! The component is given one file's bytes and nothing else: no files, network, clock or
 //! processes. Dutchman's checks that need the SolidCraft CLI (replaying the history to prove
 //! it, and finding the edges of fillets and chamfers) are therefore off: blends are left out
-//! and said so in the notes, and the original geometry stays in the design as a suppressed
-//! import beside the history.
+//! and said so in the notes, the original geometry is the visible model, and the unchecked
+//! history is kept in a hidden "Editable history (unverified)" part beside it.
 mod bindings {
     wit_bindgen::generate!({ path: "../../../wit", world: "importer-plugin" });
 }
@@ -41,7 +41,9 @@ impl Guest for DutchmanConvert {
         let mut report = Report::default();
         let model = dutchman_core::read_bytes(format, name, &bytes, &mut report).map_err(|e| PluginError::Failed(e.to_string()))?;
         drop(bytes);
-        let writer = SolidCraftWriter::new().verification(Verification::Off);
+        // No SolidCraft CLI exists in the sandbox, so the history cannot be checked against
+        // the original: keep the original as the visible model and the history hidden.
+        let writer = SolidCraftWriter::new().verification(Verification::Off).hide_unverified_history(true);
         let mut design = Vec::new();
         writer.write(&model, &mut design, &mut report).map_err(|e| PluginError::Failed(e.to_string()))?;
         Ok(Imported { payload: Payload::Design(design), notes: notes(&report) })

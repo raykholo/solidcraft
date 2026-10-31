@@ -45,17 +45,20 @@ branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
 
 ## Known limits
 
-- **Fusion history comes across, unverified.** `Cargo.toml` patches Dutchman's cadmpeg pin to
-  cadmpeg main, which carries the wasm32 fix for Fusion parameter scopes (cadmpeg #645); before
-  it, a 32-bit build decoded no feature timeline at all. Dutchman's own pin is unchanged.
-  - `M3 Parametric FHCS.f3d`: Sketch 1, Revolve 1, Sketch 2 and Extrude 1 come across as
-    editable features, with the original geometry kept as a suppressed import. The history is
-    not checked against the original (no SolidCraft CLI in the sandbox), and here it differs:
-    Extrude 1 cuts the hex socket 1 mm in the negative direction, away from the head, and the
-    body is 51.59 mm³ against the original's 49.86 mm³.
-  - `M3 Parametric BHCS.f3d`: the same four features are kept as a hidden "Editable history"
-    prefix; Thread 1 (a cosmetic thread with no resolved standard and pitch) stops the history,
-    so the visible body is the imported final shape.
+- **Fusion history comes across, unverified and hidden.** `Cargo.toml` patches Dutchman's
+  cadmpeg pin to cadmpeg main, which carries the wasm32 fix for Fusion parameter scopes
+  (cadmpeg #645); before it, a 32-bit build decoded no feature timeline at all. With no
+  SolidCraft CLI in the sandbox the history cannot be checked against the original, so the
+  plugin does what Dutchman does when a check fails: the original geometry is the visible
+  model and the mapped history sits in a hidden "Editable history (unverified)" part. Show it
+  in the browser to edit it. (`Cargo.toml` pins Dutchman's `plugin-dutchman-pin` branch for
+  `read_bytes` and `hide_unverified_history`.)
+  - `M3 Parametric FHCS.f3d`: Sketch 1, Revolve 1, Sketch 2 and Extrude 1 are in the hidden
+    part. With cadmpeg main its Extrude 1 cuts the hex socket in the shank, not the head
+    (cadmpeg read the sketch frame's centimetres as millimetres); the fix is in progress and
+    the visible model is the exact original either way.
+  - `M3 Parametric BHCS.f3d`: the same four features; Thread 1 (a cosmetic thread with no
+    resolved standard and pitch) stops the history there.
   - Fillets and chamfers are left out, since finding their edges needs the SolidCraft CLI.
 - The first import compiles the component (about three minutes for 65 MiB); SolidCraft keeps
   the compiled importer in memory, so later imports in the same session take about a second.
