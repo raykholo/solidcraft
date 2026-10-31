@@ -15,10 +15,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
-  # Smaller test builds, so the runner's disk holds them.
-  CARGO_PROFILE_DEV_DEBUG: "0"
-  CARGO_PROFILE_TEST_DEBUG: "0"
 
+# Tests and Clippy use the `ci` profile, as the project's CI does (debug assertions off, light
+# optimisation).
 jobs:
   repository:
     name: Repository checks
@@ -58,15 +57,13 @@ jobs:
         with:
           key: fork-plugins
       - name: Clippy (engine, UI, CLI)
-        run: cargo clippy -p solidcraft-engine -p solidcraft-ui-egui -p solidcraft-cli --all-targets -- -D warnings
+        run: cargo clippy --profile ci -p solidcraft-engine -p solidcraft-ui-egui -p solidcraft-cli --all-targets -- -D warnings
       - name: Engine plugin and file tests
-        run: 'cargo test -p solidcraft-engine --lib -- plugin:: cmd::file'
-      # The skipped ribbon test fails on this branch's base commit too (an epaint texture-delta
-      # assertion), not because of the plugins work.
+        run: 'cargo test --profile ci -p solidcraft-engine --lib -- plugin:: cmd::file'
       - name: UI plugin, dialog, toolbar and i18n tests
-        run: 'cargo test -p solidcraft-ui-egui --lib -- plugins dialogs_plugin plugin_report toolbar workspace i18n icon_svg file_load agent_chat::gate control:: --skip persistent_grid_deferred_paint_retains_partial_and_offscreen_scroll_clips'
+        run: 'cargo test --profile ci -p solidcraft-ui-egui --lib -- plugins dialogs_plugin plugin_report toolbar workspace i18n icon_svg file_load agent_chat::gate control::'
       - name: Plugin limit preferences, drawn
-        run: cargo test -p solidcraft-ui-egui --test plugin_resource_preferences
+        run: cargo test --profile ci -p solidcraft-ui-egui --test plugin_resource_preferences
 
   wasm:
     name: Compile WebAssembly
