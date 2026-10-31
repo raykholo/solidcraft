@@ -97,7 +97,7 @@ pub struct FileFormat {
 }
 
 /// The plugin worlds: no WASI, files, network or process imports.
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeManifest {
     pub api: String,
@@ -119,7 +119,7 @@ pub struct RuntimeManifest {
     pub limits: Limits,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
     pub fuel: u64,
