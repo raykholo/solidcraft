@@ -25,10 +25,10 @@ lto = false
 strip = true
 debug = 0
 
-# cadmpeg main (12e6614c29254c7a426fbdf037c0e6e3002bddc9), which carries the wasm32 fix for Fusion parameter scopes (#645).
+# cadmpeg main (acae128a94320a613761e6af9d336bba024cf492), which carries the wasm32 fix for Fusion parameter scopes (#645).
 # Dutchman's own pin is left as it is; this example builds against the newer decoder.
 [patch."https://github.com/raykholo/cadmpeg"]
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "12e6614c29254c7a426fbdf037c0e6e3002bddc9" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "12e6614c29254c7a426fbdf037c0e6e3002bddc9" }
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "12e6614c29254c7a426fbdf037c0e6e3002bddc9" }
-cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "12e6614c29254c7a426fbdf037c0e6e3002bddc9" }
+cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
+cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
+cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
+cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
