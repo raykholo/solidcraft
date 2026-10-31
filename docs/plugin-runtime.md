@@ -100,7 +100,7 @@ policy, not the GUI's preferences.
 
 | Resource | Default / limit |
 |---|---|
-| Component input | 16 MiB (64 MiB for an importer, see below) |
+| Component input | 16 MiB; a package may ask for up to 128 MiB with `limits.component_mib` |
 | Guest fuel per invocation | 10,000,000; user host ceiling defaults to 100,000,000,000 |
 | Guest memory | 64 MiB; user host ceiling defaults to 128 MiB; one memory total |
 | Entry deadline | 5 s / 30 s |
@@ -213,6 +213,7 @@ formats it converts, and grants nothing else:
 | `kind` | `command` (the default: entries and `plugin.run`) or `importer` |
 | `formats` | 1..32 `{extension, name}`: an extension of 1..16 letters and digits (a leading dot and case are ignored), and the name File > Import shows |
 | `entries`, `commands` | Must be empty: an importer has no entries and is granted no engine commands |
+| `limits.component_mib` | Any package: the largest component file it ships, 1..128 MiB (default 16). An importer that links several decoders and a design writer needs more than 16 MiB. The value is part of the approved manifest, and the Plugins page shows it |
 
 ### The importer world
 

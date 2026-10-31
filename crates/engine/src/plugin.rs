@@ -13,7 +13,11 @@ use crate::{EngineError, Result, Session};
 mod runtime;
 
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
+/// The component size a package may ship without asking for more (`limits.component_mib`).
 pub const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
+/// The most `limits.component_mib` may ask for: an importer that links several file-format
+/// decoders and a design writer is larger than a command plugin.
+pub const MAX_COMPONENT_MIB: usize = 128;
 pub const MAX_JSON_BYTES: usize = 1024 * 1024;
 pub const API: &str = "solidcraft:plugin@0.1.0";
 /// Memory32 can address at most 65536 pages of 64 KiB; the runtime allows one memory.
@@ -125,16 +129,29 @@ pub struct Limits {
     pub fuel: u64,
     pub memory_mib: usize,
     pub deadline_ms: u64,
+    /// The largest component file the package may have, in MiB (default 16, at most 128). It is
+    /// part of what the user approves: a larger component takes longer and more memory to compile.
+    #[serde(default = "default_component_mib", skip_serializing_if = "is_default_component_mib")]
+    pub component_mib: usize,
+}
+fn default_component_mib() -> usize {
+    MAX_COMPONENT_BYTES / (1024 * 1024)
+}
+fn is_default_component_mib(mib: &usize) -> bool {
+    *mib == default_component_mib()
 }
 impl Default for Limits {
     fn default() -> Self {
-        Self { fuel: 10_000_000, memory_mib: 64, deadline_ms: 5000 }
+        Self { fuel: 10_000_000, memory_mib: 64, deadline_ms: 5000, component_mib: default_component_mib() }
     }
 }
 impl Limits {
     fn validate(&self) -> Result<()> {
         if self.fuel == 0 || !(1..=MAX_MEMORY_MIB).contains(&self.memory_mib) || !(1..=30_000).contains(&self.deadline_ms) {
             return Err(error("limits require positive fuel, memory 1..4096 MiB (Wasm32) and deadline 1..30000 ms"));
+        }
+        if !(1..=MAX_COMPONENT_MIB).contains(&self.component_mib) {
+            return Err(error("component_mib must be 1..128"));
         }
         Ok(())
     }
@@ -260,7 +277,9 @@ pub fn read_package(path: &str) -> Result<Package> {
     let manifest = parse_manifest(&bytes, folder)?;
     let runtime = manifest.runtime.as_ref().ok_or_else(|| error("metadata-only package has no executable runtime"))?;
     let module_path = dir.join(&runtime.module);
-    let component = solidcraft_io::vfs::read(&module_path.to_string_lossy(), MAX_COMPONENT_BYTES).map_err(|e| error(e.to_string()))?;
+    let cap = runtime.limits.component_mib.saturating_mul(1024 * 1024);
+    let component = solidcraft_io::vfs::read(&module_path.to_string_lossy(), cap)
+        .map_err(|e| error(format!("{e} (the component may be at most {} MiB: limits.component_mib)", runtime.limits.component_mib)))?;
     let mut digest = Sha256::new();
     digest.update(b"solidcraft-plugin-approval-v1\0");
     digest.update((bytes.len() as u64).to_le_bytes());

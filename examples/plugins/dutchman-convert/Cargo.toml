@@ -12,13 +12,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.54"
-dutchman-core = { path = "/home/ray/builds/worktrees/dutchman-wasm/crates/dutchman-core" }
-dutchman-solidcraft = { path = "/home/ray/builds/worktrees/dutchman-wasm/crates/dutchman-solidcraft" }
+# Dutchman with `dutchman_core::read_bytes` (a design from its contents alone, no file system).
+dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "18b909dd02ba9847113334b231f0d1ccd39aa775" }
+dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "18b909dd02ba9847113334b231f0d1ccd39aa775" }
 
-# Thin LTO: a fat-LTO link of every decoder needs more than 12 GiB of memory.
+# No LTO: linking every decoder with fat or thin LTO needs more than 12 GiB of memory. The
+# linker still drops unused code.
 [profile.release]
 opt-level = "z"
 codegen-units = 16
-lto = "thin"
+lto = false
 strip = true
 debug = 0

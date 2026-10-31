@@ -344,6 +344,10 @@ fn an_importer_declares_formats_and_is_granted_no_commands() {
     let m = parse_manifest(&serde_json::to_vec(&importer_manifest(&[".FIXD", "fixs"])).unwrap(), "fixture-importer").unwrap();
     let runtime = m.runtime.unwrap();
     assert_eq!(runtime.kind, Kind::Importer);
+    assert_eq!(runtime.limits.component_mib, 16, "16 MiB unless the package asks for more");
+    let mut large = importer_manifest(&["fixd"]);
+    large["runtime"]["limits"]["component_mib"] = json!(96);
+    assert!(parse_manifest(&serde_json::to_vec(&large).unwrap(), "fixture-importer").is_ok());
     assert_eq!(runtime.formats.iter().map(|f| f.extension.as_str()).collect::<Vec<_>>(), ["fixd", "fixs"]);
     for mutate in [
         |m: &mut Value| m["runtime"]["commands"] = json!(["solid.box"]),
@@ -352,6 +356,8 @@ fn an_importer_declares_formats_and_is_granted_no_commands() {
         |m: &mut Value| m["runtime"]["formats"] = json!([{"extension":"a/b","name":"Slash"}]),
         |m: &mut Value| m["runtime"]["formats"] = json!([{"extension":"fixd","name":"A"},{"extension":"FIXD","name":"B"}]),
         |m: &mut Value| m["runtime"]["formats"][0]["reads_folder"] = json!(true),
+        |m: &mut Value| m["runtime"]["limits"]["component_mib"] = json!(129),
+        |m: &mut Value| m["runtime"]["limits"]["component_mib"] = json!(0),
     ] {
         let mut m = importer_manifest(&["fixd"]);
         mutate(&mut m);

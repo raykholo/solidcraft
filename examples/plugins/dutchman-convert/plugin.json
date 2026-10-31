@@ -1,0 +1,24 @@
+{
+  "id": "dutchman-convert",
+  "name": "Dutchman Convert",
+  "version": "0.1.0",
+  "description": "Opens Fusion, Inventor, SolidWorks and FreeCAD designs with their feature history, converted by Dutchman.",
+  "runtime": {
+    "api": "solidcraft:plugin@0.1.0",
+    "module": "plugin.wasm",
+    "kind": "importer",
+    "formats": [
+      { "extension": "f3d", "name": "Fusion design" },
+      { "extension": "f3z", "name": "Fusion archive" },
+      { "extension": "ipt", "name": "Inventor part" },
+      { "extension": "sldprt", "name": "SolidWorks part" },
+      { "extension": "fcstd", "name": "FreeCAD document" }
+    ],
+    "limits": {
+      "fuel": 100000000000,
+      "memory_mib": 1024,
+      "deadline_ms": 30000,
+      "component_mib": 80
+    }
+  }
+}

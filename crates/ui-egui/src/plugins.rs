@@ -239,7 +239,12 @@ fn runtime_rows(app: &mut SolveApp, ui: &mut egui::Ui, plugin: &Plugin, runtime:
         ui,
         crate::i18n::format(
             "ui.plugins_limits",
-            &[("fuel", &limits.fuel.to_string()), ("memory", &limits.memory_mib.to_string()), ("seconds", &seconds)],
+            &[
+                ("fuel", &limits.fuel.to_string()),
+                ("memory", &limits.memory_mib.to_string()),
+                ("seconds", &seconds),
+                ("size", &limits.component_mib.to_string()),
+            ],
         ),
     );
     if let Err(e) = host_limits(&app.preferences).check(limits) {

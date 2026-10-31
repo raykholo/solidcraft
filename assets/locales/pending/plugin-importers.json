@@ -8,7 +8,7 @@
     "ui.plugins_importer": "Imports {formats}",
     "ui.plugins_install": "Install plugin…",
     "ui.plugins_installed": "Installed {name}. Allow it in Preferences › Plugins to run it.",
-    "ui.plugins_limits": "Asks for up to {fuel} fuel, {memory} MiB and {seconds} s",
+    "ui.plugins_limits": "Asks for up to {fuel} fuel, {memory} MiB and {seconds} s; component up to {size} MiB",
     "ui.plugins_not_allowed": "Not allowed to run",
     "ui.plugins_revoke": "Revoke"
   },
@@ -21,7 +21,7 @@
     "ui.plugins_importer": "Importiert {formats}",
     "ui.plugins_install": "Plugin installieren…",
     "ui.plugins_installed": "{name} installiert. Unter Einstellungen › Plugins zulassen, um es auszuführen.",
-    "ui.plugins_limits": "Fordert bis zu {fuel} Fuel, {memory} MiB und {seconds} s an",
+    "ui.plugins_limits": "Fordert bis zu {fuel} Fuel, {memory} MiB und {seconds} s an; Komponente bis {size} MiB",
     "ui.plugins_not_allowed": "Darf nicht ausgeführt werden",
     "ui.plugins_revoke": "Widerrufen"
   }
