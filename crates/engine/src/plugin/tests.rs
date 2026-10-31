@@ -194,7 +194,7 @@ mod native {
         let engine = wasmtime::Engine::new(&config).unwrap();
         let module = wasmtime::Module::from_binary(&engine, &wat::parse_str(r#"(module (func (export "run") (loop br 0)))"#).unwrap()).unwrap();
         let mut store = wasmtime::Store::new(&engine, ());
-        let limits = Limits { fuel: 100_000, memory_mib: 1, deadline_ms: 5000 };
+        let limits = Limits { fuel: 100_000, memory_mib: 1, deadline_ms: 5000, ..Limits::default() };
         store.set_fuel(limits.fuel).unwrap();
         store.set_epoch_deadline(1);
         let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
