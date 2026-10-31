@@ -206,11 +206,73 @@ mod importer_bindings {
     wasmtime::component::bindgen!({ path: "../../wit", world: "importer-plugin" });
 }
 
-/// What an importer may do: write to the log, within a budget.
+/// What an importer may do: write to the log, within a budget, and use an empty WASI.
 struct ImportState {
     limits: StoreLimits,
     log_bytes: usize,
     messages: Vec<String>,
+    wasi: wasmtime_wasi::WasiCtx,
+    table: wasmtime::component::ResourceTable,
+}
+impl wasmtime_wasi::WasiView for ImportState {
+    fn ctx(&mut self) -> wasmtime_wasi::WasiCtxView<'_> {
+        wasmtime_wasi::WasiCtxView { ctx: &mut self.wasi, table: &mut self.table }
+    }
+}
+
+/// The wall clock an importer sees: always the Unix epoch.
+struct NoWallClock;
+impl wasmtime_wasi::HostWallClock for NoWallClock {
+    fn resolution(&self) -> Duration {
+        Duration::from_secs(1)
+    }
+    fn now(&self) -> Duration {
+        Duration::ZERO
+    }
+}
+/// The monotonic clock an importer sees: a counter that moves one nanosecond per reading, so
+/// the time it measures tells it nothing about the machine.
+struct CountingClock(std::sync::atomic::AtomicU64);
+impl wasmtime_wasi::HostMonotonicClock for CountingClock {
+    fn resolution(&self) -> u64 {
+        1
+    }
+    fn now(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// The WASI an importer gets so a standard `wasm32-wasip2` build links: no preopened folders
+/// (so no file can be opened), no arguments or environment, closed standard input, discarded
+/// output, no network (every address and name lookup refused) and clocks that tell nothing.
+fn empty_wasi() -> wasmtime_wasi::WasiCtx {
+    wasmtime_wasi::WasiCtxBuilder::new()
+        .wall_clock(NoWallClock)
+        .monotonic_clock(CountingClock(std::sync::atomic::AtomicU64::new(0)))
+        .allow_ip_name_lookup(false)
+        .allow_tcp(false)
+        .allow_udp(false)
+        // Reproducible conversions: an importer has no use for real randomness.
+        .secure_random(wasmtime_wasi::Deterministic::new((0..=255).collect()))
+        .insecure_random(wasmtime_wasi::Deterministic::new((0..=255).rev().collect()))
+        .insecure_random_seed(0)
+        .build()
+}
+
+/// Whether an importer's WASI offers any folder at all (what the guest's `get-directories`
+/// returns). Tests: it must not.
+#[cfg(test)]
+pub(super) fn empty_wasi_has_no_folders() -> bool {
+    use wasmtime_wasi::filesystem::WasiFilesystemView;
+    use wasmtime_wasi::p2::bindings::filesystem::preopens::Host;
+    let mut state = ImportState {
+        limits: StoreLimitsBuilder::new().build(),
+        log_bytes: 0,
+        messages: Vec::new(),
+        wasi: empty_wasi(),
+        table: wasmtime::component::ResourceTable::new(),
+    };
+    state.filesystem().get_directories().is_ok_and(|dirs| dirs.is_empty())
 }
 impl importer_bindings::solidcraft::plugin::types::Host for ImportState {}
 impl importer_bindings::solidcraft::plugin::log::Host for ImportState {
@@ -240,7 +302,15 @@ fn compiled(package: &Package) -> Result<(Engine, Component)> {
     let mut guard = IMPORTERS.lock().map_err(|_| error("the importer cache failed"))?;
     if guard.is_none() {
         let mut config = Config::new();
-        config.consume_fuel(true).epoch_interruption(true).wasm_memory64(false).wasm_multi_memory(false).max_wasm_stack(IMPORT_WASM_STACK);
+        config
+            .consume_fuel(true)
+            .epoch_interruption(true)
+            .wasm_memory64(false)
+            .wasm_multi_memory(false)
+            .max_wasm_stack(IMPORT_WASM_STACK)
+            // WASI turns on Wasmtime's async support, whose stack must hold the Wasm stack, though
+            // importers run synchronously.
+            .async_stack_size(IMPORT_WASM_STACK + 1024 * 1024);
         *guard = Some(Compiled { engine: Engine::new(&config).map_err(|e| error(e.to_string()))?, components: Vec::new() });
     }
     let cache = guard.as_mut().ok_or_else(|| error("the importer cache failed"))?;
@@ -285,6 +355,8 @@ fn import_on_this_thread(engine: &Engine, component: &Component, limits: &super:
             .build(),
         log_bytes: 0,
         messages: Vec::new(),
+        wasi: empty_wasi(),
+        table: wasmtime::component::ResourceTable::new(),
     };
     let mut store = Store::new(engine, state);
     store.limiter(|s| &mut s.limits);
@@ -297,6 +369,7 @@ fn import_on_this_thread(engine: &Engine, component: &Component, limits: &super:
     });
     let mut linker = Linker::new(engine);
     importer_bindings::ImporterPlugin::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |s| s).map_err(|e| error(e.to_string()))?;
+    wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|e| error(e.to_string()))?;
     let (stop, stopped) = mpsc::channel::<()>();
     let timer_engine = engine.clone();
     let wait = Duration::from_millis(limits.deadline_ms);

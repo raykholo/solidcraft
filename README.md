@@ -111,7 +111,8 @@ Format and example: [docs/scripts.md](docs/scripts.md). Pages can also be driven
 
 Plugins add separately distributed behaviour without compiling that behaviour into SolidCraft.
 The initial runtime loads **WebAssembly components**, explicitly requested by the user. Merely
-installing a folder, enabling it in Preferences, or opening a design never executes plugin code.
+installing a folder, enabling it in Preferences, or opening a design never executes plugin code;
+an importer runs only once the user has allowed it.
 The interface is experimental (`solidcraft:plugin@0.1.0`); use a plugin built for this API and
 review it again after an update. The desktop app and headless CLI use the same commands. Browser
 execution, automatic downloads and updates, custom panels, and plugin-defined parametric feature
@@ -149,6 +150,17 @@ Run `plugin.inspect` with `{"path":"/path/to/example-box"}` through the CLI's JS
 without executing them, returning the declared commands, limits and an `approval` SHA-256 hash.
 Review the author, code and declared rights before using that hash. Inspection does not approve a
 package. Existing metadata-only packages remain listable but cannot run until they declare a runtime.
+
+### Importers
+
+An importer plugin opens a file format SolidCraft does not read itself. Install it with
+**Install plugin…** in Preferences > Plugins, check the formats and limits the page lists, and
+click **Allow**. Then **File > Import…** (or File > Open, or dropping the file on the window)
+converts the file in the sandbox and opens the result as a new design, with its feature history
+when the importer hands over a SolidCraft design. The importer is given the file's bytes and
+nothing else. See [the importer reference](docs/plugin-runtime.md#importer-plugins) and the
+[Dutchman Convert example](examples/plugins/dutchman-convert), which opens Fusion, Inventor,
+SolidWorks and FreeCAD files with their history.
 
 ### Run explicitly
 

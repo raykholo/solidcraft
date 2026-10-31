@@ -100,7 +100,7 @@ policy, not the GUI's preferences.
 
 | Resource | Default / limit |
 |---|---|
-| Component input | 16 MiB |
+| Component input | 16 MiB (64 MiB for an importer, see below) |
 | Guest fuel per invocation | 10,000,000; user host ceiling defaults to 100,000,000,000 |
 | Guest memory | 64 MiB; user host ceiling defaults to 128 MiB; one memory total |
 | Entry deadline | 5 s / 30 s |
@@ -183,10 +183,116 @@ invocations also write consumed/remaining fuel to the existing debug logger. In 
 `--debug` to see these counters on stderr; normal command output and plugin result JSON stay the
 same. No model contents or package paths are included in that counter message.
 
-There is no compiled-code cache, unsafe deserialization, WASI filesystem/clock/socket/process API,
-network integration, persistent store, plugin installer, signed index, custom panels or icons.
+There is no on-disk compiled-code cache, unsafe deserialization, WASI filesystem/clock/socket/process
+API for command plugins, network integration, persistent store, signed index, custom panels or icons.
 The WIT store interface is present for command-world compatibility, but operations are denied;
 `previous-version` returns none. `manifest()` is not used.
+
+## Importer plugins
+
+An importer converts one file into a design. Its package declares `"kind": "importer"` and the
+formats it converts, and grants nothing else:
+
+```json
+{
+  "id": "dutchman-convert",
+  "name": "Dutchman Convert",
+  "version": "0.1.0",
+  "runtime": {
+    "api": "solidcraft:plugin@0.1.0",
+    "module": "plugin.wasm",
+    "kind": "importer",
+    "formats": [{ "extension": "f3d", "name": "Fusion design" }],
+    "limits": { "fuel": 100000000000, "memory_mib": 1024, "deadline_ms": 30000 }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `command` (the default: entries and `plugin.run`) or `importer` |
+| `formats` | 1..32 `{extension, name}`: an extension of 1..16 letters and digits (a leading dot and case are ignored), and the name File > Import shows |
+| `entries`, `commands` | Must be empty: an importer has no entries and is granted no engine commands |
+
+### The importer world
+
+```wit
+interface importer {
+    use types.{plugin-error};
+    variant payload { design(list<u8>), step(list<u8>) }
+    record imported { payload: payload, notes: string }
+    %import: func(file-name: string, bytes: list<u8>) -> result<imported, plugin-error>;
+}
+world importer-plugin {
+    import log;
+    export importer;
+}
+```
+
+The host reads the file the user chose, inside the caller's file scope, and passes its name
+(without folders) and its bytes, at most 512 MiB. That is all the component gets: the world has
+no engine, store or file interfaces. So that a standard `wasm32-wasip2` build links, the host
+also gives an importer an empty WASI: no preopened folders (no path can be opened), no
+arguments or environment, closed standard input, discarded output, every network address and
+name lookup refused, a wall clock fixed at the Unix epoch, a monotonic clock that counts its own
+readings, and fixed "random" bytes, so one file converts the same way every time. Any other
+import (the engine interface, HTTP, a newer WASI) fails instantiation. Command plugins get no
+WASI at all.
+
+**The result contract.** `design` is a SolidCraft design container, the same `.sc` bytes the
+app opens and saves. This is the preferred result: a converter that maps the source's feature
+history onto SolidCraft features hands that history over as it is, so the imported design
+stays editable (sketches, parameters, the timeline). `step` is STEP text, for importers that
+carry geometry only: the host imports it exactly as it imports a STEP file, as one Import
+feature in a component named after the file. A design was chosen over a list of commands
+because the design is already the stable, versioned, validated exchange format: SolidCraft
+upgrades older format versions on open, checks every feature on rebuild, and the importer needs
+no engine access or round trips. `notes` is plain text for the user, at most 64 KiB: what did
+not come across. Log messages are appended to it.
+
+The design opens as a new, unsaved design in its own tab; the source file is never its path.
+Nothing is changed until the whole import succeeds: a trap, exhausted fuel or memory, a missed
+deadline, an error result or a design that does not read leaves the open design and its undo
+history as they were.
+
+### Choosing the importer
+
+`file.import {path, plugin?, approval?}` opens a file as a new design:
+
+- A format SolidCraft reads itself (designs, STEP, IGES, FreeCAD, Rhino, meshes, drawings,
+  point clouds) keeps its own path, as `doc.open`.
+- Any other extension goes to the installed importer that claims it: enabled in Preferences >
+  Plugins and allowed for its exact content. When several claim it, the first by id wins.
+- `plugin: "<id>"` names an installed, allowed importer, even for a format SolidCraft reads.
+- `plugin: "<package folder>", approval: "<hash>"` runs a package that is not installed, as
+  `plugin.run` does, with the hash `plugin.inspect` returned after review. This is the way for
+  the CLI and scripts, which have no preferences.
+
+`doc.open` routes a file it cannot read the same way, so File > Open, dropping a file on the
+window, Open Recent and the control channel all reach an allowed importer. In the desktop app
+both commands run on the file worker, off the window thread, with its progress and Cancel.
+The reply carries `plugin`, `plugin_version`, `payload` (`design` or `step`), `features`,
+`errors`, `name` and `notes`.
+
+### Install and allow
+
+`plugin.install {path, replace?}` copies a package folder into the plugins folder. It runs and
+allows nothing. Preferences > Plugins shows each package with code: an importer's formats (or a
+command plugin's commands), the fuel, memory and time it asks for, a warning when that exceeds
+the ceilings above, and **Allow** / **Revoke**. Allow records the approval hash of the package as
+it is now in the `plugin_approvals` preference; a changed manifest or component no longer
+matches and must be allowed again. **Install plugin…** on the same page asks for a package's
+`plugin.json` and installs its folder. The control channel's `ui.prefs` takes
+`{"plugin_allow": "<id>"}` and `{"plugin_revoke": "<id>"}`; agent chat cannot change
+preferences and asks before `plugin.install` and `file.import`.
+
+The host runs each import on a thread of its own (a 64 MiB native stack, 16 MiB of it for Wasm
+frames, since decoders recurse deeply), under the package's fuel, memory and deadline, and
+keeps up to four compiled importers in memory by approval hash: compiling a large importer can
+take longer than running it. It never stores compiled code on disk.
+
+The [Dutchman Convert example](../examples/plugins/dutchman-convert/README.md) is a full
+importer: Fusion, Inventor, SolidWorks and FreeCAD files with their feature history.
 
 ## Author an original plugin
 

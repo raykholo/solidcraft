@@ -1,6 +1,8 @@
 # Plugins (design)
 
-The initial native one-shot command runtime is described in [plugin-runtime.md](plugin-runtime.md).
+The initial native one-shot command runtime, and importer plugins (`kind: "importer"`: a file's
+bytes in, a SolidCraft design or STEP out, through `file.import`), are described in
+[plugin-runtime.md](plugin-runtime.md#importer-plugins).
 The parametric feature shell and later phases below remain design work.
 
 Design companion to [#1221](https://github.com/bherbruck/solidcraft/issues/1221): sandboxed

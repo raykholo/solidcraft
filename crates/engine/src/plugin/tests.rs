@@ -439,7 +439,6 @@ mod importer {
         let mut s = f.session(false);
         s.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
         let before = s.doc.to_json();
-        assert!(s.execute("doc.open", &json!({"path": f.file("part.fixd")})).is_err());
         assert!(s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string().contains("Preferences > Plugins"));
         assert_eq!(s.doc.to_json(), before);
 
@@ -508,19 +507,22 @@ mod importer {
 
     #[test]
     fn an_importer_cannot_reach_files_or_anything_beyond_its_world() {
-        // A component asking for a file system (or any import outside the importer world)
-        // never starts: the host links only the plugin types and the log.
-        let f = Setup::with_import(
-            &echo(0),
-            &["fixd"],
-            r#"(import "wasi:filesystem/preopens@0.2.0" (instance (export "get-directories" (func (result u32)))))"#,
-        );
-        std::fs::write(f.file("part.fixd"), b"x").unwrap();
-        let mut s = f.session(true);
-        let before = s.doc.to_json();
-        let err = s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string();
-        assert!(err.contains("wasi:filesystem"), "{err}");
-        assert_eq!(s.doc.to_json(), before);
+        // A component asking for engine commands (or anything else outside the importer world
+        // and its empty WASI) never starts.
+        for import in [
+            r#"(import "solidcraft:plugin/engine@0.1.0" (instance (export "run" (func (param "command" string) (result string)))))"#,
+            r#"(import "wasi:http/outgoing-handler@0.2.0" (instance (export "handle" (func (result u32)))))"#,
+        ] {
+            let f = Setup::with_import(&echo(0), &["fixd"], import);
+            std::fs::write(f.file("part.fixd"), b"x").unwrap();
+            let mut s = f.session(true);
+            let before = s.doc.to_json();
+            let err = s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string();
+            assert!(err.contains("solidcraft:plugin/engine") || err.contains("wasi:http"), "{err}");
+            assert_eq!(s.doc.to_json(), before);
+        }
+        // Its WASI has no folders, so no path opens, whatever it asks for.
+        assert!(super::runtime::empty_wasi_has_no_folders());
         // Only the file's name crosses, never the folders it is in.
         let f = Setup::new(&echo(0), &["fixd"]);
         let mut source = boxed();
