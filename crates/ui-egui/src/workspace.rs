@@ -504,10 +504,37 @@ pub const PLACEMENTS: &[(&str, &str, &str, &str)] = &[
 ];
 
 pub fn panels(tab: &str) -> Vec<&'static str> {
-    SECTIONS.iter().filter(|s| s.tab == tab).map(|s| s.panel).collect()
+    let mut panels: Vec<&'static str> = SECTIONS.iter().filter(|s| s.tab == tab).map(|s| s.panel).collect();
+    // Panels allowed plugins add to this tab, after the tab's own.
+    for c in plugin_specs().into_iter().filter(|c| c.tab == tab && !c.panel.is_empty()) {
+        if !panels.contains(&c.panel) {
+            panels.push(c.panel);
+        }
+    }
+    panels
+}
+
+/// The commands allowed plugins add (they come and go with Preferences > Plugins).
+pub fn plugin_specs() -> Vec<&'static CommandSpec> {
+    solidcraft_engine::plugin::contrib::specs()
+}
+
+/// Tabs of their own that allowed plugins add (a tab no built-in tab has), in order.
+pub fn plugin_tabs() -> Vec<&'static str> {
+    let mut tabs: Vec<&'static str> = Vec::new();
+    for c in plugin_specs() {
+        let builtin = TABS.contains(&c.tab) || SPECIALTY_TABS.iter().any(|t| t.tab == c.tab) || matches!(c.tab, "SKETCH" | "" | "RENDER");
+        if !builtin && !tabs.contains(&c.tab) {
+            tabs.push(c.tab);
+        }
+    }
+    tabs
 }
 
 pub fn destination(c: &CommandSpec) -> Option<(&'static str, &'static str)> {
+    if c.plugin.is_some() {
+        return (!c.tab.is_empty() && !c.panel.is_empty()).then_some((c.tab, c.panel));
+    }
     if c.id.starts_with("render.") || c.tab.starts_with("RENDER") || c.id == "view.shots_strip" {
         return None;
     }
@@ -531,7 +558,12 @@ pub(crate) fn legacy_render_destination(c: &CommandSpec) -> Option<(&'static str
 /// Ordered menu commands, with the promoted commands first. Empty sections are omitted by
 /// panel_lists, except the selection filter, which has its own existing controls.
 pub fn layout<'a>(tab: &str, panel: &str, specs: &[&'a CommandSpec]) -> Option<(Vec<&'a CommandSpec>, usize)> {
-    let section = SECTIONS.iter().find(|s| s.tab == tab && s.panel == panel)?;
+    let Some(section) = SECTIONS.iter().find(|s| s.tab == tab && s.panel == panel) else {
+        // A panel a plugin added: its commands, in the order it lists them, all on the ribbon.
+        let out: Vec<_> = specs.iter().filter(|c| c.plugin.is_some() && c.tab == tab && c.panel == panel).copied().collect();
+        let shown = out.len();
+        return (!out.is_empty()).then_some((out, shown));
+    };
     let mut out: Vec<_> = section.ids.iter().filter_map(|id| specs.iter().find(|c| c.id == *id).copied()).collect();
     for c in specs.iter().filter(|c| destination(c) == Some((section.tab, section.panel))) {
         if !out.iter().any(|o| o.id == c.id) {
@@ -638,14 +670,19 @@ pub fn tab_icon(tab: &str) -> &'static str {
         "INSPECT" => "measure",
         "MANAGE" => "params",
         "VIEW" => "camera",
-        _ => SPECIALTY_TABS.iter().find(|o| o.tab == tab).map_or("", |o| o.icon),
+        _ => SPECIALTY_TABS
+            .iter()
+            .find(|o| o.tab == tab)
+            .map(|o| o.icon)
+            .or_else(|| plugin_specs().into_iter().find(|c| c.tab == tab).map(|c| c.icon))
+            .unwrap_or(""),
     }
 }
 
 /// Tabs shown by default, in row order. Sketch has its own visibility preference and the Render
 /// workspace owns its controls, so neither is on this list.
 pub fn choosable_tabs() -> impl Iterator<Item = &'static str> {
-    TABS.iter().copied().chain(SPECIALTY_TABS.iter().map(|o| o.tab))
+    TABS.iter().copied().chain(SPECIALTY_TABS.iter().map(|o| o.tab)).chain(plugin_tabs())
 }
 
 /// The person's choice. Every tab is on until explicitly hidden.
@@ -678,6 +715,8 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
         tabs.push("SKETCH");
     }
     tabs.extend(SPECIALTY_TABS.iter().map(|o| o.tab).filter(|tab| tab_turned_on(app, tab)));
+    // Tabs allowed plugins add, last.
+    tabs.extend(plugin_tabs().into_iter().filter(|tab| tab_turned_on(app, tab)));
     tabs
 }
 

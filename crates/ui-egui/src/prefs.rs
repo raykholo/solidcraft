@@ -3169,6 +3169,7 @@ pub fn control(app: &mut SolveApp, p: &serde_json::Value) -> Result<serde_json::
         let id = id.as_str().ok_or("`plugin_allow` must be an installed plugin's id")?;
         let approval = crate::plugins::current_approval(id)?;
         staged.plugin_approvals.insert(id.to_string(), approval);
+        crate::plugins::prepare(id);
     }
     if let Some(id) = rest.remove("plugin_revoke") {
         let id = id.as_str().ok_or("`plugin_revoke` must be a plugin id")?;

@@ -781,6 +781,15 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             let Some(id) = s("command") else { return err("missing `command`") };
             // `params`: what the dialog opens on. Refused: nothing starts, or the dialog closes.
             let params = p.get("params").filter(|v| !v.is_null());
+            // A plugin's command opens its dialog on the given file (an importer's `path`),
+            // without asking for one.
+            if crate::dialogs_plugin::handles(id) {
+                let path = params.and_then(|p| p.get("path")).and_then(Value::as_str).map(str::to_string);
+                if let Err(e) = crate::dialogs_plugin::open_for(app, id, path) {
+                    return err(e);
+                }
+                return ok(json!({"dialog": app.dialog.as_ref().map(|d| format!("{d:?}"))}));
+            }
             if params.is_some() && id != "joint.drive" && id != "motion.study" {
                 return err(format!("`{id}` takes no ui.start params yet (joint.drive takes joint, values; motion.study takes study)"));
             }

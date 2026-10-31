@@ -54,7 +54,7 @@ mod component_link;
 pub use component_link::resolve_design_links;
 mod config;
 mod design_link;
-mod file;
+pub(crate) mod file;
 mod frame;
 pub(crate) mod inspect;
 mod interference;
@@ -159,6 +159,9 @@ pub struct CommandSpec {
     pub contract: Option<&'static dyn crate::schema::Contract>,
     /// The JSON Schema of a successful result; `None` until described.
     pub output: Option<SchemaFn>,
+    /// A command an allowed plugin added (see `crate::plugin::contrib`): it runs its plugin
+    /// instead of `run`.
+    pub plugin: Option<&'static crate::plugin::contrib::Contributed>,
 }
 
 impl CommandSpec {
@@ -179,6 +182,7 @@ impl CommandSpec {
             planned: None,
             contract: None,
             output: None,
+            plugin: None,
         }
     }
     /// Not built yet; `issue` tracks building it.
@@ -235,11 +239,18 @@ impl CommandSpec {
     /// undo step and the evaluation).
     pub(crate) fn run_nested(&self, s: &mut Session, p: &Value) -> Result<Value> {
         (self.enabled)(s).map_err(|why| crate::EngineError::Disabled(self.id.to_string(), why))?;
-        let r = (self.run)(s, p);
+        let r = self.call(s, p);
         // A parameter error that did not name the command names it here (see `Session::execute`).
         match r {
             Err(crate::EngineError::BadParams { cmd, msg }) if cmd.is_empty() => Err(crate::EngineError::BadParams { cmd: self.id.to_string(), msg }),
             other => other,
+        }
+    }
+    /// Run it: `run`, or for a plugin's command its plugin.
+    pub(crate) fn call(&self, s: &mut Session, p: &Value) -> Result<Value> {
+        match self.plugin {
+            Some(c) => crate::plugin::contrib::run(s, self, c, p),
+            None => (self.run)(s, p),
         }
     }
     pub fn info(&self, s: &Session) -> CommandInfo {
@@ -292,8 +303,15 @@ pub fn not_in_sketch(s: &Session) -> std::result::Result<(), String> {
     if s.active_sketch.is_none() { Ok(()) } else { Err("a sketch is being edited (this works on bodies: Finish Sketch first)".into()) }
 }
 
-/// Every command, in toolbar order.
+/// Every command, in toolbar order: the built-in ones, then those allowed plugins add.
 pub fn command_specs() -> Vec<&'static CommandSpec> {
+    let mut v = builtin_specs();
+    v.extend(crate::plugin::contrib::specs());
+    v
+}
+
+/// The commands built into SolidCraft, in toolbar order.
+pub fn builtin_specs() -> Vec<&'static CommandSpec> {
     let mut v: Vec<&'static CommandSpec> = Vec::new();
     v.extend(sketch::COMMANDS.iter());
     v.extend(sketch_create::COMMANDS.iter());

@@ -46,6 +46,18 @@ interface importer {
     /// Convert the file named `file-name` (its name only, without folders) from `bytes`.
     %import: func(file-name: string, bytes: list<u8>) -> result<imported, plugin-error>;
 }
+/// What the host tells an importer about the import it runs, and how the importer reports
+/// how far it is. A component that does not import this interface still runs.
+interface import-context {
+    /// The step an import is on, as the app's progress shows it.
+    enum stage { reading, decoding, mapping, writing }
+    /// The options the user chose for this import, as a JSON object (`{}` when none): the
+    /// values of the parameters the package's import command declares, checked by the host.
+    options: func() -> string;
+    /// The import is on `stage`, `done` of `total` units through it (`total` 0: unknown).
+    /// Reporting never fails; after Cancel the host stops the importer at its next check.
+    progress: func(stage: stage, done: u32, total: u32);
+}
 world command-plugin {
     import engine;
     import log;
@@ -54,5 +66,6 @@ world command-plugin {
 }
 world importer-plugin {
     import log;
+    import import-context;
     export importer;
 }

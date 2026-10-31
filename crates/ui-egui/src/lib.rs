@@ -47,6 +47,7 @@ pub mod dialogs_move;
 pub mod dialogs_part_size;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
+pub mod dialogs_plugin;
 pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
@@ -110,6 +111,7 @@ mod look_at_tests;
 mod manage_dialogs_tests;
 mod material_card_review;
 mod material_editor;
+pub mod plugin_report;
 
 #[cfg(test)]
 mod measurement_ui_tests;
@@ -1750,6 +1752,12 @@ impl SolveApp {
             linked_source::start_selected(self);
             return;
         }
+        // A plugin's command: its dialog, drawn from what it declares (an importer's asks for
+        // the file first).
+        if dialogs_plugin::handles(id) {
+            dialogs_plugin::start(self, id);
+            return;
+        }
         if id == "file.import" {
             self.pick_open(|app, path| {
                 if let Some(path) = path {
@@ -2748,6 +2756,7 @@ impl SolveApp {
         }
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
+        plugin_report::show(self, ui.ctx());
         open_meshing::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         open_elsewhere::show(self, ui.ctx());

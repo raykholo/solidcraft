@@ -12,23 +12,18 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wit-bindgen = "0.54"
-# Dutchman with `dutchman_core::read_bytes` (a design from its contents alone, no file system).
-dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "fda0d7bd297c44e670ad4870fde2ec795f0a7159" }
-dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "fda0d7bd297c44e670ad4870fde2ec795f0a7159" }
+serde_json = "1"
+# Dutchman's `solidcraft-plugin-pin` branch: main with a Cargo feature per input format (so
+# only the codecs of the formats this importer claims are linked) and assembly parts that keep
+# an unchecked history hidden.
+dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "8e03f84806b22a905c8515145a4ae03936127a05", default-features = false, features = ["fusion", "inventor", "solidworks", "freecad"] }
+dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "8e03f84806b22a905c8515145a4ae03936127a05" }
 
-# No LTO: linking every decoder with fat or thin LTO needs more than 12 GiB of memory. The
-# linker still drops unused code.
+# Smallest component: optimise for size, one code unit and thin LTO (39.7 MB; with every
+# cadmpeg codec and no LTO it was 68.7 MB). Wasm has no unwinding, so panics abort already.
 [profile.release]
 opt-level = "z"
-codegen-units = 16
-lto = false
+codegen-units = 1
+lto = "thin"
 strip = true
 debug = 0
-
-# cadmpeg main (acae128a94320a613761e6af9d336bba024cf492), which carries the wasm32 fix for Fusion parameter scopes (#645).
-# Dutchman's own pin is left as it is; this example builds against the newer decoder.
-[patch."https://github.com/raykholo/cadmpeg"]
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
-cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }

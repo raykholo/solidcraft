@@ -27,6 +27,14 @@ pub struct Plugin {
     pub description: String,
     /// What it runs, when it has code: its kind, grants, formats and requested limits.
     pub runtime: Option<solidcraft_engine::plugin::RuntimeManifest>,
+    /// Who publishes it (empty when it does not say).
+    pub publisher: String,
+    /// The commands it adds, as "Label (Tab › Panel)".
+    pub contributes: Vec<String>,
+    /// Its own icon's SVG, when it ships one.
+    pub icon_svg: Option<String>,
+    /// The icon its card shows: its own, its first command's, or the generic plugin icon.
+    pub icon: String,
 }
 
 /// A folder under the plugins directory that is not a plugin.
@@ -85,7 +93,17 @@ fn check(m: Manifest, folder: &str) -> Result<Plugin, String> {
     if description.chars().count() > 240 || description.chars().any(|c| c.is_control()) {
         return Err("the description must be at most 240 characters with no line breaks".into());
     }
-    Ok(Plugin { id: m.id, name: name.to_string(), version: version.to_string(), description: description.to_string(), runtime: None })
+    Ok(Plugin {
+        id: m.id,
+        name: name.to_string(),
+        version: version.to_string(),
+        description: description.to_string(),
+        runtime: None,
+        publisher: String::new(),
+        contributes: Vec::new(),
+        icon_svg: None,
+        icon: "play".into(),
+    })
 }
 
 fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
@@ -96,9 +114,35 @@ fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
     }
     let text = std::fs::read_to_string(&path).map_err(|e| format!("plugin.json could not be read ({e})"))?;
     let parsed = solidcraft_engine::plugin::parse_manifest(text.as_bytes(), folder).map_err(|e| e.to_string())?;
-    let runtime = parsed.runtime;
-    let mut plugin = check(Manifest { id: parsed.id, name: parsed.name, version: parsed.version, description: parsed.description }, folder)?;
+    let runtime = parsed.runtime.clone();
+    let mut plugin = check(
+        Manifest { id: parsed.id.clone(), name: parsed.name.clone(), version: parsed.version.clone(), description: parsed.description.clone() },
+        folder,
+    )?;
     plugin.runtime = runtime;
+    plugin.publisher = parsed.publisher.clone();
+    let ribbon = |tab: &str, panel: &str| format!("{} › {}", crate::workspace::word_cased(tab), crate::workspace::word_cased(panel));
+    plugin.contributes = parsed
+        .contributes
+        .commands
+        .iter()
+        .map(|c| match parsed.contributes.toolbar.iter().find(|t| t.commands.contains(&c.id)) {
+            Some(t) => format!("{} ({})", c.label, ribbon(&t.tab, &t.panel)),
+            None => c.label.clone(),
+        })
+        .collect();
+    // Its own icon (at most 32 KiB, drawn only if it is plain shapes in palette colours), else
+    // its first command's built-in one.
+    plugin.icon_svg = parsed
+        .icon
+        .as_ref()
+        .and_then(|file| std::fs::metadata(dir.join(file)).ok().filter(|m| m.len() <= crate::icon_svg::MAX_PLUGIN_ICON_BYTES as u64).map(|_| file))
+        .and_then(|file| std::fs::read_to_string(dir.join(file)).ok());
+    let own = format!("plugin:package:{}", plugin.id);
+    plugin.icon = match &plugin.icon_svg {
+        Some(svg) if crate::icon_svg::register_plugin_icon(&own, svg).is_ok() => own,
+        _ => parsed.contributes.commands.iter().map(|c| c.icon.as_str()).find(|i| crate::icon_svg::known(i)).unwrap_or("play").to_string(),
+    };
     Ok(plugin)
 }
 
@@ -114,6 +158,28 @@ pub fn current_approval(id: &str) -> Result<String, String> {
     }
     let dir = plugins_dir().ok_or("this build has no plugins folder")?;
     solidcraft_engine::plugin::read_package(&dir.join(id).to_string_lossy()).map(|p| p.approval).map_err(|e| e.to_string())
+}
+
+/// Compile an allowed importer in the background (or load its earlier compilation), so the
+/// first file it opens does not wait for it. Runs none of its code; a failure only means the
+/// first import compiles it instead.
+pub fn prepare(id: &str) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Some(dir) = plugins_dir().filter(|_| valid_id(id)) else { return };
+        let package = dir.join(id);
+        let _ = std::thread::Builder::new().name("plugin-prepare".into()).spawn(move || {
+            let prepared = std::panic::catch_unwind(|| {
+                solidcraft_engine::plugin::read_package(&package.to_string_lossy())
+                    .and_then(|p| solidcraft_engine::plugin::prepare_importer(&p, &dir))
+            });
+            if let Ok(Err(e)) = prepared {
+                log::debug!("plugin not prepared ahead of its first import: {e}");
+            }
+        });
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = id;
 }
 
 /// The plugins in `dir`, and the folders that were not. A missing directory is an empty list.
@@ -163,6 +229,30 @@ pub(crate) fn sync_policy(app: &mut SolveApp) {
     app.session.disabled_plugins.clone_from(&app.preferences.disabled_plugins);
     app.session.plugin_approvals.clone_from(&app.preferences.plugin_approvals);
     app.session.plugin_limits = host_limits(&app.preferences);
+    sync_contributions(app, false);
+}
+
+/// Put allowed, turned-on plugins' commands on the ribbon, palette and shortcuts, and take
+/// away the rest; their icons are drawn from then on. Only when the policy changed since the
+/// last time, unless `force` (after an install replaced a package).
+pub(crate) fn sync_contributions(app: &SolveApp, force: bool) {
+    type Policy = (Option<PathBuf>, std::collections::BTreeMap<String, String>, std::collections::BTreeSet<String>);
+    static LAST: std::sync::Mutex<Option<Policy>> = std::sync::Mutex::new(None);
+    let dir = app.session.plugins_dir.clone();
+    let policy: Policy = (dir.clone(), app.preferences.plugin_approvals.clone(), app.preferences.disabled_plugins.clone());
+    let Ok(mut last) = LAST.lock() else { return };
+    if !force && last.as_ref() == Some(&policy) {
+        return;
+    }
+    solidcraft_engine::plugin::contrib::sync(dir.as_deref(), &policy.1, &policy.2, &crate::icon_svg::known);
+    for spec in solidcraft_engine::plugin::contrib::specs() {
+        if let Some(svg) = spec.plugin.and_then(|c| c.icon_svg.as_deref())
+            && let Err(e) = crate::icon_svg::register_plugin_icon(spec.icon, svg)
+        {
+            log::warn!("{}: its icon is not drawn ({e})", spec.id);
+        }
+    }
+    *last = Some(policy);
 }
 fn parsed_limits(input: &LimitInputs) -> Option<solidcraft_engine::plugin::HostLimits> {
     let limits =
@@ -263,6 +353,7 @@ fn runtime_rows(app: &mut SolveApp, ui: &mut egui::Ui, plugin: &Plugin, runtime:
                 match current_approval(&plugin.id) {
                     Ok(hash) => {
                         app.preferences.plugin_approvals.insert(plugin.id.clone(), hash);
+                        prepare(&plugin.id);
                     }
                     Err(e) => app.set_status(e, true),
                 }
@@ -278,9 +369,95 @@ fn matches_query(plugin: &Plugin, query: &str) -> bool {
         return true;
     }
     let query = query.to_lowercase();
-    [plugin.name.as_str(), plugin.id.as_str(), plugin.description.as_str(), plugin.version.as_str()]
+    [plugin.name.as_str(), plugin.id.as_str(), plugin.description.as_str(), plugin.version.as_str(), plugin.publisher.as_str()]
         .iter()
+        .chain(plugin.contributes.iter().map(String::as_str).collect::<Vec<_>>().iter())
         .any(|text| text.to_lowercase().contains(&query))
+}
+
+/// One plugin's card: its icon, name, version and publisher; what it is and adds; what it
+/// asks for; and Allow or Revoke, Turn off or on, Show folder and Remove.
+fn card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugin) {
+    let t = crate::theme::Tokens::get();
+    let small = |ui: &mut egui::Ui, text: &str| {
+        ui.add(egui::Label::new(RichText::new(text).size(t.font_small).color(t.text_dim)).wrap());
+    };
+    crate::ui_kit::list_frame(ui, &format!("plugin_card_{}", plugin.id), |ui| {
+        ui.add_space(t.space_8);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+            crate::icons::paint_icon(ui.painter(), rect, &plugin.icon, 1.0);
+            crate::scenario::publish_rect(&format!("prefs:plugin_icon:{}", plugin.id), rect);
+            ui.vertical(|ui| {
+                ui.label(RichText::new(&plugin.name).strong());
+                let mut line = crate::i18n::format("ui.plugins_version", &[("version", &plugin.version)]);
+                if !plugin.publisher.is_empty() {
+                    line = format!("{line} · {}", crate::i18n::format("ui.plugins_publisher", &[("publisher", &plugin.publisher)]));
+                }
+                small(ui, &line);
+            });
+        });
+        if !plugin.description.is_empty() {
+            small(ui, &plugin.description);
+        }
+        if !plugin.contributes.is_empty() {
+            small(ui, &crate::i18n::format("ui.plugins_contributes", &[("commands", &plugin.contributes.join(", "))]));
+        }
+        if let Some(runtime) = &plugin.runtime {
+            runtime_rows(app, ui, plugin, runtime);
+        }
+        ui.horizontal_wrapped(|ui| {
+            let on = enabled(app, &plugin.id);
+            let toggle = crate::ui_kit::button(
+                ui,
+                crate::i18n::tr(if on { "ui.plugins_turn_off" } else { "ui.plugins_turn_on" }),
+                crate::ui_kit::Button::Normal,
+            );
+            crate::scenario::publish_handle(&format!("prefs:plugin:{}", plugin.id), toggle.rect.center());
+            if toggle.clicked() {
+                if on {
+                    if app.preferences.disabled_plugins.len() < MAX_DISABLED {
+                        app.preferences.disabled_plugins.insert(plugin.id.clone());
+                    }
+                } else {
+                    app.preferences.disabled_plugins.remove(&plugin.id);
+                }
+                sync_policy(app);
+            }
+            let folder = crate::ui_kit::button(ui, crate::i18n::tr("ui.plugins_open_folder"), crate::ui_kit::Button::Normal);
+            crate::scenario::publish_handle(&format!("prefs:plugin_folder:{}", plugin.id), folder.rect.center());
+            if folder.clicked()
+                && let Some(show) = &app.services.show_in_folder
+            {
+                // It opens the parent of the path it is given: the package's own folder.
+                show(&dir.join(&plugin.id).join("plugin.json").display().to_string());
+            }
+            // Remove asks once more, in place.
+            let confirm_id = egui::Id::new(("plugin_remove_confirm", plugin.id.as_str()));
+            let confirming = ui.ctx().data(|d| d.get_temp::<bool>(confirm_id)).unwrap_or(false);
+            let label =
+                if confirming { format!("{}?", crate::i18n::tr("ui.plugins_remove")) } else { crate::i18n::tr("ui.plugins_remove").to_string() };
+            let remove = crate::ui_kit::button(ui, &label, if confirming { crate::ui_kit::Button::Primary } else { crate::ui_kit::Button::Normal });
+            crate::scenario::publish_handle(&format!("prefs:plugin_remove:{}", plugin.id), remove.rect.center());
+            if remove.clicked() {
+                if confirming {
+                    ui.ctx().data_mut(|d| d.remove::<bool>(confirm_id));
+                    match app.run("plugin.remove", serde_json::json!({"id": plugin.id})) {
+                        Ok(_) => {
+                            app.preferences.plugin_approvals.remove(&plugin.id);
+                            app.preferences.disabled_plugins.remove(&plugin.id);
+                            sync_policy(app);
+                            app.set_status(crate::i18n::format("ui.plugins_removed", &[("name", &plugin.name)]), false);
+                        }
+                        Err(e) => app.set_status(e, true),
+                    }
+                } else {
+                    ui.ctx().data_mut(|d| d.insert_temp(confirm_id, true));
+                }
+            }
+        });
+        ui.add_space(t.space_8);
+    });
 }
 
 /// The Plugins page. Desktop only: the browser build has no per-user plugin folder.
@@ -347,31 +524,8 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::prefs_search::reveal(ui);
             crate::prefs_search::push_force(ui);
         }
-        let mut on = enabled(app, &plugin.id);
-        ui.horizontal(|ui| {
-            let check = crate::ui_kit::checkbox(ui, "", &mut on);
-            crate::scenario::publish_handle(&format!("prefs:plugin:{}", plugin.id), check.rect.center());
-            if check.changed() {
-                if on {
-                    app.preferences.disabled_plugins.remove(&plugin.id);
-                } else if app.preferences.disabled_plugins.len() < MAX_DISABLED {
-                    app.preferences.disabled_plugins.insert(plugin.id.clone());
-                }
-            }
-            ui.vertical(|ui| {
-                ui.label(RichText::new(&plugin.name).strong());
-                ui.label(
-                    RichText::new(crate::i18n::format("ui.plugins_version", &[("version", &plugin.version)])).size(t.font_small).color(t.text_dim),
-                );
-                if !plugin.description.is_empty() {
-                    ui.label(RichText::new(&plugin.description).size(t.font_small).color(t.text_dim));
-                }
-                if let Some(runtime) = &plugin.runtime {
-                    runtime_rows(app, ui, plugin, runtime);
-                }
-            });
-        });
-        ui.separator();
+        card(app, ui, &dir, plugin);
+        ui.add_space(8.0);
         if searching {
             crate::prefs_search::pop_force(ui);
         }
@@ -535,6 +689,10 @@ mod tests {
             version: "0.1.0".into(),
             description: "Commercial robot parts.".into(),
             runtime: None,
+            publisher: "Robot parts makers".into(),
+            contributes: vec!["Insert part (Insert › Parts)".into()],
+            icon_svg: None,
+            icon: "play".into(),
         };
         assert!(matches_query(&plugin, ""));
         assert!(matches_query(&plugin, " frc "));

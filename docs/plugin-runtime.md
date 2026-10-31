@@ -183,8 +183,8 @@ invocations also write consumed/remaining fuel to the existing debug logger. In 
 `--debug` to see these counters on stderr; normal command output and plugin result JSON stay the
 same. No model contents or package paths are included in that counter message.
 
-There is no on-disk compiled-code cache, unsafe deserialization, WASI filesystem/clock/socket/process
-API for command plugins, network integration, persistent store, signed index, custom panels or icons.
+Command plugins have no on-disk compiled-code cache (importers do, see below), and there is no
+unsafe deserialization in SolidCraft's code, WASI filesystem/clock/socket/process API for command plugins, network integration, persistent store, signed index, custom panels or icons.
 The WIT store interface is present for command-world compatibility, but operations are denied;
 `previous-version` returns none. `manifest()` is not used.
 
@@ -224,11 +224,23 @@ interface importer {
     record imported { payload: payload, notes: string }
     %import: func(file-name: string, bytes: list<u8>) -> result<imported, plugin-error>;
 }
+interface import-context {
+    enum stage { reading, decoding, mapping, writing }
+    options: func() -> string;
+    progress: func(stage: stage, done: u32, total: u32);
+}
 world importer-plugin {
     import log;
+    import import-context;
     export importer;
 }
 ```
+
+`import-context.options()` returns the options the user chose, as a JSON object: the checked
+values of the parameters the package's import command declares (see Contributions), plus
+`into` (`new` or `current`). `progress` names the step the import is on; the app's progress
+card shows it, and Cancel stops the importer at its next check (epoch interruption), leaving
+the open design as it was. A component that imports neither still runs.
 
 The host reads the file the user chose, inside the caller's file scope, and passes its name
 (without folders) and its bytes, at most 512 MiB. That is all the component gets: the world has
@@ -268,6 +280,9 @@ history as they were.
 - `plugin: "<package folder>", approval: "<hash>"` runs a package that is not installed, as
   `plugin.run` does, with the hash `plugin.inspect` returned after review. This is the way for
   the CLI and scripts, which have no preferences.
+- `options: {..}` is handed to the importer; `into: "current"` adds the converted geometry to
+  the open design as a component named after the file (one undo step), instead of opening a
+  new design. Into the open design only the geometry comes along, not the source's history.
 
 `doc.open` routes a file it cannot read the same way, so File > Open, dropping a file on the
 window, Open Recent and the control channel all reach an allowed importer. In the desktop app
@@ -290,7 +305,72 @@ preferences and asks before `plugin.install` and `file.import`.
 The host runs each import on a thread of its own (a 64 MiB native stack, 16 MiB of it for Wasm
 frames, since decoders recurse deeply), under the package's fuel, memory and deadline, and
 keeps up to four compiled importers in memory by approval hash: compiling a large importer can
-take longer than running it. It never stores compiled code on disk.
+take longer than running it. Compiled importers are also kept on disk, in `plugin-cache` beside
+the plugins folder, through Wasmtime's own compilation cache: an entry is found by a hash of the
+component's exact bytes, the engine's settings and the Wasmtime version, so a changed component,
+setting or release compiles again, and an entry that does not decompress or load is compiled
+again and replaced. Allowing an importer compiles it in the background. Only SolidCraft writes
+that folder; a package or a design never supplies compiled code.
+
+## Contributions: commands, ribbon, dialogs and icons
+
+A package with a runtime may add commands to the app. They are ordinary commands: the ribbon,
+command palette, search, shortcuts, control channel, MCP and CLI all reach them, by the id
+`plugin.<package id>.<command id>`, while the plugin is allowed for its exact content and turned
+on. Revoking, turning off or removing it takes them away.
+
+```json
+"publisher": "Dutchman",
+"icon": "icon.svg",
+"contributes": {
+  "commands": [{
+    "id": "import", "label": "Import CAD design", "tooltip": "…", "icon": "import",
+    "shortcut": "Ctrl+Shift+I", "when": "always",
+    "params": [
+      { "name": "preset", "label": "Preset", "type": "enum", "default": "standard",
+        "options": [{ "value": "standard", "label": "Standard" }, { "value": "fast", "label": "Fast" }] },
+      { "name": "keep_history", "label": "Keep history", "type": "bool", "default": true }
+    ]
+  }],
+  "toolbar": [{ "tab": "INSERT", "panel": "DUTCHMAN", "commands": ["import"] }]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `publisher` | Who publishes it, at most 80 characters (the Plugins page shows it) |
+| `icon` | The package's icon: an SVG file in the package |
+| `commands[].id` | 1..32 lowercase letters, digits and underscores |
+| `label`, `tooltip` | 1..40 and at most 240 characters |
+| `icon` | A built-in icon's name, or an SVG file in the package; the package's icon, else a generic plugin icon, when omitted |
+| `shortcut` | A suggestion; not bound when a built-in command (or an earlier plugin) has it |
+| `when` | `always`, `no_sketch` or `sketch` |
+| `entry` | A command plugin's entry the command runs; an importer's command imports a file and names none |
+| `params` | Up to 32: `number` (`unit`, `min`, `max`), `length` (mm), `angle` (degrees), `bool`, `enum` (`options`), `string`, `selection` (`accept`: faces, edges or bodies; `many`); each with `label`, optional `default`, `required` and `help` |
+| `toolbar` | A tab (an existing one, or a tab of the plugin's own) and a panel, in upper case, and the commands on it in order |
+
+From the ribbon, a command opens the app's own dialog drawn from its `params`; an importer's
+command first asks for a file of its formats, and its dialog adds where the result goes. Through
+`engine.execute`, the CLI or MCP it runs with JSON parameters and opens no dialog; an importer's
+takes `path` and `into` as well. The parameters are checked against the declaration before the
+plugin runs. The agent chat asks before running any of them. Over the control channel,
+`ui.start {"command": "<id>", "params": {"path": "…"}}` opens an importer command's dialog on
+that file, as the ribbon does after its file picker.
+
+Icons are SVG files of at most 32 KiB with `viewBox="0 0 64 64"`, drawn through the same parser
+as SolidCraft's own icons: only `svg`, `g`, `defs`, `mask`, `clipPath`, `path` and `circle`
+elements in the palette's colours. Anything else refuses the icon, and the generic plugin icon
+is drawn. Icon files are part of the approval hash.
+
+The standalone CLI has no preferences: `solidcraft-cli --allow-plugin ID=HASH …` (repeatable,
+local sessions only) allows an installed plugin for the exact content `plugin.inspect` hashed,
+and its commands join that run's registry:
+
+```text
+solidcraft-cli --allow-plugin dutchman-convert=<hash> run import.json
+```
+
+`plugin.remove {id}` deletes an installed package's folder and its approval.
 
 The [Dutchman Convert example](../examples/plugins/dutchman-convert/README.md) is a full
 importer: Fusion, Inventor, SolidWorks and FreeCAD files through Dutchman's design writer, with

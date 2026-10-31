@@ -61,6 +61,9 @@ pub struct Request {
     /// An open through `file.import`: a file an importer plugin converts (or one SolidCraft
     /// reads, as doc.open), opened as a new design in its own tab.
     pub import: bool,
+    /// The command that does it instead of the kind's own (a plugin's import command, which
+    /// checks its options): it is given the path and the options.
+    pub command: Option<&'static str>,
 }
 
 impl Request {
@@ -74,6 +77,7 @@ impl Request {
             allow_hosts: Vec::new(),
             design: None,
             import: false,
+            command: None,
         }
     }
     fn insert(&self) -> bool {
@@ -86,6 +90,9 @@ impl Request {
         Value::Object(params)
     }
     fn command(&self) -> (&'static str, Value) {
+        if let Some(command) = self.command {
+            return (command, self.params());
+        }
         match &self.kind {
             Kind::Open if self.import => ("file.import", self.params()),
             Kind::Open => ("doc.open", self.params()),
@@ -358,7 +365,13 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         return Some(req);
     }
     let command = req.params.get("command").or(req.params.get("id")).and_then(Value::as_str);
+    // A plugin's import command goes to the worker as file.import does: as a new design, or
+    // (into: current) into this one.
+    let plugin_import = command.and_then(solidcraft_engine::find_command).filter(|c| c.plugin.is_some_and(|p| p.imports())).map(|c| c.id);
+    let into_current = req.params.get("params").and_then(|p| p.get("into")).and_then(Value::as_str) == Some("current");
     let kind = match command {
+        _ if plugin_import.is_some() && into_current => Kind::Insert,
+        _ if plugin_import.is_some() => Kind::Open,
         Some("doc.open" | "file.import") => Kind::Open,
         Some("file.insert_step" | "file.insert_mesh" | "pointcloud.insert") => Kind::Insert,
         Some("file.export_view_dxf") => Kind::ExportDxf,
@@ -384,8 +397,18 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         options.remove("path");
         options.retain(|_, v| !v.is_null());
     }
-    let import = command == Some("file.import");
-    let request = Request { path: path.into(), kind, reply: Some(req.reply.clone()), scope, options, allow_hosts: Vec::new(), design: None, import };
+    let import = command == Some("file.import") || (plugin_import.is_some() && kind == Kind::Open);
+    let request = Request {
+        path: path.into(),
+        kind,
+        reply: Some(req.reply.clone()),
+        scope,
+        options,
+        allow_hosts: Vec::new(),
+        design: None,
+        import,
+        command: plugin_import,
+    };
     let _ = begin_request(app, request);
     None
 }
@@ -958,8 +981,13 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 crate::frame_watch::step(app, "stand-up offer");
                 let warnings = made.result.get("warnings").and_then(Value::as_array);
+                let plugin_report = crate::plugin_report::from_reply(&made.result, &request.path);
                 if let Kind::Recover { .. } = request.kind {
                     recovered(app, request);
+                } else if let Some(report) = plugin_report {
+                    // An importer plugin's import: what it brought over, and its notes.
+                    app.set_status(report.summary.clone(), false);
+                    crate::plugin_report::open(ctx, report);
                 } else {
                     app.set_status(
                         if made.result.get("read_only").and_then(Value::as_bool) == Some(true) {
@@ -1014,6 +1042,19 @@ pub(crate) fn phase(app: &SolveApp) -> Option<&'static str> {
         (_, 1) => "preparing the view",
         _ => "finishing the open",
     })
+}
+
+/// What an importer plugin says it is doing, as the progress card shows it.
+fn plugin_stage_text(stage: &str, done: usize, total: usize) -> String {
+    let key = match stage {
+        "plugin.preparing" => "file_load.plugin_preparing",
+        "plugin.reading" => "file_load.plugin_reading",
+        "plugin.decoding" => "file_load.plugin_decoding",
+        "plugin.mapping" => "file_load.plugin_mapping",
+        _ => "file_load.plugin_writing",
+    };
+    let text = crate::i18n::tr(key).to_string();
+    if total > 1 { format!("{text} ({}%)", done * 100 / total.max(1)) } else { text }
 }
 
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
@@ -1105,6 +1146,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             } else {
                 match (phase, work) {
                     (_, work) if r.request.kind == Kind::ExportDxf => crate::dialogs_view_dxf::progress_text(work),
+                    // An importer plugin's own steps.
+                    (_, Some((stage, d, t))) if stage.starts_with("plugin.") => plugin_stage_text(stage, d, t),
                     (_, Some(("reading", d, t))) => {
                         crate::i18n::format("file_load.reading_percent", &[("percent", &(d * 100 / t.max(1)).to_string())])
                     }

@@ -24,6 +24,7 @@
 //! solidcraft-cli icon --out F.png|F.ico [--size N]             the app icon (packaging; drawn, not a file)
 //!
 //! --plugin-limits FILE.json (local sessions only)              user fuel/memory ceilings; connected desktops use their own preferences
+//! --allow-plugin ID=HASH (local sessions only, repeatable)     allow an installed plugin for this exact content (the hash plugin.inspect gives): its commands join the registry
 //! --debug (with any command)                                  SolidCraft's debug log on stderr (or RUST_LOG=LEVEL)
 //! --max-file-size SIZE (with any command)                     read STEP and design files up to SIZE (2GB, 1500MB; at most 16GB)
 //! ```
@@ -141,6 +142,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     if let Err(e) = plugin_limits(&mut args) {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = allow_plugins(&mut args) {
         eprintln!("error: {e}");
         return ExitCode::FAILURE;
     }
@@ -275,6 +280,36 @@ fn plugin_limits(args: &mut Vec<String>) -> Result<(), String> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
     let limits: solidcraft_engine::plugin::HostLimits = serde_json::from_slice(bytes).map_err(|e| format!("--plugin-limits: {e}"))?;
     solidcraft_engine::plugin::configure_process_host_limits(limits).map_err(|e| e.to_string())
+}
+
+/// `--allow-plugin ID=HASH`: allow installed plugins for local sessions, as Preferences > Plugins
+/// does in the app, for their exact content.
+fn allow_plugins(args: &mut Vec<String>) -> Result<(), String> {
+    let mut approvals = std::collections::BTreeMap::new();
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        let value = if arg == "--allow-plugin" {
+            let value = args.get(i + 1).filter(|v| !v.starts_with("--")).cloned().ok_or("--allow-plugin needs ID=HASH")?;
+            args.drain(i..i + 2);
+            value
+        } else if let Some(value) = arg.strip_prefix("--allow-plugin=") {
+            let value = value.to_string();
+            args.remove(i);
+            value
+        } else {
+            i += 1;
+            continue;
+        };
+        let (id, hash) = value.split_once('=').ok_or("--allow-plugin needs ID=HASH")?;
+        approvals.insert(id.to_string(), hash.to_ascii_lowercase());
+    }
+    if approvals.is_empty() {
+        return Ok(());
+    }
+    if args.iter().any(|v| v == "--connect" || v.starts_with("--connect=")) {
+        return Err("--allow-plugin controls local sessions; allow it in the connected desktop's Preferences > Plugins".into());
+    }
+    solidcraft_engine::plugin::configure_process_approvals(approvals).map_err(|e| e.to_string())
 }
 
 fn pretty(v: &Value) -> String {

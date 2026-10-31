@@ -202,9 +202,14 @@ pub type PanelLists = Vec<(&'static str, Vec<&'static CommandSpec>, usize)>;
 /// runs, so each tab's lists are worked out once: the toolbar asks for them every frame, and
 /// working them out matches every command against every section (about a millisecond a frame).
 pub fn panel_lists(tab: &str) -> PanelLists {
-    static LISTS: std::sync::Mutex<BTreeMap<String, PanelLists>> = std::sync::Mutex::new(BTreeMap::new());
+    // Worked out again when allowed plugins add or take away commands.
+    static LISTS: std::sync::Mutex<(u64, BTreeMap<String, PanelLists>)> = std::sync::Mutex::new((0, BTreeMap::new()));
     let Ok(mut lists) = LISTS.lock() else { return panel_lists_of(tab) };
-    lists.entry(tab.to_string()).or_insert_with(|| panel_lists_of(tab)).clone()
+    let generation = solidcraft_engine::plugin::contrib::generation();
+    if lists.0 != generation {
+        *lists = (generation, BTreeMap::new());
+    }
+    lists.1.entry(tab.to_string()).or_insert_with(|| panel_lists_of(tab)).clone()
 }
 
 /// [`panel_lists`] worked out from the registry.

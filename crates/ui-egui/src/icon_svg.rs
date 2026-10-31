@@ -649,6 +649,54 @@ fn table() -> &'static (HashMap<&'static str, Entry>, HashMap<&'static str, Entr
     })
 }
 
+/// Icons plugins ship (`plugin:<command id>`), parsed by the same whitelist parser as the app's
+/// own: only plain shapes in palette colours draw, and anything else refuses the whole icon.
+/// Each is leaked once per name and drawing.
+fn plugin_icons() -> &'static std::sync::RwLock<HashMap<&'static str, (u64, &'static Doc)>> {
+    static T: OnceLock<std::sync::RwLock<HashMap<&'static str, (u64, &'static Doc)>>> = OnceLock::new();
+    T.get_or_init(Default::default)
+}
+
+/// The largest plugin icon accepted.
+pub const MAX_PLUGIN_ICON_BYTES: usize = 32 * 1024;
+
+/// Draw `name` (a contributed command's `plugin:` icon) as `svg`. Refused, and the command
+/// keeps the generic plugin icon, unless it is a 64-unit SVG of the app's own shapes.
+pub fn register_plugin_icon(name: &str, svg: &str) -> Result<(), String> {
+    if !name.starts_with("plugin:") || svg.len() > MAX_PLUGIN_ICON_BYTES {
+        return Err("a plugin icon is at most 32 KiB".into());
+    }
+    if !svg.contains(r#"viewBox="0 0 64 64""#) {
+        return Err("a plugin icon has viewBox=\"0 0 64 64\"".into());
+    }
+    let hash = {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        svg.hash(&mut h);
+        h.finish()
+    };
+    let mut icons = plugin_icons().write().map_err(|_| "icon table unavailable".to_string())?;
+    if icons.get(name).is_some_and(|(h, _)| *h == hash) {
+        return Ok(());
+    }
+    let doc: &'static Doc = Box::leak(Box::new(Doc::parse(svg)?));
+    let key: &'static str = match icons.get_key_value(name) {
+        Some((k, _)) => k,
+        None => Box::leak(name.to_string().into_boxed_str()),
+    };
+    icons.insert(key, (hash, doc));
+    Ok(())
+}
+
+/// Whether `name` is one of the app's own icons (not the placeholder).
+pub fn known(name: &str) -> bool {
+    !name.starts_with("plugin:") && !resolve_master(name).placeholder
+}
+
+fn plugin_icon(name: &str) -> Option<(&'static str, &'static Doc)> {
+    plugin_icons().read().ok()?.get_key_value(name).map(|(k, (_, d))| (*k, *d))
+}
+
 /// A resolved icon: the master to draw and the accent it is drawn in.
 #[derive(Clone, Copy, Debug)]
 pub struct Resolved {
@@ -690,6 +738,13 @@ pub fn resolve(name: &str) -> Resolved {
 }
 
 fn resolve_master(name: &str) -> Resolved {
+    if name.starts_with("plugin:") {
+        // A plugin's own icon, else the generic plugin icon (Run Plugin's).
+        return match plugin_icon(name) {
+            Some((k, _)) => Resolved { master: k, accent: None, placeholder: false },
+            None => resolve_master("play"),
+        };
+    }
     let (big, _) = table();
     let placeholder = Resolved { master: PLACEHOLDER, accent: None, placeholder: true };
     if let Some((_, master, accent)) = ALIASES.iter().find(|(a, _, _)| *a == name) {
@@ -706,6 +761,9 @@ fn resolve_master(name: &str) -> Resolved {
 
 /// The master to draw at `px` pixels: the small-slot variant where one exists.
 pub fn doc_for(master: &str, px: u32) -> Option<&'static Doc> {
+    if let Some((_, doc)) = plugin_icon(master) {
+        return Some(doc);
+    }
     let (big, small) = table();
     if let Some(e) = small.get(master).filter(|_| px <= 24) {
         return Some(&e.doc);

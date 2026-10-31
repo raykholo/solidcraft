@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{EngineError, Result, Session};
 
+pub mod contrib;
 #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod runtime;
 
@@ -63,6 +64,20 @@ pub fn configure_process_host_limits(limits: HostLimits) -> Result<()> {
 pub(crate) fn default_host_limits() -> HostLimits {
     PROCESS_HOST_LIMITS.get().copied().unwrap_or_default()
 }
+static PROCESS_APPROVALS: std::sync::OnceLock<std::collections::BTreeMap<String, String>> = std::sync::OnceLock::new();
+/// Allow installed plugins (id → approval hash) for every local session this process makes,
+/// and put their contributed commands in the registry. Trusted host startup only (the CLI's
+/// `--allow-plugin`), never a guest command.
+pub fn configure_process_approvals(approvals: std::collections::BTreeMap<String, String>) -> Result<()> {
+    if approvals.iter().any(|(id, hash)| !valid_id(id) || hash.len() != 64 || !hash.bytes().all(|c| c.is_ascii_hexdigit())) {
+        return Err(error("an approval is an installed plugin's id and the 64-digit hash plugin.inspect gives"));
+    }
+    contrib::sync(default_plugins_dir().as_deref(), &approvals, &Default::default(), &|_| true);
+    PROCESS_APPROVALS.set(approvals).map_err(|_| error("process plugin approvals are already configured"))
+}
+pub(crate) fn default_approvals() -> std::collections::BTreeMap<String, String> {
+    PROCESS_APPROVALS.get().cloned().unwrap_or_default()
+}
 
 /// Metadata is inert. A runtime declaration still needs explicit approval to execute.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -73,8 +88,18 @@ pub struct Manifest {
     pub version: String,
     #[serde(default)]
     pub description: String,
+    /// Who publishes it, as the Plugins page shows it (at most 80 characters).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub publisher: String,
+    /// The package's icon: an SVG file in the package (`icon.svg`), drawn as the app's own icons
+    /// are (only their plain shapes and palette colours).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeManifest>,
+    /// Commands it adds to the app, and where on the ribbon they go.
+    #[serde(default, skip_serializing_if = "contrib::Contributes::is_empty")]
+    pub contributes: contrib::Contributes,
 }
 
 /// What a package's component does, and so which WIT world it is run in.
@@ -180,6 +205,13 @@ pub fn parse_manifest(text: &[u8], folder: &str) -> Result<Manifest> {
     m.name = m.name.trim().to_string();
     m.version = m.version.trim().to_string();
     m.description = m.description.trim().to_string();
+    m.publisher = m.publisher.trim().to_string();
+    if m.publisher.chars().count() > 80 || m.publisher.chars().any(char::is_control) {
+        return Err(error("the publisher is at most 80 characters"));
+    }
+    if m.icon.as_deref().is_some_and(|i| !contrib::icon_file(i)) {
+        return Err(error("the icon is a lowercase .svg file in the package"));
+    }
     if !valid_id(&m.id) || m.id != folder {
         return Err(error("manifest id does not match its lowercase package folder"));
     }
@@ -233,6 +265,7 @@ pub fn parse_manifest(text: &[u8], folder: &str) -> Result<Manifest> {
         }
         runtime.limits.validate()?;
     }
+    contrib::validate(&m)?;
     Ok(m)
 }
 
@@ -266,6 +299,8 @@ pub struct Package {
     pub manifest: Manifest,
     pub approval: String,
     pub component: Vec<u8>,
+    /// The SVG icons the manifest names, by file name (each at most 32 KiB of UTF-8).
+    pub icons: std::collections::BTreeMap<String, String>,
 }
 
 /// Reads through the caller's existing file scope; no permissions are added here.
@@ -285,7 +320,22 @@ pub fn read_package(path: &str) -> Result<Package> {
     digest.update((bytes.len() as u64).to_le_bytes());
     digest.update(&bytes);
     digest.update(&component);
-    Ok(Package { manifest, approval: format!("{:x}", digest.finalize()), component })
+    // Icons are part of what the user approves; a package without any hashes as before.
+    let mut icons = std::collections::BTreeMap::new();
+    for name in contrib::icon_files(&manifest) {
+        let bytes = solidcraft_io::vfs::read(&dir.join(&name).to_string_lossy(), contrib::MAX_ICON_BYTES)
+            .map_err(|e| error(format!("{name}: {e} (an icon is at most 32 KiB)")))?;
+        let text = String::from_utf8(bytes).map_err(|_| error(format!("{name}: an icon is UTF-8 SVG text")))?;
+        if icons.is_empty() {
+            digest.update(b"\0icons\0");
+        }
+        digest.update((name.len() as u64).to_le_bytes());
+        digest.update(name.as_bytes());
+        digest.update((text.len() as u64).to_le_bytes());
+        digest.update(text.as_bytes());
+        icons.insert(name, text);
+    }
+    Ok(Package { manifest, approval: format!("{:x}", digest.finalize()), component, icons })
 }
 
 pub fn run(session: &mut Session, package: Package, entry: &str, params: &serde_json::Value) -> Result<serde_json::Value> {
@@ -334,7 +384,15 @@ pub const MAX_NOTES_BYTES: usize = 64 * 1024;
 
 /// Run an importer on one file's contents. The component gets `file_name` (no folders) and
 /// `bytes`, nothing else, under the package's approved limits; it cannot touch the session.
-pub fn import(session: &Session, package: &Package, file_name: &str, bytes: Vec<u8>) -> Result<Imported> {
+/// `options`: the checked values of the package's import command parameters, which the
+/// importer reads through `import-context.options`.
+pub fn import(
+    session: &Session,
+    package: &Package,
+    file_name: &str,
+    bytes: Vec<u8>,
+    options: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Imported> {
     if session.disabled_plugins.contains(&package.manifest.id) {
         return Err(error("plugin is disabled"));
     }
@@ -349,12 +407,39 @@ pub fn import(session: &Session, package: &Package, file_name: &str, bytes: Vec<
     let file_name = Path::new(file_name).file_name().and_then(|n| n.to_str()).unwrap_or_default();
     #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
-        runtime::import(package, file_name, bytes)
+        let options = serde_json::to_string(options).map_err(|e| error(e.to_string()))?;
+        runtime::import(package, file_name, bytes, options, session.plugins_dir.as_deref().and_then(compiled_cache_dir).as_deref())
     }
     #[cfg(not(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64"))))]
     {
-        let _ = (file_name, bytes);
+        let _ = (file_name, bytes, options);
         Err(error("plugin execution requires an x86-64 or AArch64 native build with the plugins feature"))
+    }
+}
+
+/// Where compiled importers are kept between sessions: `plugin-cache` beside the plugins
+/// folder `plugins_dir`. Only SolidCraft writes it; a package or a design never supplies
+/// compiled code.
+pub fn compiled_cache_dir(plugins_dir: &Path) -> Option<std::path::PathBuf> {
+    plugins_dir.parent().map(|d| d.join("plugin-cache"))
+}
+
+/// Compile an importer now (or load its earlier compilation from the cache beside
+/// `plugins_dir`), so its first import does not wait for it. Runs no plugin code. A command
+/// plugin, or a build without an execution host, has nothing to prepare.
+pub fn prepare_importer(package: &Package, plugins_dir: &Path) -> Result<()> {
+    let rt = package.manifest.runtime.as_ref().ok_or_else(|| error("no executable runtime"))?;
+    if rt.kind != Kind::Importer {
+        return Ok(());
+    }
+    #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        runtime::prepare(package, compiled_cache_dir(plugins_dir).as_deref())
+    }
+    #[cfg(not(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    {
+        let _ = plugins_dir;
+        Ok(())
     }
 }
 
@@ -404,6 +489,30 @@ pub fn importer_for(session: &Session, path: &str) -> Option<Installed> {
     })
 }
 
+/// The installed plugin `id`, when the user allowed it for its exact content now and has not
+/// turned it off; otherwise why not, in words for the user.
+pub fn allowed_installed(session: &Session, id: &str) -> std::result::Result<Installed, String> {
+    let dir = session.plugins_dir.as_deref().ok_or("this build has no plugins folder")?;
+    let installed = installed(dir).into_iter().find(|p| p.manifest.id == id).ok_or_else(|| format!("no installed plugin `{id}`"))?;
+    if session.disabled_plugins.contains(id) {
+        return Err(format!("plugin `{id}` is turned off in Preferences > Plugins"));
+    }
+    if session.plugin_approvals.get(id) != Some(&installed.approval) {
+        return Err(format!("plugin `{id}` is not allowed to run: allow it in Preferences > Plugins"));
+    }
+    Ok(installed)
+}
+
+/// Delete installed package `id` from the plugins folder `dir`: only a folder `installed`
+/// lists, by its exact path inside `dir`.
+pub fn remove(id: &str, dir: &Path) -> Result<()> {
+    let package = installed(dir).into_iter().find(|p| p.manifest.id == id).ok_or_else(|| error(format!("no installed plugin `{id}`")))?;
+    if package.path != dir.join(id) || package.path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(true) {
+        return Err(error("the package is not a folder of the plugins folder"));
+    }
+    std::fs::remove_dir_all(&package.path).map_err(|e| error(format!("{}: {e}", package.path.display())))
+}
+
 /// Copy the package in folder `from` into the plugins folder `dir`, replacing an installed
 /// copy only when `replace`. Installing never approves it: the user allows it in Preferences.
 pub fn install(from: &str, dir: &Path, replace: bool) -> Result<Installed> {
@@ -418,6 +527,9 @@ pub fn install(from: &str, dir: &Path, replace: bool) -> Result<Installed> {
     let write = |path: std::path::PathBuf, bytes: &[u8]| std::fs::write(&path, bytes).map_err(|e| error(format!("{}: {e}", path.display())));
     std::fs::create_dir_all(&to).map_err(|e| error(format!("{}: {e}", to.display())))?;
     write(to.join(&runtime.module), &package.component)?;
+    for (name, text) in &package.icons {
+        write(to.join(name), text.as_bytes())?;
+    }
     write(to.join("plugin.json"), &manifest)?;
     let installed = read_package(&to.to_string_lossy())?;
     if installed.approval != package.approval {

@@ -73,7 +73,7 @@ fn reads_only(id: &str) -> bool {
 /// Commands that read or write a file by their nature: any string they are given in a path
 /// parameter is a file, whatever it looks like.
 fn is_file_verb(id: &str) -> bool {
-    if matches!(id, "plugin.inspect" | "plugin.install") {
+    if matches!(id, "plugin.inspect" | "plugin.install" | "plugin.remove") {
         return true;
     }
     id.starts_with("library.") || ["export", "import", "save", "open", "insert", "load", "write", "recover"].iter().any(|v| id.contains(v))
@@ -131,6 +131,11 @@ pub fn command(id: &str, params: &Value, undo_left: usize) -> Verdict {
         let path = shown("path");
         let entry = shown("entry");
         return Verdict::Ask(crate::i18n::format("ui.plugin_run_consent", &[("entry", &entry), ("path", &path)]));
+    }
+    // A command an allowed plugin added runs that plugin: the user decides each time.
+    if let Some(c) = solidcraft_engine::find_command(id).and_then(|spec| spec.plugin.map(|c| (spec.label, c))) {
+        let (label, c) = c;
+        return Verdict::Ask(crate::i18n::format("ui.plugin_command_consent", &[("command", label), ("plugin", &c.plugin_name)]));
     }
     // Files, and commands that replace or reload the whole design.
     let file_command = id.starts_with("file.") || id.starts_with("doc.") || matches!(id, "render.export" | "render.start");

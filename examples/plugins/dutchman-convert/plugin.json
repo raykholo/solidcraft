@@ -1,24 +1,89 @@
 {
   "id": "dutchman-convert",
   "name": "Dutchman Convert",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Opens Fusion, Inventor, SolidWorks and FreeCAD designs with their feature history, converted by Dutchman.",
+  "publisher": "Dutchman",
   "runtime": {
     "api": "solidcraft:plugin@0.1.0",
     "module": "plugin.wasm",
     "kind": "importer",
     "formats": [
-      { "extension": "f3d", "name": "Fusion design" },
-      { "extension": "f3z", "name": "Fusion archive" },
-      { "extension": "ipt", "name": "Inventor part" },
-      { "extension": "sldprt", "name": "SolidWorks part" },
-      { "extension": "fcstd", "name": "FreeCAD document" }
+      {
+        "extension": "f3d",
+        "name": "Fusion design"
+      },
+      {
+        "extension": "f3z",
+        "name": "Fusion archive"
+      },
+      {
+        "extension": "ipt",
+        "name": "Inventor part"
+      },
+      {
+        "extension": "sldprt",
+        "name": "SolidWorks part"
+      },
+      {
+        "extension": "fcstd",
+        "name": "FreeCAD document"
+      }
     ],
     "limits": {
       "fuel": 100000000000,
       "memory_mib": 1024,
       "deadline_ms": 30000,
-      "component_mib": 80
+      "component_mib": 48
     }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "id": "import",
+        "label": "Import CAD design",
+        "tooltip": "Open a Fusion, Inventor, SolidWorks or FreeCAD file with its feature history, converted by Dutchman",
+        "icon": "import",
+        "params": [
+          {
+            "name": "preset",
+            "label": "Preset",
+            "type": "enum",
+            "default": "standard",
+            "options": [
+              {
+                "value": "standard",
+                "label": "Standard"
+              },
+              {
+                "value": "fast",
+                "label": "Fast (geometry only)"
+              },
+              {
+                "value": "full",
+                "label": "Full (with reference sketches)"
+              }
+            ],
+            "help": "Standard brings the feature history and joints; Full adds reference sketches; Fast brings the geometry alone."
+          },
+          {
+            "name": "keep_history",
+            "label": "Keep history",
+            "type": "bool",
+            "default": true,
+            "help": "Off: the geometry alone, as one import."
+          }
+        ]
+      }
+    ],
+    "toolbar": [
+      {
+        "tab": "INSERT",
+        "panel": "DUTCHMAN",
+        "commands": [
+          "import"
+        ]
+      }
+    ]
   }
 }

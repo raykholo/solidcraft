@@ -31,36 +31,37 @@ cp target/wasm32-wasip2/release/solidcraft_dutchman_convert.wasm plugin.wasm
 ```
 
 The target's linker writes a component directly; no adapter or `wasm-tools` step is needed.
-The component is about 65 MiB: it links every cadmpeg decoder Dutchman's format registry
-names, and LTO is off because a fat or thin LTO link of all of them needs more than 12 GiB of
-memory. `plugin.json` therefore asks for `limits.component_mib: 80` (the default cap is 16 MiB);
-the Plugins page shows it, and it is part of what you allow.
+The component is about 38 MiB (39.7 MB). It links only the cadmpeg codecs of the formats it
+claims (Dutchman's per-format Cargo features) and is built for size: `opt-level = "z"`, one
+code unit and thin LTO, which links within 12 GiB of memory. `plugin.json` asks for
+`limits.component_mib: 48` (the default cap is 16 MiB); the Plugins page shows it, and it is
+part of what you allow.
 The component imports only the plugin log and the WASI interfaces Rust's standard library
 links; SolidCraft gives an importer an empty WASI (see
 [the runtime reference](../../../docs/plugin-runtime.md#importer-plugins)).
 
 Dutchman reads files from disk; the plugin calls `dutchman_core::read_bytes`, Dutchman's
-entry point for a file's contents alone (a small addition on Dutchman's `wasm-read-bytes`
-branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
+entry point for a file's contents alone, then `SolidCraftWriter` with verification off.
+`Cargo.toml` pins Dutchman's `solidcraft-plugin-pin` branch: main with a Cargo feature per
+input format and assembly parts that keep an unchecked history hidden.
 
 ## Known limits
 
-- **Fusion history comes across, unverified and hidden.** `Cargo.toml` patches Dutchman's
-  cadmpeg pin to cadmpeg main, which carries the wasm32 fix for Fusion parameter scopes
-  (cadmpeg #645; before it, a 32-bit build decoded no feature timeline at all) and the
-  centimetre sketch-frame fix (cadmpeg #646). With no
+- **Fusion history comes across, unverified and hidden.** Dutchman's cadmpeg pin carries the
+  wasm32 fix for Fusion parameter scopes (cadmpeg #645; before it, a 32-bit build decoded no
+  feature timeline at all) and the centimetre sketch-frame fix (cadmpeg #646). With no
   SolidCraft CLI in the sandbox the history cannot be checked against the original, so the
   plugin does what Dutchman does when a check fails: the original geometry is the visible
   model and the mapped history sits in a hidden "Editable history (unverified)" part. Show it
-  in the browser to edit it. (`Cargo.toml` pins Dutchman main, which has
-  `read_bytes` and `hide_unverified_history`.)
+  in the browser to edit it. Each part of a Fusion `.f3z` assembly is written the same way.
   - `M3 Parametric FHCS.f3d`: Sketch 1, Revolve 1, Sketch 2 and Extrude 1 are in the hidden
     part and rebuild the original exactly, the hex socket included (49.86 mm³).
   - `M3 Parametric BHCS.f3d`: the same four features; Thread 1 (a cosmetic thread with no
     resolved standard and pitch) stops the history there.
   - Fillets and chamfers are left out, since finding their edges needs the SolidCraft CLI.
-- The first import compiles the component (about three minutes for 65 MiB); SolidCraft keeps
-  the compiled importer in memory, so later imports in the same session take about a second.
+- The first use compiles the component. SolidCraft does it in the background when you click
+  **Allow**, and keeps the compiled importer on disk (`plugin-cache` beside the plugins
+  folder), so imports after that, in this run or the next, start at once.
 
 ## Install
 
@@ -71,10 +72,21 @@ branch, which `Cargo.toml` pins), then `SolidCraftWriter` with verification off.
 4. Click **Allow**. The approval is for this exact manifest and component; a rebuilt
    component must be allowed again.
 
-Then **File › Import…** (or File › Open, or dropping a file on the window) opens a Fusion,
-Inventor or SolidWorks file through the plugin. From a script or the control channel:
+Then **Insert › Dutchman › Import CAD design** asks for a Fusion, Inventor, SolidWorks or
+FreeCAD file and shows the import options:
+
+- **Preset**: Standard (the feature history and joints), Full (reference sketches too) or Fast
+  (the geometry alone, as one import).
+- **Keep history**: off brings the geometry alone.
+- **Open as**: a new design, or into the design that is open (its geometry as a component).
+
+The import shows its steps (reading, decoding, mapping the history, writing) with Cancel, and
+then a report of what did not come across. **File › Import…**, File › Open and dropping a file
+on the window also open these files through the plugin, with the Standard preset. From a
+script or the control channel:
 
 ```json
+{"command": "plugin.dutchman-convert.import", "params": {"path": "/path/to/M3 Parametric BHCS.f3d", "preset": "full"}}
 {"command": "file.import", "params": {"path": "/path/to/M3 Parametric BHCS.f3d"}}
 ```
 

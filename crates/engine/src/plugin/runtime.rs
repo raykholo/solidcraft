@@ -206,11 +206,16 @@ mod importer_bindings {
     wasmtime::component::bindgen!({ path: "../../wit", world: "importer-plugin" });
 }
 
-/// What an importer may do: write to the log, within a budget, and use an empty WASI.
+/// What an importer may do: write to the log, within a budget, read the options it was given,
+/// report its progress, and use an empty WASI.
 struct ImportState {
     limits: StoreLimits,
     log_bytes: usize,
     messages: Vec<String>,
+    /// The checked options, as JSON.
+    options: String,
+    /// Who shows the import's progress and may cancel it.
+    watch: Option<std::sync::Arc<dyn solidcraft_kernel::watch::Watch>>,
     wasi: wasmtime_wasi::WasiCtx,
     table: wasmtime::component::ResourceTable,
 }
@@ -269,12 +274,33 @@ pub(super) fn empty_wasi_has_no_folders() -> bool {
         limits: StoreLimitsBuilder::new().build(),
         log_bytes: 0,
         messages: Vec::new(),
+        options: "{}".into(),
+        watch: None,
         wasi: empty_wasi(),
         table: wasmtime::component::ResourceTable::new(),
     };
     state.filesystem().get_directories().is_ok_and(|dirs| dirs.is_empty())
 }
 impl importer_bindings::solidcraft::plugin::types::Host for ImportState {}
+impl importer_bindings::solidcraft::plugin::import_context::Host for ImportState {
+    fn options(&mut self) -> String {
+        self.options.clone()
+    }
+    fn progress(&mut self, stage: importer_bindings::solidcraft::plugin::import_context::Stage, done: u32, total: u32) {
+        use importer_bindings::solidcraft::plugin::import_context::Stage;
+        let stage = match stage {
+            Stage::Reading => STAGE_READING,
+            Stage::Decoding => STAGE_DECODING,
+            Stage::Mapping => STAGE_MAPPING,
+            Stage::Writing => STAGE_WRITING,
+        };
+        if let Some(watch) = &self.watch {
+            // An unknown total still shows the stage: one unit, not yet done.
+            let (done, total) = if total == 0 { (0, 1) } else { (done.min(total) as usize, total as usize) };
+            watch.progress(stage, done, total);
+        }
+    }
+}
 impl importer_bindings::solidcraft::plugin::log::Host for ImportState {
     fn log(&mut self, _level: importer_bindings::solidcraft::plugin::log::Level, message: String) {
         if message.len() > 1024 || self.log_bytes.saturating_add(message.len()) > 64 * 1024 {
@@ -285,9 +311,20 @@ impl importer_bindings::solidcraft::plugin::log::Host for ImportState {
     }
 }
 
+/// The progress stages an importer reports, as the app's progress names them.
+pub const STAGE_PREPARING: &str = "plugin.preparing";
+pub const STAGE_READING: &str = "plugin.reading";
+pub const STAGE_DECODING: &str = "plugin.decoding";
+pub const STAGE_MAPPING: &str = "plugin.mapping";
+pub const STAGE_WRITING: &str = "plugin.writing";
+/// How often a running importer checks for Cancel and its deadline.
+const IMPORT_TICK: Duration = Duration::from_millis(100);
+
 /// The importers' engine and the components it compiled, by approval hash: compiling a large
 /// importer takes longer than running it, and its code never changes under one hash.
 struct Compiled {
+    /// Where the engine keeps compiled code between sessions; `None`: in memory only.
+    cache_dir: Option<std::path::PathBuf>,
     engine: Engine,
     components: Vec<(String, Component)>,
 }
@@ -297,27 +334,48 @@ const KEEP_COMPILED: usize = 4;
 /// The native stack an importer runs on, and how much of it Wasm frames may use.
 const IMPORT_THREAD_STACK: usize = 64 * 1024 * 1024;
 const IMPORT_WASM_STACK: usize = 16 * 1024 * 1024;
+/// The most compiled code kept on disk before the oldest is removed.
+const CACHE_SOFT_LIMIT_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-fn compiled(package: &Package) -> Result<(Engine, Component)> {
+fn importer_engine(cache_dir: Option<&std::path::Path>) -> Result<Engine> {
+    let mut config = Config::new();
+    config
+        .consume_fuel(true)
+        .epoch_interruption(true)
+        .wasm_memory64(false)
+        .wasm_multi_memory(false)
+        .max_wasm_stack(IMPORT_WASM_STACK)
+        // WASI turns on Wasmtime's async support, whose stack must hold the Wasm stack, though
+        // importers run synchronously.
+        .async_stack_size(IMPORT_WASM_STACK + 1024 * 1024);
+    // Wasmtime's own compilation cache: an entry is found by a hash of the component's exact
+    // bytes, this engine's settings and the Wasmtime version, so a changed component, setting
+    // or release compiles again. An entry that does not decompress or load is compiled again
+    // and replaced. A folder that cannot be made leaves compilation in memory only.
+    if let Some(dir) = cache_dir {
+        let mut cache = wasmtime::CacheConfig::new();
+        cache.with_directory(dir).with_files_total_size_soft_limit(CACHE_SOFT_LIMIT_BYTES);
+        match wasmtime::Cache::new(cache) {
+            Ok(cache) => {
+                config.cache(Some(cache));
+            }
+            Err(e) => ::log::warn!("plugin compilation cache unavailable ({}): {e:#}", dir.display()),
+        }
+    }
+    Engine::new(&config).map_err(|e| error(e.to_string()))
+}
+
+fn compiled(package: &Package, cache_dir: Option<&std::path::Path>) -> Result<(Engine, Component)> {
     let mut guard = IMPORTERS.lock().map_err(|_| error("the importer cache failed"))?;
-    if guard.is_none() {
-        let mut config = Config::new();
-        config
-            .consume_fuel(true)
-            .epoch_interruption(true)
-            .wasm_memory64(false)
-            .wasm_multi_memory(false)
-            .max_wasm_stack(IMPORT_WASM_STACK)
-            // WASI turns on Wasmtime's async support, whose stack must hold the Wasm stack, though
-            // importers run synchronously.
-            .async_stack_size(IMPORT_WASM_STACK + 1024 * 1024);
-        *guard = Some(Compiled { engine: Engine::new(&config).map_err(|e| error(e.to_string()))?, components: Vec::new() });
+    if guard.as_ref().is_none_or(|c| c.cache_dir.as_deref() != cache_dir) {
+        *guard = Some(Compiled { cache_dir: cache_dir.map(Into::into), engine: importer_engine(cache_dir)?, components: Vec::new() });
     }
     let cache = guard.as_mut().ok_or_else(|| error("the importer cache failed"))?;
     if let Some((_, component)) = cache.components.iter().find(|(hash, _)| *hash == package.approval) {
         return Ok((cache.engine.clone(), component.clone()));
     }
     // Compilation is native work, outside guest fuel and deadline. Size is capped by read_package.
+    // With a cache folder, an unchanged component loads its earlier compilation instead.
     let component = Component::from_binary(&cache.engine, &package.component).map_err(|e| error(format!("component compilation failed: {e:#}")))?;
     if cache.components.len() >= KEEP_COMPILED {
         cache.components.remove(0);
@@ -326,22 +384,51 @@ fn compiled(package: &Package) -> Result<(Engine, Component)> {
     Ok((cache.engine.clone(), component))
 }
 
+/// Compile an importer ahead of its first import (or load its earlier compilation), so the
+/// first file opens without waiting for it. Runs no guest code.
+pub(super) fn prepare(package: &Package, cache_dir: Option<&std::path::Path>) -> Result<()> {
+    compiled(package, cache_dir).map(|_| ())
+}
+
 /// Run an importer component on its own thread (a decoder may recurse deeply), under the
 /// package's fuel, memory and deadline. Nothing but `file_name` and `bytes` goes in.
-pub(super) fn import(package: &Package, file_name: &str, bytes: Vec<u8>) -> Result<super::Imported> {
+pub(super) fn import(
+    package: &Package,
+    file_name: &str,
+    bytes: Vec<u8>,
+    options: String,
+    cache_dir: Option<&std::path::Path>,
+) -> Result<super::Imported> {
     let runtime = package.manifest.runtime.as_ref().ok_or_else(|| error("no runtime"))?;
     let limits = runtime.limits.clone();
-    let (engine, component) = compiled(package)?;
+    // Whoever watches this thread's work (the app's file worker) sees the import's progress and
+    // can stop it.
+    let watch = solidcraft_kernel::watch::current();
+    if let Some(watch) = &watch {
+        watch.progress(STAGE_PREPARING, 0, 1);
+    }
+    let (engine, component) = compiled(package, cache_dir)?;
+    if watch.as_ref().is_some_and(|w| w.cancelled()) {
+        return Err(error("import cancelled"));
+    }
     let name = file_name.to_string();
     let worker = std::thread::Builder::new()
         .name("plugin-import".into())
         .stack_size(IMPORT_THREAD_STACK)
-        .spawn(move || import_on_this_thread(&engine, &component, &limits, &name, &bytes))
+        .spawn(move || import_on_this_thread(&engine, &component, &limits, &name, &bytes, options, watch))
         .map_err(|e| error(format!("could not start the importer: {e}")))?;
     worker.join().map_err(|_| error("the importer failed"))?
 }
 
-fn import_on_this_thread(engine: &Engine, component: &Component, limits: &super::Limits, file_name: &str, bytes: &[u8]) -> Result<super::Imported> {
+fn import_on_this_thread(
+    engine: &Engine,
+    component: &Component,
+    limits: &super::Limits,
+    file_name: &str,
+    bytes: &[u8],
+    options: String,
+    watch: Option<std::sync::Arc<dyn solidcraft_kernel::watch::Watch>>,
+) -> Result<super::Imported> {
     use importer_bindings::exports::solidcraft::plugin::importer::Payload;
     let deadline = Instant::now() + Duration::from_millis(limits.deadline_ms);
     let state = ImportState {
@@ -355,28 +442,37 @@ fn import_on_this_thread(engine: &Engine, component: &Component, limits: &super:
             .build(),
         log_bytes: 0,
         messages: Vec::new(),
+        options,
+        watch: watch.clone(),
         wasi: empty_wasi(),
         table: wasmtime::component::ResourceTable::new(),
     };
     let mut store = Store::new(engine, state);
     store.limiter(|s| &mut s.limits);
     store.set_fuel(limits.fuel).map_err(|e| error(e.to_string()))?;
-    // The engine is shared: every run bumps the epoch at its own deadline, and each store
-    // only stops once its own deadline has passed.
+    // The engine is shared: every run bumps the epoch each tick, and each store stops only once
+    // its own deadline has passed or its own watcher cancelled it.
     store.set_epoch_deadline(1);
+    let cancel = watch.clone();
     store.epoch_deadline_callback(move |_| {
-        if Instant::now() >= deadline { Err(wasmtime::Error::msg("entry deadline exceeded")) } else { Ok(wasmtime::UpdateDeadline::Continue(1)) }
+        if cancel.as_ref().is_some_and(|w| w.cancelled()) {
+            Err(wasmtime::Error::msg("import cancelled"))
+        } else if Instant::now() >= deadline {
+            Err(wasmtime::Error::msg("entry deadline exceeded"))
+        } else {
+            Ok(wasmtime::UpdateDeadline::Continue(1))
+        }
     });
     let mut linker = Linker::new(engine);
     importer_bindings::ImporterPlugin::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |s| s).map_err(|e| error(e.to_string()))?;
     wasmtime_wasi::p2::add_to_linker_sync(&mut linker).map_err(|e| error(e.to_string()))?;
     let (stop, stopped) = mpsc::channel::<()>();
     let timer_engine = engine.clone();
-    let wait = Duration::from_millis(limits.deadline_ms);
     let clock = std::thread::Builder::new()
         .name("plugin-deadline".into())
         .spawn(move || {
-            if stopped.recv_timeout(wait).is_err() {
+            // Each tick lets the running stores check their deadline and Cancel.
+            while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(IMPORT_TICK) {
                 timer_engine.increment_epoch();
             }
         })
@@ -388,6 +484,9 @@ fn import_on_this_thread(engine: &Engine, component: &Component, limits: &super:
     let _ = stop.send(());
     if clock.join().is_err() {
         return Err(error("deadline worker failed"));
+    }
+    if watch.as_ref().is_some_and(|w| w.cancelled()) {
+        return Err(error("import cancelled"));
     }
     let response = response.map_err(|e| execution_error(&e, store.get_fuel().ok(), limits))?;
     let imported = response.map_err(|e| error(format!("the importer failed: {}", plugin_error_text(&e))))?;

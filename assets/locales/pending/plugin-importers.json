@@ -12,6 +12,19 @@
     "ui.plugins_not_allowed": "Not allowed to run",
     "ui.plugins_revoke": "Revoke"
   },
+  "ar": {
+    "cmd.file.import": "استيراد",
+    "cmd.plugin.install": "تثبيت إضافة",
+    "ui.plugins_allow": "السماح",
+    "ui.plugins_allowed": "مسموح بتشغيلها",
+    "ui.plugins_commands": "تشغّل الأوامر: {commands}",
+    "ui.plugins_importer": "تستورد {formats}",
+    "ui.plugins_install": "تثبيت إضافة…",
+    "ui.plugins_installed": "ثُبّتت {name}. اسمح بها من التفضيلات › الإضافات لتشغيلها.",
+    "ui.plugins_limits": "تطلب حتى {fuel} من الوقود و{memory} MiB و{seconds} ث؛ المكوّن حتى {size} MiB",
+    "ui.plugins_not_allowed": "غير مسموح بتشغيلها",
+    "ui.plugins_revoke": "سحب السماح"
+  },
   "de": {
     "cmd.file.import": "Importieren",
     "cmd.plugin.install": "Plugin installieren",
@@ -24,5 +37,57 @@
     "ui.plugins_limits": "Fordert bis zu {fuel} Fuel, {memory} MiB und {seconds} s an; Komponente bis {size} MiB",
     "ui.plugins_not_allowed": "Darf nicht ausgeführt werden",
     "ui.plugins_revoke": "Widerrufen"
+  },
+  "he": {
+    "cmd.file.import": "ייבוא",
+    "cmd.plugin.install": "התקנת תוסף",
+    "ui.plugins_allow": "אישור",
+    "ui.plugins_allowed": "מורשה לפעול",
+    "ui.plugins_commands": "מריץ פקודות: {commands}",
+    "ui.plugins_importer": "מייבא {formats}",
+    "ui.plugins_install": "התקנת תוסף…",
+    "ui.plugins_installed": "{name} הותקן. יש לאשר אותו בהעדפות › תוספים כדי להריץ אותו.",
+    "ui.plugins_limits": "מבקש עד {fuel} דלק, {memory} MiB ו־{seconds} ש׳; רכיב עד {size} MiB",
+    "ui.plugins_not_allowed": "אינו מורשה לפעול",
+    "ui.plugins_revoke": "ביטול אישור"
+  },
+  "ja": {
+    "cmd.file.import": "インポート",
+    "cmd.plugin.install": "プラグインをインストール",
+    "ui.plugins_allow": "許可",
+    "ui.plugins_allowed": "実行を許可済み",
+    "ui.plugins_commands": "実行するコマンド：{commands}",
+    "ui.plugins_importer": "{formats} をインポート",
+    "ui.plugins_install": "プラグインをインストール…",
+    "ui.plugins_installed": "{name} をインストールしました。実行するには 環境設定 › プラグイン で許可してください。",
+    "ui.plugins_limits": "要求：最大 {fuel} フューエル、{memory} MiB、{seconds} 秒。コンポーネントは最大 {size} MiB",
+    "ui.plugins_not_allowed": "実行は許可されていません",
+    "ui.plugins_revoke": "許可を取り消す"
+  },
+  "vi": {
+    "cmd.file.import": "Nhập",
+    "cmd.plugin.install": "Cài plugin",
+    "ui.plugins_allow": "Cho phép",
+    "ui.plugins_allowed": "Được phép chạy",
+    "ui.plugins_commands": "Chạy các lệnh: {commands}",
+    "ui.plugins_importer": "Nhập {formats}",
+    "ui.plugins_install": "Cài plugin…",
+    "ui.plugins_installed": "Đã cài {name}. Cho phép nó trong Tùy chọn › Plugin để chạy.",
+    "ui.plugins_limits": "Yêu cầu tối đa {fuel} nhiên liệu, {memory} MiB và {seconds} giây; thành phần tối đa {size} MiB",
+    "ui.plugins_not_allowed": "Không được phép chạy",
+    "ui.plugins_revoke": "Thu hồi"
+  },
+  "zh": {
+    "cmd.file.import": "导入",
+    "cmd.plugin.install": "安装插件",
+    "ui.plugins_allow": "允许",
+    "ui.plugins_allowed": "已允许运行",
+    "ui.plugins_commands": "运行命令：{commands}",
+    "ui.plugins_importer": "导入 {formats}",
+    "ui.plugins_install": "安装插件…",
+    "ui.plugins_installed": "已安装 {name}。请在“偏好设置 › 插件”中允许后再运行。",
+    "ui.plugins_limits": "最多请求 {fuel} 燃料、{memory} MiB 和 {seconds} 秒；组件最大 {size} MiB",
+    "ui.plugins_not_allowed": "不允许运行",
+    "ui.plugins_revoke": "撤销"
   }
 }

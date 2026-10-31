@@ -61,7 +61,7 @@ required-features = ["raytrace-cpu"]
 
 [target.'cfg(any(target_arch = "x86_64", target_arch = "aarch64"))'.dependencies]
 # Component-model sandbox; no WASI, cache deserialization, network or process imports.
-wasmtime = { version = "48.0.8", optional = true, default-features = false, features = ["component-model", "cranelift", "runtime", "std"] }
+wasmtime = { version = "48.0.8", optional = true, default-features = false, features = ["cache", "component-model", "cranelift", "runtime", "std"] }
 # Importers only: an empty WASI (no folders, environment, network or real clock), so a
 # component built for wasm32-wasip2 links. Command plugins get no WASI at all.
 wasmtime-wasi = { version = "48.0.8", optional = true, default-features = false, features = ["p2"] }

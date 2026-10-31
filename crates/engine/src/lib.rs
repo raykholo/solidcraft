@@ -689,7 +689,7 @@ impl Session {
             auto_project: true,
             disabled_plugins: Default::default(),
             plugin_limits: plugin::default_host_limits(),
-            plugin_approvals: Default::default(),
+            plugin_approvals: plugin::default_approvals(),
             plugins_dir: plugin::default_plugins_dir(),
             param_check: schema::ParamCheck::Off,
             easyprint_upload: None,
@@ -1381,7 +1381,7 @@ impl Session {
         let scope = crash::Scope::enter();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match live {
             Some(run) => run(self, params),
-            None => (spec.run)(self, params).map(|v| (v, None)),
+            None => spec.call(self, params).map(|v| (v, None)),
         }));
         drop(scope);
         let r = match r {

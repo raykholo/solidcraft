@@ -302,6 +302,13 @@ pub const DOCUMENTED: &[&str] = &[
 
 /// The help for `command` in the current language, when it has any.
 pub fn help(command: &str) -> Option<String> {
+    // A plugin's command: the tooltip its package gives, and which plugin it comes from.
+    if command.starts_with("plugin.")
+        && let Some(c) = solidcraft_engine::find_command(command).and_then(|spec| spec.plugin)
+    {
+        let from = i18n::format("ui.plugin_command_from", &[("plugin", &c.plugin_name)]);
+        return Some(if c.tooltip.is_empty() { from } else { format!("{}\n{from}", c.tooltip) });
+    }
     if !DOCUMENTED.contains(&command) {
         return None;
     }
