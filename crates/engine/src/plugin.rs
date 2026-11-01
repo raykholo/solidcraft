@@ -12,6 +12,7 @@ use crate::{EngineError, Result, Session};
 pub mod contrib;
 #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
 mod runtime;
+pub mod web_abi;
 
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 /// The component size a package may ship without asking for more (`limits.component_mib`).
@@ -184,6 +185,18 @@ pub struct RuntimeManifest {
     pub formats: Vec<FileFormat>,
     #[serde(default)]
     pub limits: Limits,
+    /// An importer's core WebAssembly module for the browser (the web ABI, see [`web_abi`]),
+    /// beside its component. Part of what the user approves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web: Option<WebModule>,
+}
+
+/// The browser's build of an importer: a core module file in the package.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WebModule {
+    /// A single lowercase `.wasm` file name, not the component's.
+    pub module: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
@@ -302,6 +315,14 @@ pub fn parse_manifest(text: &[u8], folder: &str) -> Result<Manifest> {
             }
         }
         runtime.limits.validate()?;
+        if let Some(web) = &runtime.web {
+            if runtime.kind != Kind::Importer {
+                return Err(error("only an importer has a web module"));
+            }
+            if !valid_id(web.module.strip_suffix(".wasm").unwrap_or("")) || web.module == runtime.module {
+                return Err(error("the web module is one lowercase .wasm file name, not the component's"));
+            }
+        }
     }
     contrib::validate(&m)?;
     Ok(m)
@@ -339,6 +360,8 @@ pub struct Package {
     pub component: Vec<u8>,
     /// The SVG icons the manifest names, by file name (each at most 32 KiB of UTF-8).
     pub icons: std::collections::BTreeMap<String, String>,
+    /// The browser's core module (`runtime.web`), when the package has one.
+    pub web_module: Option<Vec<u8>>,
 }
 
 /// Reads through the caller's existing file scope; no permissions are added here.
@@ -358,6 +381,19 @@ pub fn read_package(path: &str) -> Result<Package> {
     digest.update((bytes.len() as u64).to_le_bytes());
     digest.update(&bytes);
     digest.update(&component);
+    // The browser's module is part of what the user approves; a package without one hashes as
+    // before.
+    let web_module = match runtime.web.as_ref() {
+        Some(web) => {
+            let bytes = solidcraft_io::vfs::read(&dir.join(&web.module).to_string_lossy(), cap)
+                .map_err(|e| error(format!("{}: {e} (the web module may be at most {} MiB)", web.module, runtime.limits.component_mib)))?;
+            digest.update(b"\0web\0");
+            digest.update((bytes.len() as u64).to_le_bytes());
+            digest.update(&bytes);
+            Some(bytes)
+        }
+        None => None,
+    };
     // Icons are part of what the user approves; a package without any hashes as before.
     let mut icons = std::collections::BTreeMap::new();
     for name in contrib::icon_files(&manifest) {
@@ -373,7 +409,7 @@ pub fn read_package(path: &str) -> Result<Package> {
         digest.update(text.as_bytes());
         icons.insert(name, text);
     }
-    Ok(Package { manifest, approval: format!("{:x}", digest.finalize()), component, icons })
+    Ok(Package { manifest, approval: format!("{:x}", digest.finalize()), component, icons, web_module })
 }
 
 pub fn run(session: &mut Session, package: Package, entry: &str, params: &serde_json::Value) -> Result<serde_json::Value> {
@@ -415,6 +451,92 @@ pub struct Imported {
     pub notes: String,
 }
 
+/// An import a host runs itself (the browser's plugin host): everything the importer is given.
+#[derive(Clone, Debug)]
+pub struct HostRequest {
+    pub plugin: String,
+    pub approval: String,
+    /// The package's browser module (`runtime.web`); `None` when it has none.
+    pub web_module: Option<Vec<u8>>,
+    pub file_name: String,
+    pub bytes: Vec<u8>,
+    /// The checked options, as JSON.
+    pub options: String,
+    pub limits: Limits,
+    /// Which import this is, to match its result to it.
+    pub key: String,
+}
+
+enum Hosted {
+    /// Record the next import instead of running it.
+    Ask(Option<HostRequest>),
+    /// The result of the import with this key.
+    Answer(String, Option<std::result::Result<Imported, String>>),
+}
+
+thread_local! {
+    static HOSTED: std::cell::RefCell<Option<Hosted>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` (a command) without running any importer: the first import it reaches is recorded
+/// and refused. Returns `f`'s result and that import, for the host to run.
+pub fn ask_host<R>(f: impl FnOnce() -> R) -> (R, Option<HostRequest>) {
+    HOSTED.with(|h| *h.borrow_mut() = Some(Hosted::Ask(None)));
+    let r = f();
+    let asked = HOSTED.with(|h| match h.borrow_mut().take() {
+        Some(Hosted::Ask(asked)) => asked,
+        _ => None,
+    });
+    (r, asked)
+}
+
+/// Run `f` (the same command again) with the host's result for the import `key`.
+pub fn answer_host<R>(key: &str, result: std::result::Result<Imported, String>, f: impl FnOnce() -> R) -> R {
+    HOSTED.with(|h| *h.borrow_mut() = Some(Hosted::Answer(key.to_string(), Some(result))));
+    let r = f();
+    HOSTED.with(|h| *h.borrow_mut() = None);
+    r
+}
+
+fn hosted(
+    package: &Package,
+    file_name: &str,
+    bytes: &[u8],
+    options: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Option<Result<Imported>>> {
+    let options = serde_json::to_string(options).map_err(|e| error(e.to_string()))?;
+    let mut digest = Sha256::new();
+    for part in [package.approval.as_bytes(), file_name.as_bytes(), options.as_bytes(), bytes] {
+        digest.update((part.len() as u64).to_le_bytes());
+        digest.update(part);
+    }
+    let key = format!("{:x}", digest.finalize());
+    HOSTED.with(|h| {
+        let mut h = h.borrow_mut();
+        Ok(match h.as_mut() {
+            None => None,
+            Some(Hosted::Ask(asked)) => {
+                let runtime = package.manifest.runtime.as_ref().ok_or_else(|| error("no executable runtime"))?;
+                *asked = Some(HostRequest {
+                    plugin: package.manifest.id.clone(),
+                    approval: package.approval.clone(),
+                    web_module: package.web_module.clone(),
+                    file_name: file_name.to_string(),
+                    bytes: bytes.to_vec(),
+                    options,
+                    limits: runtime.limits.clone(),
+                    key,
+                });
+                Some(Err(error("this import runs in the plugin host")))
+            }
+            Some(Hosted::Answer(answered, result)) if *answered == key => {
+                Some(result.take().unwrap_or_else(|| Err("the plugin host's result was already used".into())).map_err(error))
+            }
+            Some(Hosted::Answer(..)) => Some(Err(error("the file or options changed while the plugin host ran the import"))),
+        })
+    })
+}
+
 /// The largest file handed to an importer, and the largest design it may hand back.
 pub const MAX_IMPORT_BYTES: usize = 512 * 1024 * 1024;
 /// The most text of notes an importer may hand back.
@@ -443,6 +565,11 @@ pub fn import(
         return Err(error("the file is larger than an importer may be given (512 MiB)"));
     }
     let file_name = Path::new(file_name).file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    // A host that runs importers itself (the browser's, which runs them in a Web Worker) asks
+    // for the import first, then hands back its result.
+    if let Some(r) = hosted(package, file_name, &bytes, options)? {
+        return r;
+    }
     #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         let options = serde_json::to_string(options).map_err(|e| error(e.to_string()))?;
@@ -487,7 +614,34 @@ pub fn default_plugins_dir() -> Option<std::path::PathBuf> {
     if cfg!(test) {
         return None;
     }
+    // The browser keeps them in its private storage, as it keeps designs.
+    if cfg!(target_arch = "wasm32") {
+        return Some(std::path::PathBuf::from(WEB_PLUGINS_DIR));
+    }
     crate::recovery::data_dir().map(|d| d.join("plugins"))
+}
+
+/// Where the browser build keeps installed plugins (its private storage, OPFS).
+pub const WEB_PLUGINS_DIR: &str = "/opfs/plugins";
+
+/// The package folders in `dir`.
+fn package_folders(dir: &Path) -> Vec<std::path::PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+        entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()).take(256).collect()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Browser storage keys files by their whole path: a package is a `<dir>/<id>/plugin.json`.
+        let prefix = format!("{}/", dir.to_string_lossy().trim_end_matches('/'));
+        let mut out: Vec<std::path::PathBuf> = solidcraft_io::vfs::list(&prefix)
+            .into_iter()
+            .filter_map(|(p, _)| p.strip_prefix(&prefix)?.strip_suffix("/plugin.json").filter(|id| !id.contains('/')).map(|id| dir.join(id)))
+            .collect();
+        out.truncate(256);
+        out
+    }
 }
 
 /// An installed package: its folder, its manifest and the approval hash of its exact content.
@@ -501,12 +655,7 @@ pub struct Installed {
 /// The installed packages in `dir` that parse, by id. Unreadable folders are left out.
 pub fn installed(dir: &Path) -> Vec<Installed> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else { return out };
-    for entry in entries.flatten().take(256) {
-        if !entry.file_type().is_ok_and(|t| t.is_dir()) {
-            continue;
-        }
-        let path = entry.path();
+    for path in package_folders(dir) {
         if let Ok(package) = read_package(&path.to_string_lossy()) {
             out.push(Installed { path, manifest: package.manifest, approval: package.approval });
         }
@@ -545,10 +694,113 @@ pub fn allowed_installed(session: &Session, id: &str) -> std::result::Result<Ins
 /// lists, by its exact path inside `dir`.
 pub fn remove(id: &str, dir: &Path) -> Result<()> {
     let package = installed(dir).into_iter().find(|p| p.manifest.id == id).ok_or_else(|| error(format!("no installed plugin `{id}`")))?;
-    if package.path != dir.join(id) || package.path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(true) {
+    if package.path != dir.join(id) {
         return Err(error("the package is not a folder of the plugins folder"));
     }
-    std::fs::remove_dir_all(&package.path).map_err(|e| error(format!("{}: {e}", package.path.display())))
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if package.path.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(true) {
+            return Err(error("the package is not a folder of the plugins folder"));
+        }
+        std::fs::remove_dir_all(&package.path).map_err(|e| error(format!("{}: {e}", package.path.display())))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let prefix = format!("{}/", package.path.to_string_lossy());
+        for (file, _) in solidcraft_io::vfs::list(&prefix) {
+            solidcraft_io::vfs::remove(&file).map_err(|e| error(format!("{file}: {e}")))?;
+        }
+        Ok(())
+    }
+}
+
+/// The most files and bytes a package file (zip) may hold.
+const MAX_PACKAGE_FILES: usize = 64;
+const MAX_PACKAGE_BYTES: u64 = 2 * MAX_COMPONENT_MIB as u64 * 1024 * 1024 + 4 * 1024 * 1024;
+
+/// A package file's contents: its id (from its plugin.json) and its files by name. The files
+/// may sit at the top of the zip or in one folder; each is a plain file name, and the total is
+/// bounded before anything is decompressed past the limit.
+pub fn unpack(zip_bytes: &[u8]) -> Result<(String, std::collections::BTreeMap<String, Vec<u8>>)> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).map_err(|e| error(format!("not a plugin package file: {e}")))?;
+    if archive.len() > MAX_PACKAGE_FILES * 2 {
+        return Err(error("a plugin package holds at most 64 files"));
+    }
+    let mut files = std::collections::BTreeMap::new();
+    let mut total = 0u64;
+    let mut top: Option<Option<String>> = None;
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| error(format!("plugin package: {e}")))?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().map_err(|e| error(format!("plugin package: {e}")))?.replace('\\', "/");
+        let (folder, file) = match name.rsplit_once('/') {
+            Some((folder, file)) => (Some(folder.to_string()), file.to_string()),
+            None => (None, name.clone()),
+        };
+        // One folder level at most, the same for every file.
+        if folder.as_deref().is_some_and(|f| f.contains('/') || f.is_empty() || f == "..") || top.as_ref().is_some_and(|t| *t != folder) {
+            return Err(error("a plugin package's files are at its top, or in one folder"));
+        }
+        top = Some(folder);
+        if file.is_empty() || file.starts_with('.') || file.contains("..") || file.len() > 64 {
+            return Err(error(format!("plugin package: `{name}` is not a plain file name")));
+        }
+        total = total.saturating_add(entry.size());
+        if total > MAX_PACKAGE_BYTES || files.len() >= MAX_PACKAGE_FILES {
+            return Err(error("the plugin package is too large"));
+        }
+        let mut bytes = Vec::new();
+        entry.by_ref().take(MAX_PACKAGE_BYTES).read_to_end(&mut bytes).map_err(|e| error(format!("plugin package: {e}")))?;
+        files.insert(file, bytes);
+    }
+    let manifest = files.get("plugin.json").ok_or_else(|| error("the plugin package has no plugin.json"))?;
+    #[derive(Deserialize)]
+    struct Id {
+        id: String,
+    }
+    let id: Id = serde_json::from_slice(manifest).map_err(|e| error(format!("plugin.json: {e}")))?;
+    if !valid_id(&id.id) {
+        return Err(error("plugin.json: the id must be 1..64 lowercase letters, digits and hyphens"));
+    }
+    Ok((id.id, files))
+}
+
+/// Install the package file (zip) at `path`: its files are unpacked into a folder of their own,
+/// checked as a package folder is, and installed from there.
+pub fn install_file(path: &str, dir: &Path, replace: bool) -> Result<Installed> {
+    let bytes = solidcraft_io::vfs::read(path, MAX_PACKAGE_BYTES as usize).map_err(|e| error(format!("{path}: {e}")))?;
+    let (id, files) = unpack(&bytes)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let staging = {
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        solidcraft_io::vfs::temp_dir().join(format!("solidcraft-plugin-package-{}-{n}", std::process::id())).join(&id)
+    };
+    #[cfg(target_arch = "wasm32")]
+    let staging = Path::new("/uploads/plugin-package").join(&id);
+    for (name, bytes) in &files {
+        let to = staging.join(name);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::fs::create_dir_all(&staging).map_err(|e| error(format!("{}: {e}", staging.display())))?;
+            std::fs::write(&to, bytes).map_err(|e| error(format!("{}: {e}", to.display())))?;
+        }
+        #[cfg(target_arch = "wasm32")]
+        solidcraft_io::vfs::write(&to.to_string_lossy(), bytes).map_err(|e| error(format!("{}: {e}", to.display())))?;
+    }
+    let installed = install(&staging.to_string_lossy(), dir, replace);
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(parent) = staging.parent() {
+        let _ = std::fs::remove_dir_all(parent);
+    }
+    #[cfg(target_arch = "wasm32")]
+    for name in files.keys() {
+        let _ = solidcraft_io::vfs::remove(&staging.join(name).to_string_lossy());
+    }
+    installed
 }
 
 /// Copy the package in folder `from` into the plugins folder `dir`, replacing an installed
@@ -557,16 +809,29 @@ pub fn install(from: &str, dir: &Path, replace: bool) -> Result<Installed> {
     let package = read_package(from)?;
     let runtime = package.manifest.runtime.as_ref().ok_or_else(|| error("metadata-only package has no executable runtime"))?;
     let to = dir.join(&package.manifest.id);
-    if to.exists() && !replace {
+    #[cfg(not(target_arch = "wasm32"))]
+    let present = to.exists();
+    #[cfg(target_arch = "wasm32")]
+    let present = solidcraft_io::vfs::exists(&to.join("plugin.json").to_string_lossy());
+    if present && !replace {
         return Err(error(format!("`{}` is already installed; pass replace: true to replace it", package.manifest.id)));
     }
     let manifest =
         solidcraft_io::vfs::read(&Path::new(from).join("plugin.json").to_string_lossy(), MAX_MANIFEST_BYTES).map_err(|e| error(e.to_string()))?;
+    #[cfg(not(target_arch = "wasm32"))]
     let write = |path: std::path::PathBuf, bytes: &[u8]| std::fs::write(&path, bytes).map_err(|e| error(format!("{}: {e}", path.display())));
+    #[cfg(target_arch = "wasm32")]
+    let write = |path: std::path::PathBuf, bytes: &[u8]| {
+        solidcraft_io::vfs::write(&path.to_string_lossy(), bytes).map_err(|e| error(format!("{}: {e}", path.display())))
+    };
+    #[cfg(not(target_arch = "wasm32"))]
     std::fs::create_dir_all(&to).map_err(|e| error(format!("{}: {e}", to.display())))?;
     write(to.join(&runtime.module), &package.component)?;
     for (name, text) in &package.icons {
         write(to.join(name), text.as_bytes())?;
+    }
+    if let (Some(web), Some(bytes)) = (runtime.web.as_ref(), package.web_module.as_ref()) {
+        write(to.join(&web.module), bytes)?;
     }
     write(to.join("plugin.json"), &manifest)?;
     let installed = read_package(&to.to_string_lossy())?;

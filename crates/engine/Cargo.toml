@@ -42,6 +42,8 @@ image = { workspace = true, features = ["jpeg"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+# Plugin packages as one file (a zip of plugin.json, its modules and icons).
+zip = { workspace = true }
 toml_edit = "0.25"
 schemars = { workspace = true }
 serde_path_to_error = { workspace = true }

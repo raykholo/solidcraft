@@ -8,6 +8,9 @@
     "api": "solidcraft:plugin@0.1.0",
     "module": "plugin.wasm",
     "kind": "importer",
+    "web": {
+      "module": "plugin-web.wasm"
+    },
     "formats": [
       {
         "extension": "f3d",

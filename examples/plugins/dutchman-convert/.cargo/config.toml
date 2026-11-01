@@ -1,0 +1,4 @@
+# The browser build (wasm32-wasip1, a core module): its memory taken from SolidCraft's web plugin
+# host, which sets its maximum to the package's memory limit. See docs/plugin-runtime.md.
+[target.wasm32-wasip1]
+rustflags = ["-C", "link-arg=--import-memory"]

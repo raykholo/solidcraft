@@ -57,7 +57,46 @@ struct Manifest {
 /// The plugins directory: `$XDG_DATA_HOME/solidcraft/plugins` (and the platform equivalents of
 /// [`solidcraft_engine::recovery::data_dir`]). `None` when that folder cannot be named.
 pub fn plugins_dir() -> Option<PathBuf> {
+    // The browser build keeps them in its private storage (the engine's default there).
+    if cfg!(target_arch = "wasm32") {
+        return solidcraft_engine::plugin::default_plugins_dir();
+    }
     solidcraft_engine::recovery::data_dir().map(|d| d.join("plugins"))
+}
+
+/// A small file's bytes (`max` at most): a file on disk, or in browser storage.
+fn read_small(path: &Path, max: u64) -> Result<Vec<u8>, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        if !meta.is_file() || meta.len() > max {
+            return Err("missing or too large".into());
+        }
+        std::fs::read(path).map_err(|e| e.to_string())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        solidcraft_engine::io::vfs::read(&path.to_string_lossy(), usize::try_from(max).unwrap_or(usize::MAX)).map_err(|e| e.to_string())
+    }
+}
+
+/// The folders in `dir` (name, path): on disk, or the packages browser storage holds.
+fn folders(dir: &Path) -> Vec<(Option<String>, PathBuf)> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+        entries.flatten().filter(|e| e.file_type().is_ok_and(|k| k.is_dir())).map(|e| (e.file_name().into_string().ok(), e.path())).collect()
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let prefix = format!("{}/", dir.to_string_lossy().trim_end_matches('/'));
+        let mut ids: Vec<String> = solidcraft_engine::io::vfs::list(&prefix)
+            .into_iter()
+            .filter_map(|(p, _)| Some(p.strip_prefix(&prefix)?.split('/').next()?.to_string()))
+            .collect();
+        ids.dedup();
+        ids.into_iter().map(|id| (Some(id.clone()), dir.join(id))).collect()
+    }
 }
 
 /// An id a folder and a manifest may share: 1–64 characters, lowercase letters, digits and
@@ -108,11 +147,11 @@ fn check(m: Manifest, folder: &str) -> Result<Plugin, String> {
 
 fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
     let path = dir.join("plugin.json");
-    let meta = std::fs::metadata(&path).map_err(|_| "no plugin.json".to_string())?;
-    if !meta.is_file() || meta.len() > MAX_MANIFEST_BYTES {
-        return Err("plugin.json is missing or larger than 16 KiB".into());
+    if !solidcraft_engine::io::vfs::exists(&path.to_string_lossy()) {
+        return Err("no plugin.json".into());
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("plugin.json could not be read ({e})"))?;
+    let bytes = read_small(&path, MAX_MANIFEST_BYTES).map_err(|_| "plugin.json is not a file or is larger than 16 KiB".to_string())?;
+    let text = String::from_utf8(bytes).map_err(|_| "plugin.json is not UTF-8 text".to_string())?;
     let parsed = solidcraft_engine::plugin::parse_manifest(text.as_bytes(), folder).map_err(|e| e.to_string())?;
     let runtime = parsed.runtime.clone();
     let mut plugin = check(
@@ -136,8 +175,8 @@ fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
     plugin.icon_svg = parsed
         .icon
         .as_ref()
-        .and_then(|file| std::fs::metadata(dir.join(file)).ok().filter(|m| m.len() <= crate::icon_svg::MAX_PLUGIN_ICON_BYTES as u64).map(|_| file))
-        .and_then(|file| std::fs::read_to_string(dir.join(file)).ok());
+        .and_then(|file| read_small(&dir.join(file), crate::icon_svg::MAX_PLUGIN_ICON_BYTES as u64).ok())
+        .and_then(|bytes| String::from_utf8(bytes).ok());
     let own = format!("plugin:package:{}", plugin.id);
     plugin.icon = match &plugin.icon_svg {
         Some(svg) if crate::icon_svg::register_plugin_icon(&own, svg).is_ok() => own,
@@ -186,22 +225,15 @@ pub fn prepare(id: &str) {
 pub fn scan(dir: &Path) -> (Vec<Plugin>, Vec<Skipped>) {
     let mut plugins = Vec::new();
     let mut skipped = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return (plugins, skipped);
-    };
-    for entry in entries.flatten() {
-        let Ok(kind) = entry.file_type() else { continue };
-        if !kind.is_dir() {
-            continue;
-        }
-        let Some(folder) = entry.file_name().into_string().ok() else {
+    for (name, path) in folders(dir) {
+        let Some(folder) = name else {
             skipped.push(Skipped { folder: String::new(), reason: "the folder name is not text".into() });
             continue;
         };
         if folder.starts_with('.') {
             continue;
         }
-        match read_plugin(&entry.path(), &folder) {
+        match read_plugin(&path, &folder) {
             Ok(plugin) => plugins.push(plugin),
             Err(reason) => skipped.push(Skipped { folder, reason }),
         }
@@ -284,6 +316,11 @@ pub(crate) fn sync_policy(app: &mut SolveApp) {
     app.session.plugin_approvals.clone_from(&app.preferences.plugin_approvals);
     app.session.plugin_limits = host_limits(&app.preferences);
     sync_contributions(app, false);
+}
+
+/// Read the installed plugins again (the browser host calls it once its storage is loaded).
+pub fn reload(app: &SolveApp) {
+    sync_contributions(app, true);
 }
 
 /// Put allowed, turned-on plugins' commands on the ribbon, palette and shortcuts, and take
@@ -527,13 +564,13 @@ fn card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugin) {
                 }
                 sync_policy(app);
             }
-            let folder = crate::ui_kit::button(ui, crate::i18n::tr("ui.plugins_open_folder"), crate::ui_kit::Button::Normal);
-            crate::scenario::publish_handle(&format!("prefs:plugin_folder:{}", plugin.id), folder.rect.center());
-            if folder.clicked()
-                && let Some(show) = &app.services.show_in_folder
-            {
-                // It opens the parent of the path it is given: the package's own folder.
-                show(&dir.join(&plugin.id).join("plugin.json").display().to_string());
+            if let Some(show) = &app.services.show_in_folder {
+                let folder = crate::ui_kit::button(ui, crate::i18n::tr("ui.plugins_open_folder"), crate::ui_kit::Button::Normal);
+                crate::scenario::publish_handle(&format!("prefs:plugin_folder:{}", plugin.id), folder.rect.center());
+                if folder.clicked() {
+                    // It opens the parent of the path it is given: the package's own folder.
+                    show(&dir.join(&plugin.id).join("plugin.json").display().to_string());
+                }
             }
             // Remove asks once more, in place.
             let confirm_id = egui::Id::new(("plugin_remove_confirm", plugin.id.as_str()));
@@ -563,13 +600,9 @@ fn card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugin) {
     });
 }
 
-/// The Plugins page. Desktop only: the browser build has no per-user plugin folder.
+/// The Plugins page. In the browser, packages are kept in its private storage.
 pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     let t = crate::theme::Tokens::get();
-    if cfg!(target_arch = "wasm32") {
-        ui.label(crate::i18n::tr("ui.plugins_desktop"));
-        return;
-    }
     let Some(dir) = plugins_dir() else {
         ui.label(crate::i18n::tr("ui.plugins_desktop"));
         return;
@@ -590,11 +623,21 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
     }
     resource_controls(app, ui);
     ui.add_space(8.0);
-    if !searching && crate::ui_kit::button(ui, crate::i18n::tr("ui.plugins_install"), crate::ui_kit::Button::Normal).clicked() {
-        // A package is a folder: pick its plugin.json.
-        app.pick_open_for(&["json"], |app, path| {
+    let install = (!searching).then(|| crate::ui_kit::button(ui, crate::i18n::tr("ui.plugins_install"), crate::ui_kit::Button::Normal));
+    if let Some(r) = &install {
+        crate::scenario::publish_handle("prefs:plugins_install", r.rect.center());
+    }
+    if install.is_some_and(|r| r.clicked()) {
+        // A package file (.zip), or a package folder: its plugin.json. The browser has no
+        // folders to pick, so there it is always a package file.
+        let kinds: &[&str] = if cfg!(target_arch = "wasm32") { &["zip"] } else { &["json", "zip"] };
+        app.pick_open_for(kinds, |app, path| {
             let Some(path) = path else { return };
-            let folder = Path::new(&path).parent().map(|p| p.display().to_string()).unwrap_or_default();
+            let folder = if path.to_ascii_lowercase().ends_with(".zip") {
+                path.clone()
+            } else {
+                Path::new(&path).parent().map(|p| p.display().to_string()).unwrap_or_default()
+            };
             match app.run("plugin.install", serde_json::json!({"path": folder, "replace": true})) {
                 Ok(r) => app
                     .set_status(crate::i18n::format("ui.plugins_installed", &[("name", r["manifest"]["name"].as_str().unwrap_or_default())]), false),
@@ -602,7 +645,8 @@ pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
             }
         });
     }
-    if !searching && crate::ui_kit::button(ui, crate::i18n::tr_label("Show in folder"), crate::ui_kit::Button::Normal).clicked() {
+    let can_show = app.services.show_in_folder.is_some();
+    if !searching && can_show && crate::ui_kit::button(ui, crate::i18n::tr_label("Show in folder"), crate::ui_kit::Button::Normal).clicked() {
         // `show_in_folder` opens the parent of the path it is given, so the argument is a name
         // inside the plugins directory (it need not exist).
         if let Err(e) = std::fs::create_dir_all(&dir) {

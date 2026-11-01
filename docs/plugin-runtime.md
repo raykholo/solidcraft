@@ -282,6 +282,50 @@ Nothing is changed until the whole import succeeds: a trap, exhausted fuel or me
 deadline, an error result or a design that does not read leaves the open design and its undo
 history as they were.
 
+### Importers in the browser: the web ABI
+
+Browsers run core WebAssembly modules, not components. An importer that also works in the
+SolidCraft web app ships a second build of itself, a core module (for `wasm32-wasip1`, or
+`wasm32-unknown-unknown` when it needs no standard-library clock), named in its manifest:
+
+```json
+"runtime": { "kind": "importer", "module": "plugin.wasm", "web": { "module": "plugin-web.wasm" }, … }
+```
+
+The web module is part of what the user approves: the approval hash covers it with the manifest,
+the component and the icons. It has this small C-style interface (`i32` throughout):
+
+| | Name | Meaning |
+|---|---|---|
+| import | `env.memory` | Its only memory, made by the host with the package's memory limit as its maximum (link with `--import-memory`) |
+| import | `env.sc_progress(stage, done, total)` | The step it is on: 0 reading, 1 decoding, 2 mapping, 3 writing |
+| import | `env.sc_log(ptr, len)` | A line for the notes (UTF-8, at most 1 KiB) |
+| export | `sc_alloc(len) -> ptr` | Room for `len` bytes the host writes into |
+| export | `sc_import(name_ptr, name_len, bytes_ptr, bytes_len, options_ptr, options_len) -> handle` | Convert the file (its name, its bytes, the options as JSON, as `import-context.options` gives them) |
+| export | `sc_result_kind(handle)` | 0 a SolidCraft design, 1 STEP text, 2 failed (the payload is then the error) |
+| export | `sc_result_ptr(handle)`, `sc_result_len(handle)` | The payload |
+| export | `sc_notes_ptr(handle)`, `sc_notes_len(handle)` | What did not come across |
+| export | `sc_free(handle)` | The host is done with the result |
+| import | `wasi_snapshot_preview1.*` (optional) | The calls Rust's standard library makes: arguments, environment, clocks, random bytes, output, file descriptors. They are answered with nothing real: no arguments, environment or files (every descriptor is bad), a clock that counts its own readings, fixed "random" bytes, and output that goes to the log |
+| export | `_initialize` (optional) | A WASI reactor's start-up code, called once first |
+
+A module that imports anything else (a WASI function outside that list, `wasm-bindgen`'s glue,
+a function of its own choosing) is refused before it runs. The web app runs each import in a Web Worker of its own:
+the worker gets the compiled module, the file and the options; the module gets only the imports
+above, so it has no network, page, storage or clock. The package's time limit and Cancel end
+the worker, wherever the module is; the memory's maximum is the memory limit. There is no fuel
+in the browser: the time limit bounds the work. The browser keeps the module's bytes in Cache
+Storage and compiles them with `WebAssembly.compileStreaming`, so it caches the compiled code
+as well. Progress shows in the same file-load card as on the desktop, and the result goes
+through the same `file.import` (the command runs until it reaches the importer, the worker runs
+the import, then the command finishes with its result).
+
+Installed plugins are kept in the browser's private storage (OPFS), under `plugins/<id>/`. In
+the browser **Preferences › Plugins › Install plugin…** takes a package file: a `.zip` of
+`plugin.json`, the component, the web module and any icons, at its top or in one folder.
+`plugin.install` takes such a file on the desktop too. Allow, Revoke, Turn off and Remove work
+as on the desktop, pinned to the same hash.
+
 ### Choosing the importer
 
 `file.import {path, plugin?, approval?}` opens a file as a new design:
@@ -402,8 +446,8 @@ wraps it as a component without a WASI adapter. Other languages may use the same
 ## Platforms and validation
 
 Native execution on x86-64 or AArch64 requires the engine's `plugins` Cargo feature.
-Other native architectures retain the commands but report that no execution host is available. The browser build publishes the
-same command descriptions but refuses execution without a native host. Turning off this feature
+Other native architectures retain the commands but report that no execution host is available. The browser build runs
+importers that ship a web module (see above) and refuses command plugins, which need the native host. Turning off this feature
 keeps metadata, inspection and the general mesh query available while excluding Wasmtime.
 No new design format or custom `FeatureKind::Plugin` is introduced.
 

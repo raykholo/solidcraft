@@ -71,6 +71,8 @@ pub struct Files {
     pub messages: RefCell<Vec<(String, bool)>>,
     /// The stored designs are loaded (the app may open them).
     pub ready: Cell<bool>,
+    /// The installed plugins were read from storage: the app reads them again.
+    pub plugins_loaded: Cell<bool>,
     /// The file panel is open.
     pub panel: Cell<bool>,
     /// An autosave left by an earlier session: its design's name and file.
@@ -164,6 +166,11 @@ fn storage_manager() -> Option<web_sys::StorageManager> {
 /// Does the storage manager have `method`?
 fn has(sm: &web_sys::StorageManager, method: &str) -> bool {
     Reflect::get(sm, &method.into()).is_ok_and(|f| f.is_function())
+}
+
+/// The origin private file system's root folder.
+pub(crate) async fn opfs_root() -> Result<FileSystemDirectoryHandle, String> {
+    root().await
 }
 
 async fn root() -> Result<FileSystemDirectoryHandle, String> {
@@ -315,6 +322,11 @@ pub fn start(files: &Rc<Files>) {
             Err(e) => files.say(format!("browser storage: {e}"), true),
         }
         files.ready.set(true);
+        match crate::plugin_store::load().await {
+            Ok(n) => log::info!("{n} plugin file(s) read from browser storage"),
+            Err(e) => log::warn!("installed plugins: {e}"),
+        }
+        files.plugins_loaded.set(true);
         files.wake();
     });
 }
@@ -322,6 +334,15 @@ pub fn start(files: &Rc<Files>) {
 /// Store what commands wrote: OPFS paths into OPFS, download paths as downloads.
 pub fn flush(files: &Rc<Files>) {
     for (path, bytes) in vfs::take_writes() {
+        // Installed plugins have a folder of their own, apart from the designs.
+        let say = {
+            let files = files.clone();
+            move |m: String| files.say(m, true)
+        };
+        if path.starts_with(crate::plugin_store::PREFIX) {
+            crate::plugin_store::store(&path, bytes, say);
+            continue;
+        }
         match disk::route(&path) {
             disk::WriteTo::Opfs => {
                 let name = path.strip_prefix(OPFS).unwrap_or(&path).to_string();
@@ -350,6 +371,8 @@ pub fn flush(files: &Rc<Files>) {
             disk::WriteTo::Memory => {}
         }
     }
+    let files = files.clone();
+    crate::plugin_store::forget_removed(move |m: String| files.say(m, true));
 }
 
 /// Hand `bytes` to the user as a download named `name`.

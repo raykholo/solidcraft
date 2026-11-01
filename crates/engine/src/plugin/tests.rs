@@ -650,6 +650,44 @@ mod importer {
     }
 
     #[test]
+    fn a_host_that_runs_importers_itself_is_asked_then_answered() {
+        let mut m = importer_manifest(&["fixd"]);
+        m["runtime"]["web"] = json!({"module": "plugin-web.wasm"});
+        let f = Setup::with_manifest(&echo(0), m, "", &[("plugin-web.wasm", "\0asm web module")]);
+        let mut source = boxed();
+        source.execute("file.save", &json!({"path": f.file("source.sc")})).unwrap();
+        std::fs::copy(f.file("source.sc"), f.file("part.fixd")).unwrap();
+        let mut s = f.session(true);
+        // The browser module is installed with the package and is part of its approval.
+        let package = crate::plugin::read_package(&f.file("plugins/fixture-importer")).unwrap();
+        assert_eq!(package.web_module.as_deref(), Some(&b"\0asm web module"[..]));
+        let before = s.doc.to_json();
+        let params = json!({"path": f.file("part.fixd")});
+        let (r, asked) = crate::plugin::ask_host(|| s.execute("file.import", &params));
+        assert!(r.is_err(), "nothing runs while the host is asked");
+        assert_eq!(s.doc.to_json(), before);
+        let asked = asked.expect("the import is handed to the host");
+        assert_eq!((asked.plugin.as_str(), asked.file_name.as_str()), ("fixture-importer", "part.fixd"));
+        assert_eq!(asked.approval, package.approval);
+        assert_eq!(asked.web_module.as_deref(), Some(&b"\0asm web module"[..]));
+        assert_eq!(asked.bytes, std::fs::read(f.file("part.fixd")).unwrap());
+        assert!(asked.options.contains("\"into\":\"new\""), "{}", asked.options);
+        // The host's answer, for that very import, finishes the command as a native run would.
+        let result = crate::plugin::web_abi::imported(0, asked.bytes.clone(), b"from the host", &[]).map_err(|e| e.to_string());
+        let out = crate::plugin::answer_host(&asked.key, result, || s.execute("file.import", &params)).unwrap();
+        assert_eq!(out["notes"], "from the host");
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 600.);
+        // An answer for another import is refused, and so is the error a host reports.
+        let wrong = crate::plugin::answer_host("not this one", Err("x".into()), || s.execute("file.import", &params));
+        assert!(wrong.unwrap_err().to_string().contains("changed"));
+        let failed = crate::plugin::answer_host(&asked.key, Err("time limit".into()), || s.execute("file.import", &params));
+        assert!(failed.unwrap_err().to_string().contains("time limit"));
+        // A changed web module is changed content.
+        std::fs::write(f.root.join("plugins/fixture-importer/plugin-web.wasm"), b"other").unwrap();
+        assert_ne!(crate::plugin::read_package(&f.file("plugins/fixture-importer")).unwrap().approval, package.approval);
+    }
+
+    #[test]
     fn a_step_payload_imports_as_geometry_and_native_formats_keep_their_own_path() {
         let f = Setup::new(&echo(1), &["fixs", "step"]);
         let mut source = boxed();
@@ -687,7 +725,7 @@ mod importer {
         let mut m = importer_manifest(&["fixd"]);
         m["runtime"]["limits"]["fuel"] = json!(50_000_000_000u64);
         let f = Setup::with_manifest("(loop $spin (br $spin)) i32.const 0", m, "", &[]);
-        std::fs::write(f.file("part.fixd"), b"x").unwrap();
+        std::fs::write(f.file("part.fixd"), &b"x"[..]).unwrap();
         let mut s = f.session(true);
         s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
         let (before, undo) = (s.doc.to_json(), s.undo.len());
@@ -742,7 +780,7 @@ mod importer {
             r#"(import "wasi:http/outgoing-handler@0.2.0" (instance (export "handle" (func (result u32)))))"#,
         ] {
             let f = Setup::with_import(&echo(0), &["fixd"], import);
-            std::fs::write(f.file("part.fixd"), b"x").unwrap();
+            std::fs::write(f.file("part.fixd"), &b"x"[..]).unwrap();
             let mut s = f.session(true);
             let before = s.doc.to_json();
             let err = s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string();
@@ -760,4 +798,38 @@ mod importer {
         let out = s.execute("file.import", &json!({"path": f.file("deep/part.fixd")})).unwrap();
         assert_eq!(out["notes"], "part.fixd");
     }
+}
+
+fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, bytes) in files {
+        z.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(bytes).unwrap();
+    }
+    z.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_package_file_unpacks_to_plain_files_at_its_top_or_in_one_folder() {
+    let manifest = serde_json::to_vec(&manifest()).unwrap();
+    for layout in [
+        vec![("plugin.json", &manifest[..]), ("plugin.wasm", &b"x"[..])],
+        vec![("sample/plugin.json", &manifest[..]), ("sample/plugin.wasm", &b"x"[..])],
+    ] {
+        let (id, files) = super::unpack(&zip_of(&layout)).unwrap();
+        assert_eq!(id, "sample");
+        assert_eq!(files.keys().map(String::as_str).collect::<Vec<_>>(), ["plugin.json", "plugin.wasm"]);
+    }
+    for bad in [
+        vec![("plugin.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), ("../evil.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), ("a/b/plugin.wasm", &b"x"[..])],
+        vec![("a/plugin.json", &manifest[..]), ("b/plugin.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), ("sub/plugin.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), (".hidden", &b"x"[..])],
+    ] {
+        assert!(super::unpack(&zip_of(&bad)).is_err(), "{bad:?}");
+    }
+    assert!(super::unpack(b"not a zip").is_err());
 }

@@ -4809,6 +4809,7 @@ dependencies = [
  "wasmtime-wasi",
  "wat",
  "web-time",
+ "zip",
 ]
 
 [[package]]

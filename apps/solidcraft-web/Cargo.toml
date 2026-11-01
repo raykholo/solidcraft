@@ -13,6 +13,11 @@ workspace = true
 name = "solidcraft-web"
 path = "src/main.rs"
 
+# The worker each importer plugin runs in (index.html starts it as a trunk worker).
+[[bin]]
+name = "solidcraft-plugin-worker"
+path = "src/plugin_worker.rs"
+
 [features]
 default = []
 bundled-render-library = ["solidcraft-engine/bundled-render-library"]
@@ -38,4 +43,6 @@ web-sys = { version = "0.3", features = [
     "IdbFactory", "IdbDatabase", "IdbObjectStore", "IdbOpenDbRequest", "IdbRequest", "IdbTransaction", "IdbTransactionMode",
     "Headers", "ReadableStream", "ReadableStreamDefaultReader",
     "BeforeUnloadEvent", "Event", "EventTarget", "KeyboardEvent", "Response", "FormData", "RequestInit", "MediaQueryList", "Gamepad", "Performance",
+    "FileSystemGetDirectoryOptions", "FileSystemRemoveOptions", "Worker", "WorkerOptions", "WorkerType", "MessageEvent",
+    "DedicatedWorkerGlobalScope", "CacheStorage", "Cache", "ResponseInit",
 ] }

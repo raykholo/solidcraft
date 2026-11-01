@@ -90,6 +90,15 @@ impl Progress {
         let stage = self.work_stage.lock().map(|s| *s).unwrap_or("");
         (total > 0 && !stage.is_empty()).then(|| (stage, self.work_done.load(Ordering::Relaxed).min(total), total))
     }
+    /// Report long work from outside the watched evaluation (a plugin host running an importer
+    /// elsewhere): its step, and `done` of `total` units.
+    pub fn report_work(&self, stage: &'static str, done: usize, total: usize) {
+        if let Ok(mut s) = self.work_stage.lock() {
+            *s = stage;
+        }
+        self.work_total.store(total, Ordering::Relaxed);
+        self.work_done.store(done, Ordering::Relaxed);
+    }
     /// The item being worked on, as [`item`] reported it: (name, index from 0, count).
     pub fn item(&self) -> Option<(String, usize, usize)> {
         self.item.lock().ok().and_then(|i| i.clone())

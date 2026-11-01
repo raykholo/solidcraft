@@ -22,12 +22,17 @@ engine commands, so:
 
 ## Build
 
-With Rust's `wasm32-wasip2` target installed (`rustup target add wasm32-wasip2`), from this
-folder:
+With Rust's `wasm32-wasip2` and `wasm32-wasip1` targets installed, from this folder:
 
 ```sh
-cargo build --release --target wasm32-wasip2
+# The component the desktop app runs.
+cargo build --release --target wasm32-wasip2 --lib
 cp target/wasm32-wasip2/release/solidcraft_dutchman_convert.wasm plugin.wasm
+# The core module the web app runs (SolidCraft's web ABI; .cargo/config.toml sets its links).
+cargo build --release --target wasm32-wasip1 --lib
+cp target/wasm32-wasip1/release/solidcraft_dutchman_convert.wasm plugin-web.wasm
+# One package file for either app.
+zip dutchman-convert.zip plugin.json plugin.wasm plugin-web.wasm
 ```
 
 The target's linker writes a component directly; no adapter or `wasm-tools` step is needed.
@@ -36,14 +41,21 @@ claims (Dutchman's per-format Cargo features) and is built for size: `opt-level 
 code unit and thin LTO, which links within 12 GiB of memory. `plugin.json` asks for
 `limits.component_mib: 48` (the default cap is 16 MiB); the Plugins page shows it, and it is
 part of what you allow.
-The component imports only the plugin log and the WASI interfaces Rust's standard library
-links; SolidCraft gives an importer an empty WASI (see
+The component imports only the plugin log, the import context and the WASI interfaces Rust's
+standard library links; SolidCraft gives an importer an empty WASI (see
 [the runtime reference](../../../docs/plugin-runtime.md#importer-plugins)).
+
+The web module is the same converter behind SolidCraft's web ABI. It is built for WASI preview
+1 because the decoders time their work with the standard library's clock, which a
+`wasm32-unknown-unknown` build does not have; the browser host answers those WASI calls with
+nothing real. It takes its memory from the host and imports nothing else (no JavaScript). A
+small stand-in for the `getrandom` crate (`fixed-random/`) gives both builds fixed bytes, so a
+file converts the same way every time.
 
 Dutchman reads files from disk; the plugin calls `dutchman_core::read_bytes`, Dutchman's
 entry point for a file's contents alone, then `SolidCraftWriter` with verification off.
-`Cargo.toml` pins Dutchman's `solidcraft-plugin-pin` branch: main with a Cargo feature per
-input format and assembly parts that keep an unchecked history hidden.
+`Cargo.toml` pins a Dutchman main commit with a Cargo feature per input format and assembly
+parts that keep an unchecked history hidden.
 
 ## Known limits
 
@@ -65,8 +77,9 @@ input format and assembly parts that keep an unchecked history hidden.
 
 ## Install
 
-1. In SolidCraft, open **Preferences › Plugins** and click **Install plugin…**.
-2. Pick this folder's `plugin.json` (with `plugin.wasm` beside it).
+1. In SolidCraft (the desktop app or the web app), open **Preferences › Plugins** and click
+   **Install plugin…**.
+2. Pick `dutchman-convert.zip` (or, on the desktop, this folder's `plugin.json`).
 3. Check what the page lists: the formats it imports and the fuel, memory and time it asks
    for: about 1 GB of memory and 30 seconds per import. Under **How much a plugin may do before
    it's stopped**, choose **Large**.

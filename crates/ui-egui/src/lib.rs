@@ -411,9 +411,27 @@ impl Default for UiState {
     }
 }
 
+/// Read the installed plugins again: the browser host calls it once its storage is loaded.
+pub fn reload_plugins(app: &SolveApp) {
+    plugins::reload(app);
+}
+
+/// What a host's plugin runtime is handed: see [`Services::run_plugin_import`].
+pub type PluginImportHost = Box<
+    dyn Fn(
+        solidcraft_engine::plugin::HostRequest,
+        std::sync::Arc<solidcraft_engine::doc::progress::Progress>,
+        Box<dyn FnOnce(Result<solidcraft_engine::plugin::Imported, String>)>,
+    ),
+>;
+
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
+    /// Run an importer plugin in the host's own plugin runtime (the browser's runs each import in
+    /// a Web Worker): the import, the progress to report to and to watch for Cancel, and what to
+    /// do with its result. None: importers run in the engine (desktop).
+    pub run_plugin_import: Option<PluginImportHost>,
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,

@@ -20,7 +20,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&TypedContract::<RunParams>::new()).output(output_schema_for::<RunResult>)
         .params("path, approval: exact hash from plugin.inspect after reviewing permissions, entry, params?: JSON; explicit native Wasm component execution, one undo step; errors discard all edits"),
     CommandSpec::new("plugin.install", "Install Plugin", install).icon("import").noundo()
-        .params("path: plugin package folder (plugin.json and its component); replace?: bool (replace an installed copy with the same id) → id, approval, manifest, folder. Copies the package into the plugins folder; it runs nothing and allows nothing: the user allows a plugin to run in Preferences > Plugins, for its exact content"),
+        .params("path: plugin package folder (plugin.json and its component), or a package file (.zip of those files, at its top or in one folder); replace?: bool (replace an installed copy with the same id) → id, approval, manifest, folder. Copies the package into the plugins folder; it runs nothing and allows nothing: the user allows a plugin to run in Preferences > Plugins, for its exact content"),
     CommandSpec::new("plugin.remove", "Remove Plugin", remove).icon("delete").noundo()
         .params("id: an installed plugin's id → id, removed: true. Deletes its package folder from the plugins folder and its approval from this session; its commands go away. Its compiled code in the plugin cache is left for the cache's own clean-up"),
 ];
@@ -39,7 +39,9 @@ fn install(s: &mut Session, p: &Value) -> Result<Value> {
     let path = p.get("path").and_then(Value::as_str).filter(|x| !x.trim().is_empty()).ok_or_else(|| bad("plugin.install", "`path` is required"))?;
     let replace = p.get("replace").and_then(Value::as_bool).unwrap_or(false);
     let dir = s.plugins_dir.clone().ok_or_else(|| bad("plugin.install", "this build has no plugins folder"))?;
-    let installed = plugin::install(path, &dir, replace)?;
+    // A package file (a zip of the package's files) or a package folder.
+    let installed =
+        if path.to_ascii_lowercase().ends_with(".zip") { plugin::install_file(path, &dir, replace)? } else { plugin::install(path, &dir, replace)? };
     let allowed = s.plugin_approvals.get(&installed.manifest.id) == Some(&installed.approval);
     Ok(serde_json::json!({
         "id": installed.manifest.id,

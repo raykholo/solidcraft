@@ -18,6 +18,10 @@ mod files;
 mod install;
 #[cfg(target_arch = "wasm32")]
 mod linked;
+#[cfg(target_arch = "wasm32")]
+mod plugin_host;
+#[cfg(any(target_arch = "wasm32", test))]
+mod plugin_store;
 #[cfg(any(target_arch = "wasm32", test))]
 mod space_mouse;
 
@@ -366,6 +370,9 @@ mod web {
                 return;
             }
             files::flush(&self.files);
+            if self.files.plugins_loaded.take() {
+                solidcraft_ui_egui::reload_plugins(&self.app);
+            }
             // A write to the computer's disk that failed: the design is not saved after all.
             for path in self.files.unsaved.borrow_mut().drain(..) {
                 if self.app.session.path.as_deref() == Some(path.as_str()) {
@@ -956,6 +963,8 @@ mod web {
                             easyprint_upload: Some(std::sync::Arc::new(crate::easyprint::upload)),
                             browser_files: Some(Box::new(move || shown.panel.set(true))),
                             install_app: Some(crate::install::service(&cc.egui_ctx)),
+                            // Importer plugins run in a Web Worker each, from their browser build.
+                            run_plugin_import: Some(crate::plugin_host::service(&cc.egui_ctx)),
                             ..Default::default()
                         }};
                         // Thumbnails of saves and start-page cards.

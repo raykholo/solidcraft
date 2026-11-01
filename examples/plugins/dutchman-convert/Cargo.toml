@@ -11,13 +11,15 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-wit-bindgen = "0.54"
 serde_json = "1"
-# Dutchman's `solidcraft-plugin-pin` branch: main with a Cargo feature per input format (so
-# only the codecs of the formats this importer claims are linked) and assembly parts that keep
-# an unchecked history hidden.
-dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "8e03f84806b22a905c8515145a4ae03936127a05", default-features = false, features = ["fusion", "inventor", "solidworks", "freecad"] }
-dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "8e03f84806b22a905c8515145a4ae03936127a05" }
+# Dutchman main: a Cargo feature per input format (so only the codecs of the formats this
+# importer claims are linked), and assembly parts that keep an unchecked history hidden.
+dutchman-core = { git = "https://github.com/dutchman-cad/dutchman", rev = "ce45c1ea3daba7263991612031ec326e17ea80bf", default-features = false, features = ["fusion", "inventor", "solidworks", "freecad"] }
+dutchman-solidcraft = { git = "https://github.com/dutchman-cad/dutchman", rev = "ce45c1ea3daba7263991612031ec326e17ea80bf" }
+
+# The desktop build's WIT bindings.
+[target.'cfg(all(target_os = "wasi", target_env = "p2"))'.dependencies]
+wit-bindgen = "0.54"
 
 # Smallest component: optimise for size, one code unit and thin LTO (39.7 MB; with every
 # cadmpeg codec and no LTO it was 68.7 MB). Wasm has no unwinding, so panics abort already.
@@ -27,3 +29,8 @@ codegen-units = 1
 lto = "thin"
 strip = true
 debug = 0
+
+# Fixed "random" bytes (see fixed-random/src/lib.rs), the same in both builds: one file converts
+# the same way every time.
+[patch.crates-io]
+getrandom = { path = "fixed-random" }
