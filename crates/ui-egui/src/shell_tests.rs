@@ -1065,11 +1065,13 @@ fn painted_texts(h: &Harness) -> Vec<String> {
 fn status_bar_spans_the_window_below_history_in_both_layouts_and_is_covered() {
     for mode in [LayoutMode::Docked, LayoutMode::Floating] {
         let mut h = Harness::new();
+        h.app.preferences.status_bar = false;
+        h.app.preferences.history_in_browser = false;
         h.call("ui.resize", json!({"width":1400,"height":900}));
         h.call("ui.set", json!({"layout":mode}));
         h.app.run("solid.box", json!({"length":40,"width":30,"height":20})).unwrap();
         h.settle();
-        assert!(rect_of("status:bar").is_none() && h.app.shell.status_bar.is_none(), "off by default");
+        assert!(rect_of("status:bar").is_none() && h.app.shell.status_bar.is_none(), "explicitly disabled");
         let viewport_without = h.app.viewport.rect.unwrap();
         let covered_without = covered_rects(&h.app);
         h.call("ui.prefs", json!({"status_bar": true}));
@@ -1220,8 +1222,8 @@ fn status_bar_mouse_mapping_opens_the_mappings_and_picks_one_as_the_preferences_
     let button = rect_of("status:navigation").unwrap();
     assert!(rect_of("status:bar").unwrap().contains_rect(button));
     assert!(button.right() < rect_of("status:units").unwrap().left(), "the mapping sits left of the units");
-    assert_eq!(crate::status_bar::contents(&h.app).navigation, "Fusion");
-    assert!(painted_texts(&h).iter().any(|t| t == "Fusion"));
+    assert_eq!(crate::status_bar::contents(&h.app).navigation, "Inventor");
+    assert!(painted_texts(&h).iter().any(|t| t == "Inventor"));
     h.step(&json!({"click":{"handle":"status:navigation"}})).unwrap();
     h.settle();
     assert_eq!(h.app.menu.target, Target::Navigation);

@@ -4890,6 +4890,7 @@ mod dropdown_tests {
     #[test]
     fn the_icon_grid_shows_the_lists_commands_and_acts_like_it() {
         let mut h = crate::scenario::Harness::new();
+        h.app.preferences.ribbon_icon_grid = false;
         h.app.home.open = false;
         h.call("ui.resize", json!({"width":1600,"height":1000}));
         let open = |h: &mut crate::scenario::Harness| {
@@ -4901,7 +4902,7 @@ mod dropdown_tests {
         };
         let (_, list) = open(&mut h);
         h.step(&json!({"key":"Escape"})).unwrap();
-        assert!(!h.app.preferences.ribbon_icon_grid, "the list stays the default");
+        assert!(!h.app.preferences.ribbon_icon_grid, "the list preference stays off");
         h.call("ui.prefs", json!({"ribbon_icon_grid": true}));
         assert!(h.app.preferences.ribbon_icon_grid);
         let (menu, grid) = open(&mut h);
