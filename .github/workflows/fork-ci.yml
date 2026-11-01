@@ -64,6 +64,8 @@ jobs:
         run: 'cargo test --profile ci -p solidcraft-ui-egui --lib -- plugins dialogs_plugin plugin_report toolbar workspace i18n icon_svg file_load agent_chat::gate control::'
       - name: Plugin limit preferences, drawn
         run: cargo test --profile ci -p solidcraft-ui-egui --test plugin_resource_preferences
+      - name: Web plugin storage tests
+        run: cargo test --profile ci -p solidcraft-web
 
   wasm:
     name: Compile WebAssembly
@@ -79,3 +81,5 @@ jobs:
         with:
           key: fork-wasm
       - run: cargo xtask wasm
+      - name: Plugin worker lints
+        run: cargo clippy --profile ci --target wasm32-unknown-unknown -p solidcraft-web --bin solidcraft-plugin-worker --no-deps -- -D warnings

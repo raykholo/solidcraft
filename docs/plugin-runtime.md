@@ -309,6 +309,13 @@ the component and the icons. It has this small C-style interface (`i32` througho
 | import | `wasi_snapshot_preview1.*` (optional) | The calls Rust's standard library makes: arguments, environment, clocks, random bytes, output, file descriptors. They are answered with nothing real: no arguments, environment or files (every descriptor is bad), a clock that counts its own readings, fixed "random" bytes, and output that goes to the log |
 | export | `_initialize` (optional) | A WASI reactor's start-up code, called once first |
 
+The WASI functions it may import are `args_get`, `args_sizes_get`, `clock_res_get`,
+`clock_time_get`, `environ_get`, `environ_sizes_get`, `fd_close`, `fd_fdstat_get`,
+`fd_fdstat_set_flags`, `fd_filestat_get`, `fd_prestat_dir_name`, `fd_prestat_get`, `fd_read`,
+`fd_readdir`, `fd_seek`, `fd_sync`, `fd_tell`, `fd_write`, `path_create_directory`,
+`path_filestat_get`, `path_link`, `path_open`, `path_readlink`, `path_remove_directory`,
+`path_rename`, `path_unlink_file`, `poll_oneoff`, `proc_exit`, and `random_get`.
+
 A module that imports anything else (a WASI function outside that list, `wasm-bindgen`'s glue,
 a function of its own choosing) is refused before it runs. The web app runs each import in a Web Worker of its own:
 the worker gets the compiled module, the file and the options; the module gets only the imports
@@ -322,8 +329,8 @@ the import, then the command finishes with its result).
 
 Installed plugins are kept in the browser's private storage (OPFS), under `plugins/<id>/`. In
 the browser **Preferences › Plugins › Install plugin…** takes a package file: a `.zip` of
-`plugin.json`, the component, the web module and any icons, at its top or in one folder.
-`plugin.install` takes such a file on the desktop too. Allow, Revoke, Turn off and Remove work
+`plugin.json`, the component, the web module, and any icons, at its top or in one folder.
+`plugin.install` takes such a file on the desktop too. Allow, Revoke, Turn off, and Remove work
 as on the desktop, pinned to the same hash.
 
 ### Choosing the importer

@@ -34,9 +34,10 @@ const WORKER_LOADER: &str = "solidcraft-plugin-worker_loader.js";
 /// [`WORKER_LOADER`], where the app looks for it. Nothing to do for a site without one.
 pub fn alias_worker_loader(dir: &Path) -> Result<(), String> {
     let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let found = entries.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| {
-        n != WORKER_LOADER && n.starts_with("solidcraft-plugin-worker") && n.ends_with("_loader.js")
-    });
+    let found = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n != WORKER_LOADER && n.starts_with("solidcraft-plugin-worker") && n.ends_with("_loader.js"));
     if let Some(name) = found {
         std::fs::copy(dir.join(&name), dir.join(WORKER_LOADER)).map_err(|e| format!("{name}: {e}"))?;
     }

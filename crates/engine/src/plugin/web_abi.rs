@@ -39,7 +39,7 @@ pub const IMPORTS: [(&str, &str, &str); 3] = [("env", "memory", "memory"), ("env
 /// The WASI preview 1 functions a module may import (`wasi_snapshot_preview1`): what Rust's
 /// standard library calls. The host answers them with nothing real: no arguments, environment
 /// or files, a clock that counts its own readings, fixed "random" bytes, output to the log.
-pub const WASI: [&str; 29] = [
+pub const WASI: &[&str] = &[
     "args_get",
     "args_sizes_get",
     "clock_res_get",

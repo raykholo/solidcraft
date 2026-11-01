@@ -184,7 +184,7 @@ the files an assembly names (with the user's consent), not designed yet.
 ## Plugin limits in plain words
 
 **Feature.** Preferences › Plugins asks one question, **How much a plugin may do before it's
-stopped**: Normal, Large or Largest (trusted plugins only), with what the choice allows ("Up to
+stopped**: Normal, Large, or Largest (trusted plugins only), with what the choice allows ("Up to
 2 GB of memory and 30 seconds per run") and why ("A plugin that runs longer or uses more memory
 than this is stopped, so a broken plugin can't freeze SolidCraft."). The exact numbers are under
 **Advanced**: Work limit (instructions), Memory limit (MiB), Time limit (seconds). Each card says
@@ -202,3 +202,45 @@ plugin, not instruction counts.
 
 **Still missing.** All three choices allow 30 seconds, since that is the most any run may take;
 a longer ceiling would need the per-run maximum raised, which is a separate decision.
+
+## Plugins in the browser
+
+**Feature.** The web app has Preferences › Plugins too. **Install plugin…** takes a package
+`.zip`; the package is kept in the browser's private storage (OPFS) and needs the same Allow,
+pinned to the same hash, as on the desktop. An allowed importer adds its ribbon command and
+file types, and an import shows the same dialog, progress card, Cancel, and result as on the
+desktop. Dutchman Convert imports a Fusion `.f3d` in the browser with its feature history.
+
+**Architecture needed.**
+- A web ABI (in `docs/plugin-runtime.md`): browsers run core modules, not components, so an
+  importer ships a second build of itself, a small C-style core module named by the
+  manifest's optional `runtime.web.module`. The approval hash covers it. The engine checks its
+  imports and exports before it runs (`plugin::web_abi`).
+- A worker per import: `solidcraft-plugin-worker`, a second Rust binary of the web app, built
+  as a Web Worker. The page compiles the module (`compileStreaming`, its bytes kept in Cache
+  Storage, so the browser caches the compiled code too) and hands it to a fresh worker with the
+  file and the options. The time limit and Cancel terminate the worker; the memory limit is the
+  imported memory's maximum. There is no fuel in the browser.
+- Hosted imports: `file.import` runs until it reaches an importer, asks the host to run it
+  (`plugin::ask_host`), and runs again with the answer, keyed by a hash of what was asked. The
+  file-load card drives this through `Services::run_plugin_import`.
+- Package files: `plugin::unpack` reads a `.zip` (at its top or in one folder, size- and
+  count-capped); `plugin.install` takes one on the desktop too.
+- The plugin crate builds the web module from the same source behind a `cfg`.
+
+**Why WASI in the web ABI.** The design called for no imports beyond the host's. Rust's
+standard library on `wasm32-unknown-unknown` panics at its clock, which the converter's
+progress timing reads, so the Dutchman web module is built for `wasm32-wasip1`. The worker
+answers those WASI calls with nothing real: no files, arguments, or environment, a clock that
+only counts, fixed random bytes, and output into the notes. The module still reaches nothing
+outside the worker. Its random-number dependency is patched to a fixed source in the plugin
+crate, since the module has no use for real randomness and the browser glue would be an import.
+
+**Measured** (headless Chromium, software rendering, `M3_Parametric_FHCS.f3d`). First import
+in a fresh browser profile: module compiled in 466 ms, import done in 3.4 s. Second import after
+a reload, same profile: module ready from the cache in 280 ms, import done in 3.5 s. The
+conversion itself dominates; the cache saves the compile, not the run.
+
+**Still missing.** Plugins that are not importers do not run in the browser. Fuel-style work
+limits do not exist there, so Normal, Large, and Largest differ only in memory. A package must
+be installed again in each browser, since browser storage is per site and per profile.
