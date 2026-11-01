@@ -73,7 +73,17 @@ const ANSWERED_ON_A_COPY: &[&str] = &["file.export", "file.save_mesh"];
 /// body, an inspection that measures them, #4604; a clearance or interference check of every pair
 /// of bodies, minutes on an assembly of 150): they run on a copy too, whatever the preference,
 /// since an answer from the design as it was when asked has no order to keep.
-const READ_ON_A_COPY: &[&str] = &["document.inspect", "inspect.clearance", "inspect.interference", "inspect.measure", "model.mesh", "plugin.inspect"];
+const READ_ON_A_COPY: &[&str] = &[
+    "inspect.measure",
+    "document.inspect",
+    "inspect.clearance",
+    "inspect.interference",
+    // Physical properties of a component or placement: every body of every placement (#8706).
+    "component.properties",
+    "occurrence.properties",
+    "model.mesh",
+    "plugin.inspect",
+];
 
 /// Exports and readings computing at once; more run here.
 const MAX_ANSWERING: usize = 4;
