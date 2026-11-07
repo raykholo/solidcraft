@@ -113,7 +113,7 @@ impl NavPreset {
 use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
-/// The mouse mappings. The first is the default.
+/// The mouse mappings. The first is the fallback for an unknown id.
 pub const NAV_PRESETS: &[NavPreset] = &[
     NavPreset {
         id: "fusion",
@@ -306,7 +306,7 @@ impl Prefs {
     }
 }
 
-/// The preset with this id (the default for an unknown one).
+/// The preset with this id (the first preset for an unknown one).
 pub fn nav_preset(id: &str) -> &'static NavPreset {
     NAV_PRESETS.iter().find(|p| p.id == id).unwrap_or(&NAV_PRESETS[0])
 }
@@ -606,9 +606,9 @@ pub const SUPERSAMPLING: [f32; 3] = [1.0, 1.5, 2.0];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NavigatorStyle {
+    Axes,
     /// Also what a navigator this version doesn't know reads as (`lenient`).
     #[default]
-    Axes,
     Cube,
     /// A body of the user's choice, drawn the cube's size ([`crate::view_gizmo`]); the cube
     /// until one is chosen.
@@ -644,11 +644,11 @@ pub enum NavigatorTexture {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistorySketches {
-    /// Every sketch is a row of its own, in creation order (how it always was). Also what a
+    /// Every sketch is a row of its own, in creation order.
+    InOrder,
+    /// A sketch a feature is built from is listed one level in, under that feature. Also what a
     /// value this version doesn't know reads as (`lenient`).
     #[default]
-    InOrder,
-    /// A sketch a feature is built from is listed one level in, under that feature.
     UnderFeature,
 }
 
@@ -670,10 +670,11 @@ pub enum SectionHatch {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OriginPlaneNames {
-    /// XY, XZ and YZ. Also what a naming this version doesn't know reads as (`lenient`).
-    #[default]
+    /// XY, XZ and YZ.
     Xyz,
-    /// Top for XY, Front for XZ and Right for YZ (Z up), the engine's aliases for them.
+    /// Top for XY, Front for XZ and Right for YZ (Z up), the engine's aliases for them. Also what
+    /// a naming this version doesn't know reads as (`lenient`).
+    #[default]
     TopFrontRight,
 }
 
@@ -1055,7 +1056,7 @@ preference_settings! {
     /// Units of new designs.
     default_units: String = "mm".into(), PAGE_DESIGN;
     /// Mouse mapping: `fusion`, `solidworks` or `inventor`.
-    nav: String = "fusion".into(), PAGE_NAVIGATION;
+    nav: String = "inventor".into(), PAGE_NAVIGATION;
     /// Opt in to rotation through both poles with roll, without the Shift axis-snap spring.
     /// Independent of mouse bindings; false also preserves existing saved presets' behavior.
     free_orbit: bool = false, PAGE_NAVIGATION;
@@ -1063,7 +1064,7 @@ preference_settings! {
     /// the pole limit) instead of the screen's.
     free_orbit_upright: bool = false, PAGE_NAVIGATION => check_tr("nav.free_orbit_upright.label");
     /// Off: a right drag that the mouse mapping would orbit leaves the camera alone (#6492).
-    right_drag_orbits: bool = true, PAGE_NAVIGATION => check_tr("nav.right_drag_orbits.label");
+    right_drag_orbits: bool = false, PAGE_NAVIGATION => check_tr("nav.right_drag_orbits.label");
     /// A middle or right drag keeps the mode it started with until its button is released, as a
     /// left drag with the mapping's keys does: letting go of Shift partway through a Shift+middle
     /// orbit doesn't turn it into a pan (#9557). Off: the keys held decide on every frame, as before.
@@ -1080,7 +1081,7 @@ preference_settings! {
     /// The custom view gizmo has the cube's Home button beside it.
     navigator_home: bool = true, PAGE_NAVIGATION;
     /// Show the radial ring and enable hold/flick gestures for viewport context menus.
-    radial_context_menu: bool = false, PAGE_NAVIGATION => check("Radial context menu");
+    radial_context_menu: bool = true, PAGE_NAVIGATION => check("Radial context menu");
     /// Work on the model directly in the viewport (pull a face to extrude or cut); off by default.
     direct_interaction: bool = false, PAGE_TOOLS;
     /// Mouse gestures: a ring of tools on the right button.
@@ -1311,7 +1312,7 @@ preference_settings! {
     viewport_status_summary: bool = true, PAGE_GRAPHICS;
     /// Keep the SKETCH tab in the ribbon, right after MODEL, while no sketch is open; its drawing
     /// tools then start a sketch first (#7904).
-    sketch_tab_always: bool = false, PAGE_LAYOUT;
+    sketch_tab_always: bool = true, PAGE_LAYOUT;
     /// Each design tab keeps its open dialog or tool, and its toolbar tab, while another design is
     /// shown, and has them back when it is shown again (#9360). Off by default: a switch cancels
     /// them and shows the MODEL tab.
@@ -1337,7 +1338,7 @@ preference_settings! {
     hidden_toolbar_tabs: Vec<String> = Vec::new(), PAGE_LAYOUT;
     /// Show the ribbon's panel drop-downs as a grid of large icons, their names in the tooltips,
     /// instead of a list of small icons with names (#4739).
-    ribbon_icon_grid: bool = false, PAGE_LAYOUT;
+    ribbon_icon_grid: bool = true, PAGE_LAYOUT;
     /// After a ribbon panel menu is open, hover another panel to switch to its menu.
     ribbon_menus_follow_hover: bool = false, PAGE_LAYOUT;
     /// Leave the commands the ribbon shows as buttons (pinned ones) out of its panel drop-downs,
@@ -1352,8 +1353,8 @@ preference_settings! {
     /// axis view moved down below them (#6709). Off by default.
     view_confirm_corner: bool = false, PAGE_LAYOUT;
     /// A thin bar along the window's bottom edge: what is being edited, the open sketch's state
-    /// and the design's units (#7243). Off by default.
-    status_bar: bool = false, PAGE_LAYOUT;
+    /// and the design's units (#7243).
+    status_bar: bool = true, PAGE_LAYOUT;
     /// The selection's length, area or distance in the view's bottom right corner (#7000). Off by
     /// default.
     quick_measure: bool = false, PAGE_GRAPHICS;
@@ -1365,7 +1366,7 @@ preference_settings! {
     timeline_under_browser: bool = false, PAGE_LAYOUT;
     /// Compact history: the browser lists each component's features in history order with the
     /// marker, and neither timeline is shown.
-    history_in_browser: bool = false, PAGE_LAYOUT;
+    history_in_browser: bool = true, PAGE_LAYOUT;
     /// Fold the shared-column history to its header.
     timeline_collapsed: bool = false, PAGE_LAYOUT;
     /// The browser's share of the column's height when History sits under it, which the user
@@ -1646,7 +1647,7 @@ preference_settings! {
     /// A sketch started on a face of a body in another component than the active one activates
     /// that component first, so the sketch belongs to it (`sketch.create` `activate_part`,
     /// #10215). Off (the default): the sketch belongs to the active component, as before.
-    sketch_face_activates_part: bool = false, PAGE_SKETCH;
+    sketch_face_activates_part: bool = true, PAGE_SKETCH;
     /// While a sketch is open, only sketch keys and keys that work everywhere run; a model
     /// command's key (E, F) does nothing. Off (the default): a model key pressed in a sketch
     /// runs its command, and one that builds a feature finishes the sketch first (#2815).
@@ -6364,7 +6365,7 @@ mod tests {
             ("viewport_section_status", json!(false), PAGE_GRAPHICS),
             ("viewport_status_details", json!(false), PAGE_GRAPHICS),
             ("viewport_status_summary", json!(false), PAGE_GRAPHICS),
-            ("sketch_tab_always", json!(true), PAGE_LAYOUT),
+            ("sketch_tab_always", json!(false), PAGE_LAYOUT),
             ("keep_work_on_tab_switch", json!(true), PAGE_LAYOUT),
             ("ribbon_reveal", json!(true), PAGE_LAYOUT),
             ("tab_double_click_renames", json!(false), PAGE_LAYOUT),
@@ -6375,7 +6376,7 @@ mod tests {
             ("ribbon_menus_skip_pinned", json!(true), PAGE_LAYOUT),
             ("timeline_left", json!(true), PAGE_LAYOUT),
             ("timeline_under_browser", json!(true), PAGE_LAYOUT),
-            ("history_sketches", json!("under_feature"), PAGE_LAYOUT),
+            ("history_sketches", json!("in_order"), PAGE_LAYOUT),
             ("history_play_button", json!(false), PAGE_LAYOUT),
             ("history_group_joints", json!(true), PAGE_LAYOUT),
             ("history_bar_groups", json!(true), PAGE_LAYOUT),
@@ -6387,12 +6388,12 @@ mod tests {
             ("viewport_theme", json!("light"), PAGE_APPEARANCE),
             ("viewport_background", json!([255, 255, 255]), PAGE_APPEARANCE),
             ("view_confirm_corner", json!(true), PAGE_LAYOUT),
-            ("status_bar", json!(true), PAGE_LAYOUT),
+            ("status_bar", json!(false), PAGE_LAYOUT),
             ("browser_eye_left", json!(true), PAGE_LAYOUT),
             ("browser_components_open", json!(true), PAGE_LAYOUT),
             ("browser_rows_start_closed", json!(true), PAGE_LAYOUT),
             ("quick_measure", json!(true), PAGE_GRAPHICS),
-            ("origin_plane_names", json!("top_front_right"), PAGE_DESIGN),
+            ("origin_plane_names", json!("xyz"), PAGE_DESIGN),
             ("direct_interaction", json!(true), PAGE_TOOLS),
             ("hole_snaps", json!(true), PAGE_TOOLS),
             ("hole_moves", json!(true), PAGE_TOOLS),
@@ -8735,7 +8736,7 @@ mod tests {
         let p = super::lenient(&saved);
         assert_eq!(p.nav, "solidworks");
         assert!(p.zoom_reverse);
-        assert_eq!(p.navigator_style, super::NavigatorStyle::Axes);
+        assert_eq!(p.navigator_style, super::NavigatorStyle::Cube);
         assert_eq!(p.ui_scale, super::Prefs::default().ui_scale);
         assert_eq!(super::lenient(&json!("garbage")), super::Prefs::default());
         // Hand-edited toolbar tab lists keep only the tabs each can hold, each once (#5717).
@@ -9388,6 +9389,7 @@ mod tests {
     #[test]
     fn unapplied_changes_are_not_saved_while_the_dialog_is_open() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.preferences.sketch_tab_always = false;
         assert_eq!(saved_prefs(&app)["preferences"]["theme"], "dark");
         assert_eq!(saved_prefs(&app)["preferences"]["sketch_tab_always"], false);
         // Open the dialog: the snapshot is taken as `show` and the control channel take it.
@@ -9441,6 +9443,7 @@ mod tests {
     #[test]
     fn control_channel_holds_unapplied_changes_out_of_the_saved_settings() {
         let mut h = crate::scenario::Harness::new();
+        h.app.preferences.sketch_tab_always = false;
         h.call("ui.prefs", json!({"open": "Layout"}));
         h.call("ui.prefs", json!({"sketch_tab_always": true}));
         let saved = saved_prefs(&h.app);
@@ -9561,8 +9564,9 @@ mod tests {
     #[test]
     fn navigator_picker_preserves_axes_and_follows_preferences_transactions() {
         let old: Prefs = serde_json::from_value(json!({"nav":"solidworks"})).unwrap();
-        assert_eq!(old.navigator_style, NavigatorStyle::Axes);
+        assert_eq!(old.navigator_style, NavigatorStyle::Cube);
         let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"navigator_style":"axes"}));
         assert!(crate::scenario::handle_at("axis_view:z").is_some());
         assert!(crate::scenario::handle_at("navigation_cube:front").is_none());
         let camera = h.app.cam;
@@ -9590,7 +9594,7 @@ mod tests {
         h.call("ui.prefs", json!({"open":"Navigation","navigator_style":"cube"}));
         h.call("ui.prefs", json!({"button":"apply"}));
         h.call("ui.prefs", json!({"button":"defaults"}));
-        assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Axes);
+        assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Cube);
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert_eq!(h.app.preferences.navigator_style, NavigatorStyle::Cube);
         h.call("ui.prefs", json!({"navigator_style":"axes", "look_at_anim":false}));
@@ -9658,13 +9662,14 @@ mod tests {
     fn origin_plane_names_change_only_the_names_shown() {
         use OriginPlaneNames::{TopFrontRight, Xyz};
         let old: Prefs = serde_json::from_value(json!({"nav":"solidworks"})).unwrap();
-        assert_eq!(old.origin_plane_names, Xyz, "older preferences keep XY, XZ and YZ");
-        assert_eq!(lenient(&json!({"origin_plane_names":"hologram","zoom_reverse":true})).origin_plane_names, Xyz);
+        assert_eq!(old.origin_plane_names, TopFrontRight, "missing settings use the channel default");
+        assert_eq!(lenient(&json!({"origin_plane_names":"hologram","zoom_reverse":true})).origin_plane_names, TopFrontRight);
         assert_eq!(OriginPlaneNames::PLANES.map(|p| Xyz.label(p)), ["XY", "XZ", "YZ"]);
         assert_eq!(OriginPlaneNames::PLANES.map(|p| TopFrontRight.label(p)), ["Top", "Front", "Right"]);
         assert_eq!(TopFrontRight.label("Plane1"), "Plane1", "construction planes keep their own names");
 
         let mut h = crate::scenario::Harness::new();
+        h.call("ui.prefs", json!({"origin_plane_names":"xyz"}));
         let sketch = h.app.run("sketch.create", json!({"plane":"XY"})).unwrap()["sketch"].as_u64().unwrap();
         h.app.run("sketch.rectangle.two_point", json!({"p0":[0,0],"p1":[20,10]})).unwrap();
         h.app.run("sketch.finish", json!({})).unwrap();
@@ -9713,9 +9718,9 @@ mod tests {
         assert_eq!(h.app.preferences.origin_plane_names, TopFrontRight, "Cancel takes it back");
         h.call("ui.prefs", json!({"open":"Design"}));
         h.call("ui.prefs", json!({"button":"defaults"}));
-        assert_eq!(h.app.preferences.origin_plane_names, Xyz, "Restore Defaults: XY, XZ and YZ");
+        assert_eq!(h.app.preferences.origin_plane_names, TopFrontRight, "Restore Defaults: Top, Front and Right");
         h.frames(2);
-        assert!(OriginPlaneNames::PLANES.iter().all(|p| rows().iter().any(|r| r == p)), "{:?}", rows());
+        assert!(OriginPlaneNames::PLANES.iter().all(|p| rows().iter().any(|r| r == TopFrontRight.label(p))), "{:?}", rows());
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert_eq!(h.app.preferences.origin_plane_names, TopFrontRight);
     }
@@ -9785,6 +9790,7 @@ mod tests {
         let steps = steps.as_array().unwrap();
         let transition = steps.iter().position(|step| step["params"]["history_sketches"] == "under_feature").unwrap();
         let mut h = crate::scenario::Harness::new();
+        h.app.preferences.history_sketches = HistorySketches::InOrder;
         for step in steps.iter().take(transition) {
             h.step(step).unwrap();
         }
@@ -9820,11 +9826,12 @@ mod tests {
     }
 
     #[test]
-    fn history_sketches_defaults_in_order_and_follows_preferences_transactions() {
+    fn history_sketches_defaults_under_feature_and_follows_preferences_transactions() {
         let old: Prefs = serde_json::from_value(json!({"timeline_left": true})).unwrap();
-        assert_eq!(old.history_sketches, HistorySketches::InOrder, "designs and settings from before keep the creation order");
-        assert_eq!(lenient(&json!({"history_sketches": "sideways"})).history_sketches, HistorySketches::InOrder);
+        assert_eq!(old.history_sketches, HistorySketches::UnderFeature, "missing settings use the channel default");
+        assert_eq!(lenient(&json!({"history_sketches": "sideways"})).history_sketches, HistorySketches::UnderFeature);
         let mut h = crate::scenario::Harness::new();
+        h.app.preferences.history_sketches = HistorySketches::InOrder;
         h.call("ui.prefs", json!({"timeline_left": true, "timeline_under_browser": true}));
         let design = h.app.session.doc.to_json();
         h.call("ui.prefs", json!({"open": "Layout"}));
@@ -9849,7 +9856,7 @@ mod tests {
         assert_eq!(h.app.preferences, before, "an unknown value changes nothing");
         h.call("ui.prefs", json!({"open": "Layout"}));
         h.call("ui.prefs", json!({"button": "defaults"}));
-        assert_eq!(h.app.preferences.history_sketches, HistorySketches::InOrder);
+        assert_eq!(h.app.preferences.history_sketches, HistorySketches::UnderFeature);
         h.call("ui.prefs", json!({"button": "cancel"}));
         assert_eq!(h.app.preferences.history_sketches, HistorySketches::UnderFeature);
     }
@@ -10018,11 +10025,12 @@ mod tests {
     }
 
     #[test]
-    fn radial_context_menu_defaults_off_and_follows_preferences_transactions() {
-        assert!(!Prefs::default().radial_context_menu);
+    fn radial_context_menu_defaults_on_and_follows_preferences_transactions() {
+        assert!(Prefs::default().radial_context_menu);
         let old: Prefs = serde_json::from_value(json!({"nav":"solidworks","zoom_reverse":true})).unwrap();
-        assert!(!old.radial_context_menu && old.zoom_reverse && old.nav == "solidworks");
+        assert!(old.radial_context_menu && old.zoom_reverse && old.nav == "solidworks");
         let mut h = crate::scenario::Harness::new();
+        h.app.preferences.radial_context_menu = false;
         h.call("ui.prefs", json!({"open":"Navigation"}));
         for _ in 0..16 {
             let page = crate::scenario::rect_of("dialog:page_body").expect("Navigation page body");
@@ -10038,11 +10046,11 @@ mod tests {
         restored.load_prefs(&h.app.prefs());
         assert!(!restored.preferences.radial_context_menu, "a change that was not applied is not saved (#9730)");
         h.call("ui.prefs", json!({"button":"cancel"}));
-        assert!(!h.app.preferences.radial_context_menu, "Cancel restores the default-off setting");
+        assert!(!h.app.preferences.radial_context_menu, "Cancel restores the explicit off setting");
         h.call("ui.prefs", json!({"open":"Navigation","radial_context_menu":true}));
         h.call("ui.prefs", json!({"button":"apply"}));
         h.call("ui.prefs", json!({"button":"defaults"}));
-        assert!(!h.app.preferences.radial_context_menu, "Navigation defaults disable the ring");
+        assert!(h.app.preferences.radial_context_menu, "Navigation defaults enable the ring");
         h.call("ui.prefs", json!({"button":"cancel"}));
         assert!(h.app.preferences.radial_context_menu, "Cancel restores the last Apply");
     }
@@ -10537,13 +10545,13 @@ mod tests {
         assert_eq!(app.preferences.nav, "touchpad");
         assert!(app.preferences.trackpad_pan, "choosing Touchpad must not overwrite the saved scroll preference");
         control(&mut app, &json!({"button":"cancel"})).unwrap();
-        assert_eq!(app.preferences.nav, "fusion");
+        assert_eq!(app.preferences.nav, "inventor");
         control(&mut app, &json!({"open":"Navigation", "nav":"touchpad", "button":"apply"})).unwrap();
         let mut other = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
         other.load_prefs(&app.prefs());
         assert_eq!(other.preferences.nav, "touchpad");
         control(&mut app, &json!({"button":"defaults"})).unwrap();
-        assert_eq!(app.preferences.nav, "fusion");
+        assert_eq!(app.preferences.nav, "inventor");
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert_eq!(app.preferences.nav, "touchpad");
     }
@@ -10552,6 +10560,7 @@ mod tests {
     fn choosing_the_solidworks_preset_frees_the_right_button_and_fits_on_middle_double_click() {
         let none = Modifiers::default();
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        app.preferences.right_drag_orbits = true;
         app.preferences.middle_double_click = "off".into();
         set(&mut app, &json!({"nav": "solidworks"})).unwrap();
         assert!(app.preferences.right_drag_orbits, "a saved SolidWorks preset keeps its right-drag orbit");
@@ -10573,7 +10582,7 @@ mod tests {
     #[test]
     fn creo_preset_maps_navigation_and_persists() {
         let mut app = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
-        assert_eq!(app.preferences.nav, "fusion");
+        assert_eq!(app.preferences.nav, "inventor");
         choose_nav_preset(&mut app.preferences, nav_preset("creo"));
         assert_eq!(app.preferences.nav, "creo");
         assert!(!app.preferences.zoom_reverse);
@@ -10635,10 +10644,10 @@ mod tests {
         control(&mut app, &json!({"open":"Navigation", "nav":"creo"})).unwrap();
         assert_eq!(app.preferences.nav, "creo");
         control(&mut app, &json!({"button":"cancel"})).unwrap();
-        assert_eq!(app.preferences.nav, "fusion");
+        assert_eq!(app.preferences.nav, "inventor");
         control(&mut app, &json!({"open":"Navigation", "nav":"creo", "button":"apply"})).unwrap();
         control(&mut app, &json!({"button":"defaults"})).unwrap();
-        assert_eq!(app.preferences.nav, "fusion");
+        assert_eq!(app.preferences.nav, "inventor");
         control(&mut app, &json!({"button":"cancel"})).unwrap();
         assert_eq!(app.preferences.nav, "creo");
     }
@@ -10835,7 +10844,7 @@ mod tests {
 
         control(&mut app, &json!({"open": "Navigation"})).unwrap();
         control(&mut app, &json!({"button": "defaults"})).unwrap();
-        assert_eq!(app.preferences.nav, "fusion");
+        assert_eq!(app.preferences.nav, "inventor");
         assert!(app.preferences.look_at_anim);
         control(&mut app, &json!({"button": "ok"})).unwrap();
         assert!(!app.prefs_window.open);
