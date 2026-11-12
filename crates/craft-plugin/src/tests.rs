@@ -98,3 +98,141 @@ fn host_errors_are_machine_readable() {
     assert_eq!(serde_json::from_value::<HostError>(value).unwrap(), error);
     assert!(WIT.contains(&format!("package {API};")));
 }
+
+#[test]
+fn plugin_check_validates_schemas_and_names_manifest_fields() {
+    for schema in [
+        json!({"type":"object","properties":{"x":{"type":"banana"}}}),
+        json!({"type":"object","required":"x"}),
+        json!({"type":"object","properties":{"x":{"$ref":"https://example.invalid/schema"}}}),
+        json!({"type":"object","properties":{"x":{"$ref":"file:///tmp/schema"}}}),
+    ] {
+        let mut value = manifest();
+        value["runtime"]["entries"] = json!([{"name":"make","input_schema":schema}]);
+        let problem = check_manifest(&serde_json::to_vec(&value).unwrap(), "sample").unwrap_err();
+        assert!(problem.field.contains("input_schema"), "{problem:?}");
+    }
+    let mut value = manifest();
+    value["runtime"]["permissions"] = json!({"net":true});
+    let problem = check_manifest(&serde_json::to_vec(&value).unwrap(), "sample").unwrap_err();
+    assert_eq!(problem.field, "runtime.permissions.net");
+    value["runtime"]["permissions"] = json!({"clock":"yes"});
+    let problem = check_manifest(&serde_json::to_vec(&value).unwrap(), "sample").unwrap_err();
+    assert_eq!(problem.field, "runtime.permissions.clock");
+    assert!(parse_manifest(format!("{} false", manifest()).as_bytes(), "sample").is_err());
+}
+
+#[derive(Default)]
+struct HarnessHost {
+    value: u32,
+    checkpoint: u32,
+}
+impl PluginHost for HarnessHost {
+    fn command_catalog(&self) -> Vec<CommandSchema> {
+        Vec::new()
+    }
+    fn run_command(&mut self, name: &str, _: &Value) -> Result<Value> {
+        self.value += 1;
+        if name == "fail" { Err(HostError::CommandFailed { command: name.into(), reason: "fixture failure".into() }) } else { Ok(json!(self.value)) }
+    }
+    fn begin_transaction(&mut self) -> Result<()> {
+        self.checkpoint = self.value;
+        Ok(())
+    }
+    fn commit_transaction(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn rollback_transaction(&mut self) -> Result<()> {
+        self.value = self.checkpoint;
+        Ok(())
+    }
+    fn granted_folders(&self) -> Vec<FileGrant> {
+        Vec::new()
+    }
+    fn log(&mut self, _: &str) {}
+    fn progress(&mut self, _: f32, _: &str) {}
+}
+
+#[test]
+fn plugin_test_isolates_entries_and_preserves_typed_errors_and_journals() {
+    let mut value = manifest();
+    value["runtime"]["entries"] = json!(["pass", "fail", "last"]);
+    let manifest = parse(&value).unwrap();
+    let mut saved = Vec::new();
+    let report = test_entries(
+        &manifest,
+        None,
+        &json!({}),
+        || Ok(JournalHost::new(HarnessHost::default())),
+        |mut host, entry, input| {
+            host.begin_transaction().unwrap();
+            let result = host.run_command(entry, input);
+            if result.is_ok() {
+                host.commit_transaction().unwrap();
+            } else {
+                host.rollback_transaction().unwrap();
+            }
+            (host, result)
+        },
+        |host, entry| {
+            saved.push((host.host.value, host.journal.clone()));
+            Ok(TestArtifacts { design: format!("{entry}.design").into(), journal: format!("{entry}.json").into() })
+        },
+    )
+    .unwrap();
+    let json = serde_json::to_value(report).unwrap();
+    assert_eq!(json["passed"], false);
+    assert_eq!(json["entries"].as_array().unwrap().len(), 3);
+    assert_eq!(json["entries"][0]["output"], 1);
+    assert_eq!(json["entries"][1]["error"]["kind"], "command_failed");
+    assert_eq!(json["entries"][1]["design"], "fail.design");
+    assert_eq!(json["entries"][2]["output"], 1);
+    assert_eq!(saved[1].0, 0);
+    assert!(saved[1].1[0].error.is_some());
+    assert!(
+        test_entries(
+            &manifest,
+            Some("missing"),
+            &json!({}),
+            || Ok(HarnessHost::default()),
+            |host, _, _| (host, Ok(json!({}))),
+            |_, _| panic!("unknown entry must not save artifacts")
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn plugin_test_validates_inputs_before_running_and_saves_failed_design() {
+    let mut value = manifest();
+    value["runtime"]["entries"] = json!([{"name":"make","input_schema":{
+        "type":"object","properties":{"count":{"type":"integer","minimum":1}},"required":["count"],"additionalProperties":false
+    }}]);
+    let manifest = parse(&value).unwrap();
+    let report = test_entries(
+        &manifest,
+        Some("make"),
+        &json!({"count":0}),
+        || Ok(HarnessHost::default()),
+        |_, _, _| panic!("invalid input must never run"),
+        |host, _| {
+            assert_eq!(host.value, 0);
+            Ok(TestArtifacts { design: "unchanged.design".into(), journal: "empty.json".into() })
+        },
+    )
+    .unwrap();
+    assert!(!report.passed);
+    assert!(matches!(&report.entries[0].error, Some(HostError::InvalidInput { field, .. }) if field == "/count"));
+    assert!(report.entries[0].artifacts.is_some());
+}
+
+#[test]
+fn plugin_journal_limit_refuses_more_calls_before_running_the_command() {
+    let mut host = JournalHost::new(HarnessHost::default());
+    for _ in 0..256 {
+        host.run_command("pass", &json!({})).unwrap();
+    }
+    assert!(matches!(host.run_command("pass", &json!({})), Err(HostError::LimitExceeded { .. })));
+    assert_eq!(host.host.value, 256);
+    assert_eq!(host.journal.len(), 256);
+}

@@ -1,6 +1,6 @@
 use crate::RuntimeOptions;
 use cap_std::fs::{Dir, OpenOptions};
-use craft_plugin::{CommandSchema, Effect, HostError, Limits, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, Manifest, PluginHost, Result};
+use craft_plugin::{CheckProblem, CommandSchema, Effect, HostError, Limits, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, Manifest, PluginHost, Result};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -228,29 +228,139 @@ fn execution_error(failure: &wasmtime::Error, remaining: Option<u64>, limits: &L
 }
 
 /// Refuse reserved network imports even when Wasmtime elides an unused import instance.
-fn reject_network_imports(engine: &Engine, component: &Component) -> Result<()> {
+fn network_import_problems(engine: &Engine, component: &Component) -> Vec<CheckProblem> {
     use wasmtime::component::types::ComponentItem;
-    fn check(engine: &Engine, name: &str, item: ComponentItem, depth: usize, remaining: &mut usize) -> Result<()> {
+    fn check(engine: &Engine, name: &str, item: ComponentItem, depth: usize, remaining: &mut usize, problems: &mut Vec<CheckProblem>) {
         if depth > 64 || *remaining == 0 {
-            return Err(limit("plugin import interface count or depth"));
+            problems.push(CheckProblem { field: name.into(), error: limit("plugin import interface count or depth") });
+            return;
         }
         *remaining -= 1;
         let package = craft_plugin::API.split_once('@').map(|(package, _)| package).unwrap_or(craft_plugin::API);
         if name == "fetch" || name.starts_with("wasi:sockets/") || name.starts_with("wasi:http/") || name.starts_with(&format!("{package}/fetch")) {
-            return Err(HostError::PermissionDenied { permission: format!("network import is forbidden: {name}") });
+            problems.push(CheckProblem {
+                field: name.into(),
+                error: HostError::PermissionDenied { permission: format!("network import is forbidden: {name}") },
+            });
+            return;
         }
         if let ComponentItem::ComponentInstance(instance) = item {
             for (name, export) in instance.exports(engine) {
-                check(engine, name, export.ty, depth + 1, remaining)?;
+                check(engine, name, export.ty, depth + 1, remaining, problems);
+                if *remaining == 0 {
+                    break;
+                }
             }
         }
-        Ok(())
     }
+    let mut problems = Vec::new();
     let mut remaining = 4096;
     for (name, import) in component.component_type().imports(engine) {
-        check(engine, name, import.ty, 0, &mut remaining)?;
+        check(engine, name, import.ty, 0, &mut remaining, &mut problems);
+        if remaining == 0 {
+            break;
+        }
     }
-    Ok(())
+    if remaining == 0 {
+        problems.push(CheckProblem { field: "component.imports".into(), error: limit("plugin import interface count or depth") });
+    }
+    problems
+}
+
+fn reject_network_imports(engine: &Engine, component: &Component) -> Result<()> {
+    match network_import_problems(engine, component).into_iter().next() {
+        Some(problem) => Err(problem.error),
+        None => Ok(()),
+    }
+}
+
+// Only a type parameter for the linker: validation never constructs this host,
+// a State, or a Store, and cannot call any host or guest function.
+struct CheckHost;
+impl PluginHost for CheckHost {
+    fn command_catalog(&self) -> Vec<CommandSchema> {
+        Vec::new()
+    }
+    fn run_command(&mut self, _: &str, _: &Value) -> Result<Value> {
+        Err(trap("validation cannot execute commands"))
+    }
+    fn begin_transaction(&mut self) -> Result<()> {
+        Err(trap("validation cannot start transactions"))
+    }
+    fn commit_transaction(&mut self) -> Result<()> {
+        Err(trap("validation cannot commit transactions"))
+    }
+    fn rollback_transaction(&mut self) -> Result<()> {
+        Err(trap("validation cannot roll back transactions"))
+    }
+    fn granted_folders(&self) -> Vec<craft_plugin::FileGrant> {
+        Vec::new()
+    }
+    fn log(&mut self, _: &str) {}
+    fn progress(&mut self, _: f32, _: &str) {}
+}
+
+pub(super) fn check(bytes: &[u8]) -> Vec<CheckProblem> {
+    let checked = (|| -> std::result::Result<Vec<CheckProblem>, CheckProblem> {
+        let problem = |field: &str, error| CheckProblem { field: field.into(), error };
+        if bytes.len() > MAX_COMPONENT_BYTES {
+            return Err(problem("component", limit("component size")));
+        }
+        let mut config = Config::new();
+        config.wasm_memory64(false).wasm_multi_memory(false);
+        let engine = Engine::new(&config).map_err(|e| problem("component", trap(e.to_string())))?;
+        let component =
+            Component::from_binary(&engine, bytes).map_err(|e| problem("component", trap(format!("component compilation failed: {e:#}"))))?;
+        let mut problems = network_import_problems(&engine, &component);
+        let (package, version) = craft_plugin::API.split_once('@').unwrap_or((craft_plugin::API, ""));
+        let allowed = ["types", "engine", "log", "control", "files", "clock"].map(|interface| format!("{package}/{interface}@{version}"));
+        let component_type = component.component_type();
+        for (name, _) in component_type.imports(&engine).take(4096) {
+            if !allowed.iter().any(|allowed| allowed == name) && !problems.iter().any(|problem| problem.field == name) {
+                problems.push(problem(
+                    name,
+                    HostError::InvalidInput { field: name.into(), reason: "import is not part of the declared plugin API".into() },
+                ));
+            }
+        }
+        if !problems.is_empty() {
+            return Ok(problems);
+        }
+        let mut linker = Linker::<State<CheckHost>>::new(&engine);
+        bindings::CommandPlugin::add_to_linker::<_, wasmtime::component::HasSelf<_>>(&mut linker, |s| s)
+            .map_err(|e| problem("component.imports", trap(e.to_string())))?;
+        // This resolves and type-checks imports, but does not instantiate anything.
+        let pre = linker.instantiate_pre(&component).map_err(|e| {
+            let reason = format!("{e:#}");
+            let field = component_type.imports(&engine).find_map(|(name, _)| reason.contains(name).then_some(name));
+            let field = field.unwrap_or("component.imports");
+            problem(field, HostError::InvalidInput { field: field.into(), reason })
+        })?;
+        let command_interface = format!("{package}/command@{version}");
+        if !component_type.exports(&engine).take(4096).any(|(name, _)| name == command_interface) {
+            return Err(problem(
+                "component.exports",
+                HostError::InvalidInput { field: "component.exports".into(), reason: format!("missing exact API interface {command_interface}") },
+            ));
+        }
+        // Generated pre-bindings check interface presence. Nested function
+        // signatures need a separate type check before any instantiation.
+        let pre = bindings::CommandPluginPre::new(pre)
+            .map_err(|e| problem("component.exports", HostError::InvalidInput { field: "component.exports".into(), reason: format!("{e:#}") }))?;
+        let export_failure = |reason: String| problem("component.exports", HostError::InvalidInput { field: "component.exports".into(), reason });
+        let (_, command) = component.get_export(None, &command_interface).ok_or_else(|| export_failure("missing command interface".into()))?;
+        let Some((wasmtime::component::types::ComponentItem::ComponentFunc(execute), _)) = component.get_export(Some(&command), "execute") else {
+            return Err(export_failure("missing execute function".into()));
+        };
+        execute
+            .typecheck::<(String, String), (std::result::Result<String, PluginError>,)>(&pre.instance_pre().instance_type())
+            .map_err(|e| export_failure(format!("execute signature does not match the plugin API: {e:#}")))?;
+        Ok(Vec::new())
+    })();
+    match checked {
+        Ok(problems) => problems,
+        Err(problem) => vec![problem],
+    }
 }
 
 pub(super) fn run<H: PluginHost + 'static>(

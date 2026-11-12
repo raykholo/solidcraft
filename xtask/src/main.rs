@@ -20,6 +20,7 @@ mod lists;
 mod mesh_decisions;
 mod params;
 mod pending;
+mod plugin_api;
 mod render_assets;
 mod shared;
 mod skills;
@@ -49,6 +50,9 @@ commands:
   assets          check that every non-code asset file is attributed in ATTRIBUTION.md
   app-icons       regenerate shared app-icon exports for Linux, FreeBSD and Windows
   icons           validate UI icon standards, discovery and review-tool behavior (Python 3.11+)
+  plugin-api [--check] [--cli PATH]
+                  generate docs/plugin-api from the shared WIT and MCP engine command schemas;
+                  --check fails when the generated reference is stale
   features        list SolidCraft's commands by area in docs/features.md (from the registry)
   i18n [--check | --add-missing] [--no-registry | --cli <solidcraft-cli>]
                   report how complete the message catalogs in assets/locales are:
@@ -139,7 +143,7 @@ commands:
                   check in headless Chrome that the web app works offline and updates to a new
                   build (a stand-in app, or the web build in DIR such as dist/web)
   ci              fmt --check, assets, icons, licences --check, lists, skills, layers, shared,
-                  ui-containers, mesh-decisions, clippy -D warnings, then the tests
+                  ui-containers, mesh-decisions, plugin-api --check, clippy -D warnings, then the tests
                   with the wasm check alongside, then web-offline-test when Chrome is installed
                   (stops at the first failing step)
 ";
@@ -158,6 +162,7 @@ fn main() -> ExitCode {
         Some("icons") => icons::run(&root()),
         Some("app-icons") => app_icons::run(&root()),
         Some("features") => features::run(&root()),
+        Some("plugin-api") => plugin_api::run(&root(), &rest),
         Some("i18n") => i18n::run(&root(), &rest),
         Some("kernel-cases") => kernel_cases::run(&rest),
         Some("known-failing") => known_failing::run(&root(), &rest),
@@ -515,6 +520,7 @@ fn cmd_ci() -> Result<(), String> {
     shared::run(&root())?;
     ui_containers::run(&root())?;
     mesh_decisions::run(&root())?;
+    plugin_api::run(&root(), &["--check"])?;
     let mut c = cargo();
     c.args(["clippy", "--workspace", "--all-targets", "--profile", "ci", "--", "-D", "warnings"]);
     run(c, "cargo clippy -D warnings")?;
@@ -528,6 +534,39 @@ fn cmd_ci() -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_api_reference_is_generated_and_stale_files_fail() {
+        let commands = serde_json::json!([
+            {"id":"solid.box", "input":{"type":"object"}, "output":{"type":"object"}},
+            {"id":"document.inspect", "input":{"type":"object"}, "output":{"type":"array"}}
+        ]);
+        let wit = "package solidcraft:plugin@1.0.0;\nworld command-plugin {}\n";
+        let files = plugin_api::reference(wit, &commands).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&files["commands.json"]).unwrap();
+        assert_eq!(json[0], commands[1]);
+        assert_eq!(json[1], commands[0]);
+        assert_eq!(files["plugin.wit"], wit);
+        let dir = std::env::temp_dir().join(format!("solidcraft-plugin-api-{}", std::process::id()));
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        assert!(plugin_api::sync(&dir, &files, true).unwrap_err().contains("stale reference"));
+        plugin_api::sync(&dir, &files, false).unwrap();
+        plugin_api::sync(&dir, &files, true).unwrap();
+        let mut changed_commands = commands.clone();
+        changed_commands[0]["input"] = serde_json::json!({"type":"string"});
+        let changed = plugin_api::reference(wit, &changed_commands).unwrap();
+        assert!(plugin_api::sync(&dir, &changed, true).unwrap_err().contains("commands.json"));
+        let changed = plugin_api::reference("world updated-plugin {}\n", &commands).unwrap();
+        assert!(plugin_api::sync(&dir, &changed, true).unwrap_err().contains("plugin.wit"));
+        std::fs::write(dir.join("plugin.wit"), "old world").unwrap();
+        assert!(plugin_api::sync(&dir, &files, true).unwrap_err().contains("plugin.wit"));
+        plugin_api::sync(&dir, &files, false).unwrap();
+        std::fs::write(dir.join("obsolete.json"), "{}").unwrap();
+        assert!(plugin_api::sync(&dir, &files, true).unwrap_err().contains("unexpected obsolete.json"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn root_prefers_the_runtime_manifest_dir() {

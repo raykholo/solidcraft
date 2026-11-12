@@ -39,6 +39,7 @@ mod kernel_cases;
 mod kernel_cases_export;
 mod logger;
 mod oracle;
+mod plugin;
 mod preview;
 mod profiling;
 mod recipe;
@@ -81,7 +82,8 @@ const USAGE_RENDER: &str = "  solidcraft-cli render <script|design> --out image.
 /// `exec`'s lines in the usage.
 const USAGE_EXEC: &str = "  solidcraft-cli exec <command> [json-params]\n";
 /// `commands`'s lines in the usage.
-const USAGE_COMMANDS: &str = "  solidcraft-cli commands\n";
+const USAGE_COMMANDS: &str = "  solidcraft-cli commands [--schemas]\n";
+const USAGE_PLUGIN: &str = "  solidcraft-cli plugin check <dir>\n  solidcraft-cli plugin test <dir> [--design FILE] [--entry ID] [--input JSON]\n      Prints JSON diagnostics or per-entry results and paths to saved designs and command journals.\n";
 /// `recipe`'s lines in the usage.
 const USAGE_RECIPE: &str = "  solidcraft-cli recipe <recipe.json>\n";
 /// `oracle`'s lines in the usage.
@@ -125,6 +127,7 @@ const COMMANDS: &[Command] = &[
     Command { name: "render", usage: USAGE_RENDER, listed: true },
     Command { name: "exec", usage: USAGE_EXEC, listed: true },
     Command { name: "commands", usage: USAGE_COMMANDS, listed: true },
+    Command { name: "plugin", usage: USAGE_PLUGIN, listed: true },
     Command { name: "recipe", usage: USAGE_RECIPE, listed: true },
     Command { name: "oracle", usage: USAGE_ORACLE, listed: true },
     Command { name: "kernel-cases", usage: USAGE_KERNEL_CASES, listed: true },
@@ -179,10 +182,11 @@ fn main() -> ExitCode {
         Some("render") => render::run(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("gpu") => cmd_gpu(&args[1..]),
+        Some("plugin") => plugin::run(&args[1..]),
         Some("commands") => {
             use std::io::Write as _;
             let mut s = Session::default();
-            s.execute("engine.commands", &json!({})).map_err(|e| e.to_string()).and_then(|v| {
+            command_schemas(&mut s, &args[1..]).and_then(|v| {
                 // A pipeline consumer may stop early (e.g. `commands | head`).
                 // Unlike println!, writing explicitly lets us handle that without a panic.
                 match writeln!(std::io::stdout().lock(), "{}", pretty(&v)) {
@@ -246,6 +250,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn command_schemas(s: &mut Session, args: &[String]) -> Result<Value, String> {
+    if args.is_empty() {
+        return s.execute("engine.commands", &json!({})).map_err(|e| e.to_string());
+    }
+    if args != ["--schemas"] {
+        return Err(USAGE_COMMANDS.into());
+    }
+    let mut ids: Vec<_> = solidcraft_engine::command_specs().iter().map(|command| command.id).collect();
+    ids.sort_unstable();
+    ids.into_iter().map(|id| s.execute("engine.describe", &json!({"command":id})).map_err(|e| e.to_string())).collect()
 }
 
 /// Take `--max-file-size SIZE` (or `--max-file-size=SIZE`), which any command takes, out of the

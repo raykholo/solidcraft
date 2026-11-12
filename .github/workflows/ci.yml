@@ -666,18 +666,20 @@ jobs:
           cargo xtask known-failing --junit "$junit"
       # Every command label needs an English catalog entry (#8542). The label table is the CLI's
       # command registry, so this builds the CLI in the profile the tests just used (the shared
-      # crates are cached) and reads it. Skipped when no selected package can change the table.
-      - name: Command labels in the translation catalogs
+      # crates are cached) and reads it. The same CLI checks the generated plugin API reference.
+      # affected.py selects the CLI for reference-only edits so stale files cannot skip this gate.
+      - name: Command labels and generated plugin API reference
         env:
           FULL: ${{ needs.changes.outputs.full }}
           PACKAGES: ${{ needs.changes.outputs.packages }}
         run: |
           case "$FULL $PACKAGES " in
-            true*|*" solidcraft-cli "*|*" solidcraft-ui-egui "*|*" xtask "*) ;;
+            true*|*" solidcraft-cli "*|*" solidcraft-ui-egui "*|*" solidcraft-engine "*|*" craft-plugin "*|*" xtask "*) ;;
             *) echo "No package that feeds the command table changed."; exit 0 ;;
           esac
           cargo build -p solidcraft-cli --profile ci --locked
           cargo xtask i18n --check --cli "${CARGO_TARGET_DIR:-target}/ci/solidcraft-cli"
+          cargo xtask plugin-api --check --cli "${CARGO_TARGET_DIR:-target}/ci/solidcraft-cli"
       - name: Compiler cache statistics
         if: always()
         run: if command -v sccache >/dev/null; then sccache --show-stats; else echo "sccache was not set up; built without it"; fi

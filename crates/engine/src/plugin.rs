@@ -132,6 +132,12 @@ pub struct SolidCraftHost {
     pub session: Session,
     transaction: Option<Session>,
 }
+impl SolidCraftHost {
+    /// An unapproved author test still uses the normal host policy and transactions.
+    pub fn new(session: Session) -> Self {
+        Self { session, transaction: None }
+    }
+}
 impl PluginHost for SolidCraftHost {
     fn command_catalog(&self) -> Vec<CommandSchema> {
         crate::command_specs()

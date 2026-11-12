@@ -9,6 +9,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod harness;
+mod validation;
+
+pub use harness::{CommandCall, EntryTest, JournalHost, TestArtifacts, TestReport, test_entries};
+pub use validation::{CheckProblem, CheckReport, check_manifest, validate_input};
+
 // The WIT package declaration is the sole source of the API identifier.
 include!(concat!(env!("OUT_DIR"), "/api.rs"));
 pub const WIT: &str = include_str!("../wit/plugin.wit");
@@ -279,6 +285,7 @@ impl RuntimeManifest {
                 return Err(invalid(&field, "entry inputs must be an object schema"));
             }
             validate_list_inputs(&entry.input_schema, &field)?;
+            validation::compile_schema(&entry.input_schema, &field)?;
             if entry.slots.len() > 16
                 || entry.slots.iter().any(|slot| match slot {
                     UiSlot::Menu { name } | UiSlot::Ribbon { name } => !plain(name, 80),
@@ -328,7 +335,10 @@ pub fn parse_manifest(text: &[u8], folder: &str) -> Result<Manifest> {
     if text.len() > MAX_MANIFEST_BYTES {
         return Err(HostError::LimitExceeded { limit: "manifest size exceeds 16 KiB".into() });
     }
-    let mut manifest: Manifest = serde_json::from_slice(text).map_err(|error| invalid("manifest", error.to_string()))?;
+    let mut deserializer = serde_json::Deserializer::from_slice(text);
+    let mut manifest: Manifest =
+        serde_path_to_error::deserialize(&mut deserializer).map_err(|error| invalid(error.path().to_string(), error.inner().to_string()))?;
+    deserializer.end().map_err(|error| invalid("manifest", error.to_string()))?;
     manifest.name = manifest.name.trim().to_string();
     manifest.version = manifest.version.trim().to_string();
     manifest.description = manifest.description.trim().to_string();

@@ -128,6 +128,59 @@ fn linker_has_no_socket_or_http_imports() {
         assert_eq!((app.value, app.begins, app.commits, app.rollbacks), (0, 1, 0, 1));
     }
 }
+
+#[test]
+fn component_check_reports_network_import_names_without_execution() {
+    let (package, version) = API.split_once('@').unwrap();
+    let source = include_str!("../fixture.wat").replace("__PACKAGE__", package).replace("__VERSION__", version);
+    let (prefix, _) = source.rsplit_once(')').unwrap();
+    let interfaces = ["wasi:sockets/network@0.2.0", "wasi:http/types@0.2.0"];
+    let source = format!("{prefix}\n(import \"{}\" (instance))\n(import \"{}\" (instance))\n)", interfaces[0], interfaces[1]);
+    let problems = crate::check(&wat::parse_str(source).unwrap());
+    assert_eq!(problems.len(), 2);
+    for (problem, interface) in problems.iter().zip(interfaces) {
+        assert_eq!(problem.field, interface);
+        assert_eq!(problem.error, HostError::PermissionDenied { permission: format!("network import is forbidden: {interface}") });
+    }
+}
+
+#[test]
+fn component_check_does_not_execute_core_start_functions() {
+    let (package, version) = API.split_once('@').unwrap();
+    let source = include_str!("../fixture.wat").replace("__PACKAGE__", package).replace("__VERSION__", version);
+    let (prefix, _) = source.rsplit_once(')').unwrap();
+    let source = format!("{prefix}\n(core module $start (func $start unreachable) (start $start))\n(core instance $start (instantiate $start))\n)");
+    let bytes = wat::parse_str(source).unwrap();
+    assert!(crate::check(&bytes).is_empty());
+    assert!(matches!(run(&mut App::default(), &manifest(), &bytes, "make", &json!({})), Err(HostError::Trap { .. })));
+}
+
+#[test]
+fn component_check_validates_world_import_and_export_signatures() {
+    assert!(crate::check(&component("unreachable")).is_empty());
+    let (package, version) = API.split_once('@').unwrap();
+    let invalid_import = format!(r#"(component (import "{package}/clock@{version}" (instance (export "now" (func (param "unexpected" string))))))"#);
+    let problems = crate::check(&wat::parse_str(invalid_import).unwrap());
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].field, format!("{package}/clock@{version}"));
+    let unknown_import = wat::parse_str(r#"(component (import "unknown:plugin/empty@1.0.0" (instance)))"#).unwrap();
+    assert_eq!(crate::check(&unknown_import)[0].field, "unknown:plugin/empty@1.0.0");
+    let wrong_api = format!(r#"(component (import "{package}/clock@99.0.0" (instance)))"#);
+    assert_eq!(crate::check(&wat::parse_str(wrong_api).unwrap())[0].field, format!("{package}/clock@99.0.0"));
+    let missing_export = crate::check(&wat::parse_str("(component)").unwrap());
+    assert_eq!(missing_export[0].field, "component.exports");
+    let invalid_export = format!(
+        r#"(component
+          (core module $m (func (export "execute")))
+          (core instance $m (instantiate $m))
+          (func $execute (canon lift (core func $m "execute")))
+          (instance $command (export "execute" (func $execute)))
+          (export "{package}/command@{version}" (instance $command)))"#
+    );
+    let problems = crate::check(&wat::parse_str(invalid_export).unwrap());
+    assert_eq!(problems[0].field, "component.exports");
+    assert!(matches!(problems[0].error, HostError::InvalidInput { .. }));
+}
 #[test]
 fn read_entries_cannot_edit_even_when_manifest_grants_the_command() {
     let mut manifest = manifest();

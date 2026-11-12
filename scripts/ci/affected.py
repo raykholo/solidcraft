@@ -44,8 +44,12 @@ EMBEDDED = {
     "THIRD-PARTY-LICENSES.txt": "solidcraft-engine",
 }
 # Folders that only some packages read: the UI embeds the catalogs and xtask checks them; the MCP
-# server's tests read the agent skills.
-EMBEDDED_PREFIXES = {"assets/locales/": ("solidcraft-ui-egui", "xtask"), "skills/": ("solidcraft-mcp",)}
+# server's tests read the agent skills. Generated plugin references need the CLI freshness gate.
+EMBEDDED_PREFIXES = {
+    "assets/locales/": ("solidcraft-ui-egui", "xtask"),
+    "docs/plugin-api/": ("solidcraft-cli",),
+    "skills/": ("solidcraft-mcp",),
+}
 # Test data and the package directories whose tests (or xtask) read it. Any other folder under
 # tests/ selects the full workspace.
 TEST_DATA = {
@@ -112,6 +116,10 @@ def select(meta, paths):
     for path in paths:
         if path in FULL_FILES or path.startswith("rust-toolchain"):
             return True, []
+        # Generated references under docs/ take precedence over ordinary documentation.
+        if any(path.startswith(p) for p in EMBEDDED_PREFIXES):
+            hit.update(next(v for p, v in EMBEDDED_PREFIXES.items() if path.startswith(p)))
+            continue
         if path in IGNORED_FILES or path.startswith(IGNORED_PREFIXES):
             continue
         if path.startswith(FULL_PREFIXES):
@@ -132,8 +140,6 @@ def select(meta, paths):
             hit.add(by_dir[max(owners, key=len)])
         elif path in EMBEDDED:
             hit.add(EMBEDDED[path])
-        elif any(path.startswith(p) for p in EMBEDDED_PREFIXES):
-            hit.update(next(v for p, v in EMBEDDED_PREFIXES.items() if path.startswith(p)))
         elif "/" not in path and path.endswith(".md"):
             continue
         else:

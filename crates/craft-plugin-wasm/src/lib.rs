@@ -1,11 +1,28 @@
 //! An app-independent component sandbox. Only explicitly bound Craft imports exist.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use craft_plugin::{Manifest, PluginHost, Result};
+use craft_plugin::{CheckProblem, Manifest, PluginHost, Result};
 use serde_json::Value;
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod native;
+
+/// Checks the component's imports and command-world signatures without running
+/// guest code, including core start functions. No store or host is created.
+pub fn check(component: &[u8]) -> Vec<CheckProblem> {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        native::check(component)
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let _ = component;
+        vec![CheckProblem {
+            field: "component".into(),
+            error: craft_plugin::HostError::Trap { reason: "component validation requires an x86-64 or AArch64 native build".into() },
+        }]
+    }
+}
 
 /// Trusted app configuration, separate from the untrusted package's budgets.
 #[derive(Clone, Copy, Debug)]
