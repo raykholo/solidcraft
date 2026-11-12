@@ -3,9 +3,23 @@
 
 use craft_plugin::{Manifest, PluginHost, Result};
 use serde_json::Value;
+use std::io::{Read, Write};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 mod native;
+
+/// Invocation-local input. Opening the input grants no access to its parent folder.
+pub struct InputStream {
+    pub name: String,
+    pub reader: Box<dyn Read + Send>,
+}
+
+/// The host owns storage and publication; exporters write to a staging sink.
+#[derive(Default)]
+pub struct IoStreams {
+    pub input: Option<InputStream>,
+    pub output: Option<Box<dyn Write + Send>>,
+}
 
 /// Trusted app configuration, separate from the untrusted package's budgets.
 #[derive(Clone, Copy, Debug)]
@@ -34,11 +48,31 @@ pub fn run_with_options<H: PluginHost + 'static>(
 ) -> (H, Result<Value>) {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
-        native::run(host, manifest, component, entry, params, options)
+        native::run(host, manifest, component, entry, params, options, None)
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         let _ = (manifest, component, entry, params, options);
+        (host, Err(craft_plugin::HostError::Trap { reason: "component execution requires an x86-64 or AArch64 native build".into() }))
+    }
+}
+
+/// Runs a format entry with bounded streams under the ordinary sandbox transaction.
+pub fn run_io<H: PluginHost + 'static>(
+    host: H,
+    manifest: &Manifest,
+    component: &[u8],
+    entry: &str,
+    params: &Value,
+    streams: IoStreams,
+) -> (H, Result<Value>) {
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    {
+        native::run(host, manifest, component, entry, params, RuntimeOptions::default(), Some(streams))
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let _ = (manifest, component, entry, params, streams);
         (host, Err(craft_plugin::HostError::Trap { reason: "component execution requires an x86-64 or AArch64 native build".into() }))
     }
 }

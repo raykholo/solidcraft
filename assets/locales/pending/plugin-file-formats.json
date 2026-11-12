@@ -1,0 +1,23 @@
+{
+  "en": {
+    "cmd.file.import": "Import",
+    "plugin_io.allow_choose": "Allow and choose file",
+    "plugin_io.approval": "Review plugin file format",
+    "plugin_io.builtin_import": "STEP, IGES, mesh or drawing…",
+    "plugin_io.clock": "Read the wall clock",
+    "plugin_io.export_menu": "Export",
+    "plugin_io.exporting": "Exporting with plugin",
+    "plugin_io.folder_permission": "{name}: {access}",
+    "plugin_io.folder_read": "Read files in an approved folder",
+    "plugin_io.folder_write": "Write files in an approved folder",
+    "plugin_io.import_menu": "Import",
+    "plugin_io.no_permissions": "No extra permissions requested",
+    "plugin_io.options": "Options (JSON)",
+    "plugin_io.options_invalid": "Enter valid options within the size limit.",
+    "plugin_io.options_schema": "Available options",
+    "plugin_io.permission_note": "Allow this version to run with these declared permissions. Folder access requires a separate grant. Network access is unavailable.",
+    "plugin_io.progress": "{message} ({percent}%)",
+    "plugin_io.report": "Import loss report",
+    "plugin_io.siblings": "Allow reading sibling files in the selected file’s folder"
+  }
+}

@@ -32,6 +32,14 @@ interface files {
     read-file: func(grant: string, path: string) -> result<list<u8>, plugin-error>;
     write-file: func(grant: string, path: string, data: list<u8>) -> result<_, plugin-error>;
 }
+// Streams are invocation-local. Reading sibling files still requires a named files grant.
+// Chunks are at most 64 KiB and each input/output is at most 64 MiB.
+interface io {
+    use types.{plugin-error};
+    input-name: func() -> string;
+    read-input: func(max-bytes: u32) -> result<list<u8>, plugin-error>;
+    write-output: func(data: list<u8>) -> result<_, plugin-error>;
+}
 interface clock {
     now: func() -> u64;
 }
@@ -45,5 +53,6 @@ world command-plugin {
     import control;
     import files;
     import clock;
+    import io;
     export command;
 }

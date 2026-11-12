@@ -770,7 +770,7 @@ fn commands(s: &mut Session, _p: &Value) -> Result<Value> {
         if let Ok(package) = crate::plugin::read_package(path)
             && let Some(runtime) = package.manifest.runtime
         {
-            for entry in runtime.entries {
+            for entry in runtime.entries.into_iter().filter(|entry| entry.kind == crate::plugin::EntryKind::Command) {
                 list.push(CommandEntry {
                     id: format!("{package_id}.{}", entry.name),
                     label: entry.name,

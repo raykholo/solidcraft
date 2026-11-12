@@ -632,6 +632,8 @@ pub struct SolveApp {
     pub design_properties: Option<design_properties::DesignProperties>,
     /// The Sketch report window (`sketch.inspect` from the ribbon), when open.
     pub sketch_report: Option<sketch_report::SketchReport>,
+    /// Host-owned plugin format catalogue, approval form and import loss report.
+    pub plugin_io: plugins::PluginIo,
     /// The Bill of Materials window, when open.
     pub bom: Option<bom_panel::BomPanel>,
     material_card_review: Option<material_card_review::ReviewWindow>,
@@ -933,6 +935,7 @@ impl SolveApp {
             params: None,
             design_properties: None,
             sketch_report: None,
+            plugin_io: Default::default(),
             bom: None,
             material_card_review: None,
             menu: context_menu::MenuState::default(),
@@ -1347,7 +1350,7 @@ impl SolveApp {
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         crate::plugins::sync_policy(self);
-        if id.eq_ignore_ascii_case("plugin.run")
+        if crate::plugins::is_runtime_request(id, &params)
             || solidcraft_engine::plugin::resolve_call(&self.session, id, &params).map_err(|e| e.to_string())?.is_some()
         {
             let key = if cfg!(target_arch = "wasm32") { "ui.plugins_desktop" } else { "ui.plugin_standalone" };
@@ -3540,6 +3543,7 @@ impl SolveApp {
         issue_report::CadInput::block(self, ui, &mut report_input);
         semantic_content::begin(self, ui.ctx());
         self.cad_ui(ui, &mut report_input);
+        plugins::show_file_formats(self, ui.ctx());
         semantic_content::finalize(self, ui.ctx());
         drop(report_input);
         // After everything else, on every page (the start page too, which returns early from

@@ -12,18 +12,29 @@ struct App {
     rollbacks: usize,
     grants: Vec<FileGrant>,
     cancelled: bool,
+    cancel_after_write: bool,
 }
 impl PluginHost for App {
     fn command_catalog(&self) -> Vec<CommandSchema> {
-        vec![CommandSchema {
-            name: "app.write".into(),
-            input_schema: json!({"type":"object"}),
-            output_schema: json!({"type":"object"}),
-            effect: Effect::Edit,
-        }]
+        vec![
+            CommandSchema {
+                name: "app.write".into(),
+                input_schema: json!({"type":"object"}),
+                output_schema: json!({"type":"object"}),
+                effect: Effect::Edit,
+            },
+            CommandSchema {
+                name: "app.read".into(),
+                input_schema: json!({"type":"object"}),
+                output_schema: json!({"type":"object"}),
+                effect: Effect::Read,
+            },
+        ]
     }
-    fn run_command(&mut self, _: &str, _: &Value) -> Result<Value> {
-        self.value += 1;
+    fn run_command(&mut self, command: &str, _: &Value) -> Result<Value> {
+        if command == "app.write" {
+            self.value += 1;
+        }
         Ok(json!({"value":self.value}))
     }
     fn begin_transaction(&mut self) -> Result<()> {
@@ -47,7 +58,7 @@ impl PluginHost for App {
     fn log(&mut self, _: &str) {}
     fn progress(&mut self, _: f32, _: &str) {}
     fn is_cancelled(&self) -> bool {
-        self.cancelled
+        self.cancelled || (self.cancel_after_write && self.value > 0)
     }
 }
 fn manifest() -> Manifest {
@@ -149,11 +160,16 @@ fn state(app: App) -> State<App> {
         host: app,
         commands: BTreeMap::new(),
         effect: Effect::Edit,
+        kind: EntryKind::Command,
+        streams: IoStreams::default(),
+        input_bytes: 0,
+        output_bytes: 0,
         folders: BTreeMap::new(),
         clock: false,
         limits: StoreLimitsBuilder::new().build(),
         failed: None,
         calls: 0,
+        stream_calls: 0,
         log_bytes: 0,
         deadline: Instant::now() + Duration::from_secs(5),
     }
@@ -302,4 +318,214 @@ fn component_file_writes_are_denied_without_a_host_grant() {
         assert_eq!(failure, HostError::PermissionDenied { permission: "files.write:project".into() });
         assert_eq!((app.value, app.begins, app.commits, app.rollbacks), (7, 1, 0, 1));
     }
+}
+
+fn format_manifest(kind: EntryKind) -> Manifest {
+    let mut manifest = manifest();
+    let entry = &mut manifest.runtime.as_mut().unwrap().entries[0];
+    entry.kind = kind;
+    entry.extensions = vec!["sample".into()];
+    entry.effect = if kind == EntryKind::Exporter { Effect::Read } else { Effect::Edit };
+    manifest
+}
+
+fn format_component(code: &str, report: &Value) -> Vec<u8> {
+    let (package, version) = API.split_once('@').unwrap();
+    let template = include_str!("../fixture.wat").replace("__PACKAGE__", package).replace("__VERSION__", version);
+    let (types, _) = template.split_once(&format!("  (type $ty-{package}/engine@{version}")).unwrap();
+    let text = report.to_string();
+    let data: String = text.as_bytes().iter().map(|byte| format!("\\{byte:02x}")).collect();
+    let length = text.len();
+    let source = format!(
+        r#"{types}
+(type $engine-type (instance
+  (alias outer 1 $json (type $json)) (export "json" (type (eq $json)))
+  (alias outer 1 $plugin-error (type $error)) (export "plugin-error" (type (eq $error)))
+  (type $result (result $json (error $error)))
+  (export "run" (func (param "command" string) (param "args" $json) (result $result)))
+))
+(import "{package}/engine@{version}" (instance $engine (type $engine-type)))
+(type $io-type (instance
+  (alias outer 1 $plugin-error (type $error)) (export "plugin-error" (type (eq $error)))
+  (export "input-name" (func (result string)))
+  (export "read-input" (func (param "max-bytes" u32) (result (result (list u8) (error $error)))))
+  (export "write-output" (func (param "data" (list u8)) (result (result (error $error)))))
+))
+(import "{package}/io@{version}" (instance $io (type $io-type)))
+(alias export $engine "run" (func $run))
+(alias export $io "input-name" (func $name))
+(alias export $io "read-input" (func $read))
+(alias export $io "write-output" (func $write))
+(core module $allocation
+  (memory (export "memory") 3)
+  (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 65536)
+)
+(core instance $allocation (instantiate $allocation))
+(alias core export $allocation "memory" (core memory $memory))
+(alias core export $allocation "realloc" (core func $realloc))
+(core func $run (canon lower (func $run) (memory $memory) (realloc $realloc)))
+(core func $name (canon lower (func $name) (memory $memory) (realloc $realloc)))
+(core func $read (canon lower (func $read) (memory $memory) (realloc $realloc)))
+(core func $write (canon lower (func $write) (memory $memory) (realloc $realloc)))
+(core instance $imports
+  (export "run" (func $run)) (export "name" (func $name))
+  (export "read" (func $read)) (export "write" (func $write)) (export "memory" (memory $memory))
+)
+(core module $main
+  (import "host" "run" (func $run (param i32 i32 i32 i32 i32)))
+  (import "host" "name" (func $name (param i32)))
+  (import "host" "read" (func $read (param i32 i32)))
+  (import "host" "write" (func $write (param i32 i32 i32)))
+  (import "host" "memory" (memory 3))
+  (data (i32.const 512) "app.write")
+  (data (i32.const 544) "app.read")
+  (data (i32.const 1024) "{{}}")
+  (data (i32.const 2048) "{data}")
+  (data (i32.const 4096) "exported bytes")
+  (func $body i32.const 512 i32.const 9 i32.const 1024 i32.const 2 i32.const 256 call $run)
+  (func (export "execute") (param i32 i32 i32 i32) (result i32)
+    (local $count i32)
+    {code}
+    i32.const 0 i32.const 0 i32.store
+    i32.const 4 i32.const 2048 i32.store
+    i32.const 8 i32.const {length} i32.store
+    i32.const 0
+  )
+)
+(core instance $main (instantiate $main (with "host" (instance $imports))))
+(alias core export $main "execute" (core func $execute))
+(func $execute (param "entry" string) (param "params" $json) (result (result $json (error $plugin-error)))
+  (canon lift (core func $execute) (memory $memory) (realloc $realloc)))
+(instance $command (export "json" (type $json)) (export "plugin-error" (type $plugin-error)) (export "execute" (func $execute)))
+(export "{package}/command@{version}" (instance $command))
+)"#
+    );
+    wat::parse_str(source).unwrap()
+}
+
+fn input(reader: impl Read + Send + 'static) -> IoStreams {
+    IoStreams { input: Some(crate::InputStream { name: "assembly.sample".into(), reader: Box::new(reader) }), output: None }
+}
+fn one_loss() -> Value {
+    json!({"counts":{"bodies_read":1},"items":[{"item":"body-1","code":"material-skipped","message":"Material is not supported"}]})
+}
+
+#[test]
+fn wat_importer_reads_stream_creates_body_and_returns_structured_loss() {
+    let code =
+        "i32.const 64 call $name i32.const 68 i32.load i32.const 15 i32.ne if unreachable end i32.const 64 i32.const 128 call $read call $body";
+    let report = one_loss();
+    let (app, result) = crate::run_io(
+        App::default(),
+        &format_manifest(EntryKind::Importer),
+        &format_component(code, &report),
+        "make",
+        &json!({}),
+        input(std::io::Cursor::new(b"input")),
+    );
+    assert_eq!(result.unwrap(), report);
+    assert_eq!((app.value, app.commits, app.rollbacks), (1, 1, 0));
+}
+
+#[derive(Clone, Default)]
+struct Output(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl Write for Output {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+#[test]
+fn wat_exporter_reads_design_and_streams_bytes_without_editing() {
+    let mut manifest = format_manifest(EntryKind::Exporter);
+    manifest.runtime.as_mut().unwrap().commands.insert("app.read".into());
+    let output = Output::default();
+    let code = "i32.const 544 i32.const 8 i32.const 1024 i32.const 2 i32.const 256 call $run i32.const 4096 i32.const 14 i32.const 128 call $write";
+    let (app, result) = crate::run_io(
+        App { value: 3, ..Default::default() },
+        &manifest,
+        &format_component(code, &json!({})),
+        "make",
+        &json!({}),
+        IoStreams { input: None, output: Some(Box::new(output.clone())) },
+    );
+    result.unwrap();
+    assert_eq!(*output.0.lock().unwrap(), b"exported bytes");
+    assert_eq!((app.value, app.commits), (3, 1));
+    let (_, result) = crate::run_io(
+        App::default(),
+        &manifest,
+        &format_component("call $body", &json!({})),
+        "make",
+        &json!({}),
+        IoStreams { input: None, output: Some(Box::new(Output::default())) },
+    );
+    assert!(matches!(result, Err(HostError::PermissionDenied { .. })));
+}
+
+#[test]
+fn importer_cannot_read_sibling_without_grant_even_when_it_swallows_failure() {
+    let (app, result) = crate::run_io(
+        App::default(),
+        &format_manifest(EntryKind::Importer),
+        &files_component(false, true),
+        "make",
+        &json!({}),
+        input(std::io::empty()),
+    );
+    assert!(matches!(result, Err(HostError::PermissionDenied { .. })));
+    assert_eq!((app.commits, app.rollbacks), (0, 1));
+}
+
+#[test]
+fn oversized_input_stream_and_chunks_are_refused_and_rolled_back() {
+    for (code, expected) in [
+        ("call $body i32.const 65537 i32.const 128 call $read", "input stream chunk size"),
+        (
+            "call $body (loop $read i32.const 65536 i32.const 128 call $read local.get $count i32.const 1 i32.add local.tee $count i32.const 1025 i32.lt_u br_if $read)",
+            "input stream size",
+        ),
+    ] {
+        let mut manifest = format_manifest(EntryKind::Importer);
+        manifest.runtime.as_mut().unwrap().limits.fuel = 10_000_000;
+        let (app, result) = crate::run_io(
+            App::default(),
+            &manifest,
+            &format_component(code, &one_loss()),
+            "make",
+            &json!({}),
+            input(std::io::repeat(0).take(MAX_STREAM_BYTES + 1)),
+        );
+        assert_eq!(result.unwrap_err(), limit(expected));
+        assert_eq!((app.value, app.commits, app.rollbacks), (0, 0, 1));
+    }
+}
+
+#[test]
+fn cancellation_after_import_command_restores_design() {
+    let (app, result) = crate::run_io(
+        App { cancel_after_write: true, ..Default::default() },
+        &format_manifest(EntryKind::Importer),
+        &format_component("call $body i32.const 64 i32.const 128 call $read", &one_loss()),
+        "make",
+        &json!({}),
+        input(std::io::Cursor::new(b"input")),
+    );
+    assert_eq!(result.unwrap_err(), HostError::Cancelled);
+    assert_eq!((app.value, app.commits, app.rollbacks), (0, 0, 1));
+}
+
+#[test]
+fn importer_invalid_loss_report_rolls_back_and_format_entries_require_streams() {
+    let manifest = format_manifest(EntryKind::Importer);
+    let component = format_component("call $body", &json!({"invalid":true}));
+    let (app, result) = crate::run_io(App::default(), &manifest, &component, "make", &json!({}), input(std::io::empty()));
+    assert!(matches!(result, Err(HostError::InvalidInput { field, .. }) if field == "loss_report"));
+    assert_eq!((app.value, app.rollbacks), (0, 1));
+    let (app, result) = crate::run(App::default(), &manifest, &component, "make", &json!({}));
+    assert!(matches!(result, Err(HostError::InvalidInput { field, .. }) if field == "streams"));
+    assert_eq!(app.begins, 0);
 }

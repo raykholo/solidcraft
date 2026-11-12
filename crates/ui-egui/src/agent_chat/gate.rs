@@ -129,11 +129,19 @@ pub fn command(id: &str, params: &Value, undo_left: usize) -> Verdict {
         return Verdict::Refuse(format!("`{id}` is not available in the agent chat"));
     }
     // External executable code always needs a user decision; the digest is not consent by itself.
-    if id.eq_ignore_ascii_case("plugin.run") {
+    if crate::plugins::is_runtime_request(id, params) {
         let shown =
             |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default().chars().filter(|c| !c.is_control()).take(200).collect::<String>();
         let path = shown("path");
-        let entry = shown("entry");
+        let entry = params
+            .get("format")
+            .and_then(Value::as_str)
+            .filter(|_| !id.eq_ignore_ascii_case("plugin.run"))
+            .map(|s| s.chars().filter(|c| !c.is_control()).take(200).collect::<String>())
+            .unwrap_or_else(|| {
+                let entry = shown("entry");
+                if entry.is_empty() { id.to_string() } else { entry }
+            });
         return Verdict::Ask(solidcraft_ui_text::format("ui.plugin_run_consent", &[("entry", &entry), ("path", &path)]));
     }
     // Files, and commands that replace or reload the whole design.
@@ -366,12 +374,29 @@ mod tests {
 
     #[test]
     fn external_plugin_code_always_requires_consent() {
+        crate::i18n::install();
+        let _language = solidcraft_ui_text::scope("en");
         for id in ["plugin.run", "PLUGIN.RUN", "Plugin.Run"] {
             let verdict = exec(id, json!({"path":"sample","approval":"from-inspect","entry":"make"}));
             let Verdict::Ask(question) = verdict else { panic!("external plugin needs consent") };
             assert!(question.contains("sample") && question.contains("make"), "{question}");
         }
         assert!(matches!(exec("plugin.inspect", json!({"path":"sample"})), Verdict::Ask(_)));
+        for (id, params) in [
+            ("file.import", json!({"path":"part.sample","format":"sample.read","approval":"digest"})),
+            ("FILE.IMPORT", json!({"path":"part.sample","format":"sample.read","approval":"digest"})),
+            ("file.export", json!({"path":"part.sample","format":"sample.write","approval":"digest"})),
+            ("file.export", json!({"path":"part.sample","format":"sample.stl","approval":"digest"})),
+            ("file.export", json!({"path":"part.sample","approval":"digest"})),
+            ("doc.open", json!({"path":"part.sample","approval":"digest"})),
+            ("DOC.OPEN", json!({"path":"part.sample"})),
+        ] {
+            let verdict = exec(id, params);
+            let Verdict::Ask(question) = verdict else { panic!("{id}: plugin format needs consent: {verdict:?}") };
+            assert!(question.contains("external plugin") && question.contains("part.sample"), "{id}: {question}");
+        }
+        let Verdict::Ask(question) = exec("file.export", json!({"path":"part.stl","format":"stl"})) else { panic!("file needs consent") };
+        assert!(!question.contains("external plugin"));
     }
 
     #[test]

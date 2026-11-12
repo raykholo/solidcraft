@@ -9,12 +9,58 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod options;
+
 // The WIT package declaration is the sole source of the API identifier.
 include!(concat!(env!("OUT_DIR"), "/api.rs"));
 pub const WIT: &str = include_str!("../wit/plugin.wit");
 pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 pub const MAX_COMPONENT_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_JSON_BYTES: usize = 1024 * 1024;
+/// Every stream host call is bounded independently of the total file size.
+pub const MAX_STREAM_CHUNK_BYTES: usize = 64 * 1024;
+pub const MAX_STREAM_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_LOSS_ITEMS: usize = 4096;
+
+/// A file format entry uses the same command surface as a one-shot command.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryKind {
+    #[default]
+    Command,
+    Importer,
+    Exporter,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LossReport {
+    /// Format-defined counts, for example bodies_read and materials_skipped.
+    pub counts: std::collections::BTreeMap<String, u64>,
+    pub items: Vec<ItemLoss>,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ItemLoss {
+    pub item: String,
+    pub code: String,
+    pub message: String,
+}
+impl LossReport {
+    pub fn validate(&self) -> Result<()> {
+        let valid = self.counts.len() <= 128
+            && self.counts.keys().all(|key| plain(key, 64))
+            && self.items.len() <= MAX_LOSS_ITEMS
+            && self.items.iter().all(|loss| plain(&loss.item, 256) && valid_id(&loss.code) && plain(&loss.message, 1024));
+        if !valid {
+            return Err(HostError::InvalidInput {
+                field: "loss_report".into(),
+                reason: "requires bounded counts and printable item losses with stable codes".into(),
+            });
+        }
+        Ok(())
+    }
+}
 /// Memory32 has at most 65536 pages of 64 KiB.
 pub const MAX_MEMORY_MIB: usize = 4096;
 
@@ -198,9 +244,18 @@ fn empty_input_schema() -> Value {
 #[serde(from = "EntryDeclaration")]
 pub struct Entry {
     pub name: String,
+    pub kind: EntryKind,
+    pub extensions: Vec<String>,
     pub effect: Effect,
     pub input_schema: Value,
     pub slots: Vec<UiSlot>,
+}
+
+impl Entry {
+    /// Validate format options without resolving network references or executing code.
+    pub fn validate_options(&self, value: &Value) -> Result<()> {
+        options::validate(&self.input_schema, value)
+    }
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -214,7 +269,11 @@ enum EntryDeclaration {
 struct DeclaredEntry {
     name: String,
     #[serde(default)]
-    effect: Effect,
+    kind: EntryKind,
+    #[serde(default)]
+    extensions: Vec<String>,
+    #[serde(default)]
+    effect: Option<Effect>,
     #[serde(default = "empty_input_schema")]
     input_schema: Value,
     #[serde(default)]
@@ -223,10 +282,22 @@ struct DeclaredEntry {
 impl From<EntryDeclaration> for Entry {
     fn from(value: EntryDeclaration) -> Self {
         match value {
-            EntryDeclaration::Legacy(name) => Self { name, effect: Effect::Edit, input_schema: empty_input_schema(), slots: Vec::new() },
-            EntryDeclaration::Declared(value) => {
-                Self { name: value.name, effect: value.effect, input_schema: value.input_schema, slots: value.slots }
-            }
+            EntryDeclaration::Legacy(name) => Self {
+                name,
+                kind: EntryKind::Command,
+                extensions: Vec::new(),
+                effect: Effect::Edit,
+                input_schema: empty_input_schema(),
+                slots: Vec::new(),
+            },
+            EntryDeclaration::Declared(value) => Self {
+                name: value.name,
+                kind: value.kind,
+                extensions: value.extensions,
+                effect: value.effect.unwrap_or(if value.kind == EntryKind::Exporter { Effect::Read } else { Effect::Edit }),
+                input_schema: value.input_schema,
+                slots: value.slots,
+            },
         }
     }
 }
@@ -274,11 +345,32 @@ impl RuntimeManifest {
             if !valid_id(&entry.name) || !names.insert(&entry.name) {
                 return Err(invalid("runtime.entries", "requires 1..32 distinct ids"));
             }
+            let mut extensions = BTreeSet::new();
+            if entry.extensions.len() > 32
+                || entry.extensions.iter().any(|extension| {
+                    extension.len() > 16
+                        || extension.is_empty()
+                        || !extension.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+                        || !extensions.insert(extension)
+                })
+                || (entry.kind == EntryKind::Command && !entry.extensions.is_empty())
+                || (entry.kind != EntryKind::Command && entry.extensions.is_empty())
+            {
+                return Err(invalid("runtime.entries.extensions", "file formats require 1..32 distinct lowercase extensions without dots"));
+            }
+            if (entry.kind == EntryKind::Exporter && entry.effect != Effect::Read)
+                || (entry.kind == EntryKind::Importer && entry.effect != Effect::Edit)
+            {
+                return Err(invalid("runtime.entries.effect", "importers edit; exporters only read"));
+            }
             let field = format!("runtime.entries.{}.input_schema", entry.name);
             if !entry.input_schema.is_object() || entry.input_schema.get("type").and_then(Value::as_str) != Some("object") {
                 return Err(invalid(&field, "entry inputs must be an object schema"));
             }
             validate_list_inputs(&entry.input_schema, &field)?;
+            if entry.kind != EntryKind::Command {
+                options::validate_schema(&entry.input_schema)?;
+            }
             if entry.slots.len() > 16
                 || entry.slots.iter().any(|slot| match slot {
                     UiSlot::Menu { name } | UiSlot::Ribbon { name } => !plain(name, 80),

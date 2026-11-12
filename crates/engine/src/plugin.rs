@@ -2,7 +2,7 @@
 
 use crate::{EngineError, Result, Session};
 pub use craft_plugin::{
-    API, Effect, Entry, FileGrant, HostLimits, Limits, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, MAX_MANIFEST_BYTES, MAX_MEMORY_MIB, Manifest,
+    API, Effect, Entry, EntryKind, FileGrant, HostLimits, Limits, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, MAX_MANIFEST_BYTES, MAX_MEMORY_MIB, Manifest,
     RuntimeManifest, valid_id,
 };
 use craft_plugin::{CommandSchema, HostError, PluginHost};
@@ -46,7 +46,10 @@ pub fn allowed_command(id: &str) -> bool {
     let family = id.starts_with("solid.") || id.starts_with("sketch.");
     let explicit = matches!(
         id,
-        "parameters.add"
+        "component.activate"
+            | "component.create"
+            | "occurrence.move"
+            | "parameters.add"
             | "parameters.change"
             | "parameters.delete"
             | "timeline.add"
@@ -92,7 +95,7 @@ pub fn run(session: &mut Session, package: Package, entry: &str, params: &serde_
     }
     let rt = package.manifest.runtime.as_ref().ok_or_else(|| error("no executable runtime"))?;
     session.plugin_limits.check(&rt.limits)?;
-    if !rt.entries.iter().any(|e| e.name == entry) {
+    if !rt.entries.iter().any(|e| e.name == entry && e.kind == EntryKind::Command) {
         return Err(error("unknown entry"));
     }
     #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -124,6 +127,226 @@ pub fn run(session: &mut Session, package: Package, entry: &str, params: &serde_
     }
 }
 
+/// An inert file-format contribution. Approval still requires reviewing the permissions.
+#[derive(Clone, Debug)]
+pub struct PluginFormat {
+    pub id: String,
+    pub plugin_id: String,
+    pub entry: String,
+    pub name: String,
+    pub extensions: Vec<String>,
+    pub approval: String,
+    pub input_schema: Value,
+    pub permissions: craft_plugin::Permissions,
+}
+
+/// Discover installed formats without running plugin code or granting any permissions.
+pub fn formats(session: &Session, kind: EntryKind) -> Vec<PluginFormat> {
+    let paths = session.plugin_state.packages.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let paths = {
+        let mut paths = paths;
+        if let Some(root) = crate::recovery::data_dir().map(|p| p.join("plugins"))
+            && let Ok(folders) = std::fs::read_dir(root)
+        {
+            for folder in folders.flatten().take(1024) {
+                let path = folder.path().to_string_lossy().into_owned();
+                if let Ok(package) = read_package(&path) {
+                    paths.entry(package.manifest.id).or_insert(path);
+                }
+            }
+        }
+        paths
+    };
+    let mut result = Vec::new();
+    for path in paths.values() {
+        let Ok(package) = read_package(path) else { continue };
+        if session.disabled_plugins.contains(&package.manifest.id) {
+            continue;
+        }
+        let Some(runtime) = &package.manifest.runtime else { continue };
+        for entry in runtime.entries.iter().filter(|e| e.kind == kind) {
+            result.push(PluginFormat {
+                id: format!("{}.{}", package.manifest.id, entry.name),
+                plugin_id: package.manifest.id.clone(),
+                entry: entry.name.clone(),
+                name: format!("{} — {}", package.manifest.name, entry.name),
+                extensions: entry.extensions.clone(),
+                approval: package.approval.clone(),
+                input_schema: entry.input_schema.clone(),
+                permissions: runtime.permissions.clone(),
+            });
+        }
+    }
+    result.sort_by(|a, b| a.id.cmp(&b.id));
+    result
+}
+
+/// Resolve an explicit entry id, or an unambiguous extension; built-in precedence is decided by the caller.
+pub fn resolve_format(session: &Session, kind: EntryKind, format: Option<&str>, path: &str) -> Result<Option<PluginFormat>> {
+    let extension = Path::new(path).extension().and_then(|x| x.to_str()).unwrap_or_default();
+    let matches: Vec<_> = formats(session, kind)
+        .into_iter()
+        .filter(|entry| match format {
+            Some(id) => entry.id == id,
+            None => entry.extensions.iter().any(|x| x.eq_ignore_ascii_case(extension)),
+        })
+        .collect();
+    if matches.len() > 1 {
+        return Err(
+            HostError::InvalidInput { field: "format".into(), reason: "multiple plugins read this extension; specify a format id".into() }.into()
+        );
+    }
+    Ok(matches.into_iter().next())
+}
+
+fn approved_format(session: &Session, kind: EntryKind, path: &str, params: &Value, command: &str) -> Result<(Package, PluginFormat)> {
+    if let Some(fields) = params.as_object()
+        && let Some(field) = fields.keys().find(|key| !matches!(key.as_str(), "path" | "format" | "approval" | "options"))
+    {
+        return Err(crate::params::bad(command, format!("`{field}` does not apply to plugin formats; use the declared options")));
+    }
+    let format = resolve_format(session, kind, params.get("format").and_then(Value::as_str), path)?
+        .ok_or_else(|| crate::params::bad(command, "unknown plugin format id or file extension"))?;
+    let package_path = session
+        .plugin_state
+        .packages
+        .get(&format.plugin_id)
+        .cloned()
+        .or_else(|| crate::recovery::data_dir().map(|root| root.join("plugins").join(&format.plugin_id).to_string_lossy().into_owned()))
+        .ok_or_else(|| crate::params::bad(command, "plugin package is unavailable"))?;
+    let package = read_package(&package_path)?;
+    if params.get("approval").and_then(Value::as_str) != Some(package.approval.as_str()) {
+        return Err(crate::params::bad(command, "approval does not match this manifest and component; inspect and review again"));
+    }
+    session.plugin_limits.check(&package.manifest.runtime.as_ref().ok_or_else(|| error("no executable runtime"))?.limits)?;
+    Ok((package, format))
+}
+
+/// Import on a fresh session and replace the open design only after the complete call succeeds.
+pub fn import_file(session: &mut Session, path: &str, params: &Value) -> Result<Value> {
+    let (package, format) = approved_format(session, EntryKind::Importer, path, params, "file.import")?;
+    #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        if solidcraft_io::vfs::len(path).map_err(|e| error(e.to_string()))? > craft_plugin::MAX_STREAM_BYTES {
+            return Err(HostError::LimitExceeded { limit: "input stream bytes".into() }.into());
+        }
+        let input = solidcraft_io::vfs::read(path, craft_plugin::MAX_STREAM_BYTES as usize).map_err(|e| error(e.to_string()))?;
+        let name = Path::new(path).file_name().and_then(|x| x.to_str()).unwrap_or(path).to_owned();
+        let stem = Path::new(path).file_stem().and_then(|x| x.to_str()).unwrap_or("Untitled");
+        let mut fresh = Session::new(solidcraft_doc::Document::new(stem));
+        fresh.set_validation(session.validation());
+        fresh.set_command_check(session.command_check());
+        fresh.disabled_plugins.clone_from(&session.disabled_plugins);
+        fresh.plugin_limits = session.plugin_limits;
+        fresh.plugin_state.clone_from(&session.plugin_state);
+        let component = fresh.execute("component.create", &json!({"name":stem}))?["component"]
+            .as_u64()
+            .ok_or_else(|| error("component.create returned no component"))?;
+        let streams = craft_plugin_wasm::IoStreams {
+            input: Some(craft_plugin_wasm::InputStream { name, reader: Box::new(std::io::Cursor::new(input)) }),
+            output: None,
+        };
+        let (mut host, result) = craft_plugin_wasm::run_io(
+            SolidCraftHost { session: fresh, transaction: None },
+            &package.manifest,
+            &package.component,
+            &format.entry,
+            &params.get("options").cloned().unwrap_or(json!({})),
+            streams,
+        );
+        let loss_report: craft_plugin::LossReport = serde_json::from_value(result?).map_err(|e| error(e.to_string()))?;
+        if solidcraft_doc::progress::cancelled() {
+            return Err(HostError::Cancelled.into());
+        }
+        if host.session.model.state().bodies.iter().any(|body| body.component == 0)
+            || host.session.doc.components.iter().any(|item| item.id != 0 && item.parent == 0 && item.id != component)
+            || host.session.doc.occurrences.iter().any(|item| item.parent == 0 && item.component != component)
+        {
+            return Err(HostError::InvalidInput {
+                field: "design".into(),
+                reason: "imported bodies and assemblies must stay inside the file component".into(),
+            }
+            .into());
+        }
+        host.session.lock_plugin_import_contents(component)?;
+        if solidcraft_doc::progress::cancelled() {
+            return Err(HostError::Cancelled.into());
+        }
+        host.session.undo.clear();
+        host.session.redo.clear();
+        host.session.mark_unsaved();
+        let reply = serde_json::to_value(crate::schema::plugin::ImportResult {
+            path: path.into(),
+            format: format.id,
+            name: host.session.doc.name.clone(),
+            bodies: host.session.model.state().bodies.len(),
+            loss_report,
+            param_warnings: vec![],
+        })
+        .map_err(|e| error(e.to_string()))?;
+        if solidcraft_doc::progress::cancelled() {
+            return Err(HostError::Cancelled.into());
+        }
+        session.replace_design(host.session);
+        Ok(reply)
+    }
+    #[cfg(not(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    {
+        let _ = (package, format);
+        Err(error("plugin execution requires a native build with the plugins feature"))
+    }
+}
+
+/// Export from a scratch read transaction, publishing bytes atomically only after success.
+pub fn export_file(session: &mut Session, path: &str, params: &Value) -> Result<Value> {
+    let (package, format) = approved_format(session, EntryKind::Exporter, path, params, "file.export")?;
+    solidcraft_io::vfs::check(path).map_err(|e| error(e.to_string()))?;
+    #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        #[derive(Clone)]
+        struct Buffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                let mut buffer = self.0.lock().map_err(|_| std::io::Error::other("export buffer unavailable"))?;
+                buffer.extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buffer = Buffer(Default::default());
+        let streams = craft_plugin_wasm::IoStreams { input: None, output: Some(Box::new(buffer.clone())) };
+        let (_, result) = craft_plugin_wasm::run_io(
+            SolidCraftHost { session: session.scratch(), transaction: None },
+            &package.manifest,
+            &package.component,
+            &format.entry,
+            &params.get("options").cloned().unwrap_or(json!({})),
+            streams,
+        );
+        result?;
+        if solidcraft_doc::progress::cancelled() {
+            return Err(HostError::Cancelled.into());
+        }
+        let bytes = buffer.0.lock().map_err(|_| error("export buffer unavailable"))?;
+        solidcraft_io::safe_write::write_atomic(Path::new(path), &bytes, false).map_err(|e| error(e.to_string()))?;
+        serde_json::to_value(crate::schema::plugin::ExportResult {
+            path: path.into(),
+            format: format.id,
+            bytes: bytes.len() as u64,
+            param_warnings: vec![],
+        })
+        .map_err(|e| error(e.to_string()))
+    }
+    #[cfg(not(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    {
+        let _ = (package, format);
+        Err(error("plugin execution requires a native build with the plugins feature"))
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -141,7 +364,7 @@ impl PluginHost for SolidCraftHost {
                 name: c.id.into(),
                 input_schema: c.contract.map(|c| c.input_schema().to_value()).unwrap_or_else(|| json!({"type":"object"})),
                 output_schema: c.output.map(|f| f().to_value()).unwrap_or(json!({})),
-                effect: if c.undoable { Effect::Edit } else { Effect::Read },
+                effect: if c.undoable || c.id == "component.activate" { Effect::Edit } else { Effect::Read },
             })
             .collect()
     }
@@ -241,7 +464,7 @@ pub fn describe_entry(s: &Session, id: &str) -> Result<Option<Value>> {
     let Some(path) = s.plugin_state.packages.get(package) else { return Ok(None) };
     let package = read_package(path)?;
     let Some(runtime) = package.manifest.runtime else { return Ok(None) };
-    let Some(entry) = runtime.entries.iter().find(|e| e.name == name) else { return Ok(None) };
+    let Some(entry) = runtime.entries.iter().find(|e| e.name == name && e.kind == EntryKind::Command) else { return Ok(None) };
     Ok(Some(json!({"id":id,"label":name,"params":"approval, params: declared entry inputs",
         "input":{"type":"object","required":["approval","params"],"additionalProperties":false,"properties":{
             "approval":{"type":"string"},"params":entry.input_schema}},

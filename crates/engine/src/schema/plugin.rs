@@ -77,3 +77,36 @@ pub struct ListResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
+
+/// Import using an installed plugin format; success replaces the open design with an unsaved one.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportParams {
+    pub path: crate::schema::file::OpenPath,
+    /// Namespaced plugin entry id. Omit only when the extension has one plugin importer.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Exact hash from plugin.inspect after reviewing permissions.
+    pub approval: String,
+    /// Values checked against the entry's declared input schema.
+    #[serde(default)]
+    pub options: Value,
+}
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ImportResult {
+    pub path: String,
+    pub format: String,
+    pub name: String,
+    pub bodies: usize,
+    pub loss_report: craft_plugin::LossReport,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExportResult {
+    pub path: String,
+    pub format: String,
+    pub bytes: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

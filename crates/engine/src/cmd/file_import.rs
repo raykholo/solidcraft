@@ -425,6 +425,29 @@ fn add_rigid_joints(s: &mut Session, pairs: &[(u64, u64, Mat)]) -> Result<Vec<u6
 }
 
 impl Session {
+    /// Apply the ordinary imported-assembly rigid group to a plugin's native components.
+    #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub(crate) fn lock_plugin_import_contents(&mut self, component: u64) -> Result<()> {
+        let pairs = self
+            .doc
+            .occurrences
+            .iter()
+            .filter(|occurrence| occurrence.parent != 0 && self.doc.component_within(occurrence.parent, component))
+            .map(|occurrence| {
+                let parent =
+                    self.doc.occurrence_of(occurrence.parent).ok_or_else(|| EngineError::Other("import: parent occurrence is missing".into()))?;
+                Ok((parent.id, occurrence.id, occurrence.transform))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if self.doc.assembly.joints.len().saturating_add(pairs.len()) > solidcraft_doc::joints::MAX_JOINTS {
+            return Err(EngineError::Other("imported assembly exceeds the rigid joint limit".into()));
+        }
+        if !add_rigid_joints(self, &pairs)?.is_empty() {
+            self.refresh();
+        }
+        Ok(())
+    }
+
     /// The component whose contents hold occurrence `occ` where it is: a rigid joint ties it to
     /// a placement of the component it sits in (an imported assembly's part). `None` when it is
     /// free to move on its own.

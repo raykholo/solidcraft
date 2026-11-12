@@ -1,6 +1,6 @@
-# Experimental command plugin runtime
+# Experimental plugin runtime
 
-This is the implemented one-shot native runtime. It does not implement every part of
+This is the implemented native runtime for commands, importers and exporters. It does not implement every part of
 [issue #1221](https://github.com/tangency-labs/solidcraft/issues/1221), the broader
 [interface proposal #4980](https://github.com/tangency-labs/solidcraft/pull/4980), or
 [Utilities placement proposal #4933](https://github.com/tangency-labs/solidcraft/pull/4933).
@@ -44,8 +44,9 @@ supplies an owned scratch session and adopts its edits only after a successful c
    authoring context, selection, disabled-plugin policy, or Stop prevents adoption. It does not
    re-run the plugin on the window thread. Headless CLI execution is synchronous.
 
-No discovery, preference toggle, document open or saved feature executes a component. Every
-invocation gets a fresh instance, so guest memory is not persistent state. A design is data, never
+Discovery, preference toggles and opening a saved native design never execute a component.
+File-format conversion requires explicit content approval. Every invocation gets a fresh
+instance, so guest memory is not persistent state. A design is data, never
 an instruction to install, approve, download or execute a package.
 
 ## Manifest
@@ -61,7 +62,7 @@ characters and unknown fields are refused. The manifest has a 16 KiB byte cap.
 |---|---|
 | `api` | Exactly the package identifier declared in the [WIT](../crates/craft-plugin/wit/plugin.wit) |
 | `module` | One lowercase `.wasm` file name within the package; no directories |
-| `entries` | 1..32 distinct entries with `name`, `effect: read \| edit`, `input_schema` and optional `slots`; legacy string ids default to edit |
+| `entries` | 1..32 distinct entries with `name`, `kind`, `effect: read \| edit`, `input_schema` and optional `slots`; file formats require `extensions`; legacy string ids default to edit commands |
 | `commands` | At most 128 exact existing built-in command ids, intersected with host policy |
 | `limits` | Optional object with all of `fuel`, `memory_mib`, `deadline_ms`; omitted object uses defaults |
 | `permissions` | Optional object: `files` requests named read/write folder grants, `clock` requests wall clock; `net: true` is refused |
@@ -83,9 +84,11 @@ another process. A dependency is not installed when a component fails to load.
 ## Command and data surface
 
 The host admits existing `solid.*` and `sketch.*` commands (except file-based `sketch.insert_*`),
-plus `parameters.add/change/delete`, `timeline.add/inspect/redefine/delete`, `document.inspect`,
+plus `component.create/activate`, `occurrence.move`, `parameters.add/change/delete`,
+`timeline.add/inspect/redefine/delete`, `document.inspect`,
 `model.faces`, `model.edges`, `model.mesh` and `inspect.measure`. Admission still requires the exact
-id in the package manifest. New families require a host policy review. Wildcards, command aliases,
+id in the package manifest. `component.activate` is an edit even though it does
+not add an undo step by itself. New families require a host policy review. Wildcards, command aliases,
 plugin-to-plugin calls, batches/scripts and `file.*`/`doc.*` commands are not guest capabilities.
 The empty file scope also applies to a feature that names an external font or linked design.
 
@@ -113,7 +116,10 @@ reviewing permissions does not establish whether a publisher is trustworthy.
 
 There is no persistent automatic approval list in this version. A caller supplies the reviewed
 content identity on every invocation. Agent chat separately asks before running external code;
-its model cannot turn an inspected hash into user consent. A host or MCP caller is responsible
+its model cannot turn an inspected hash into user consent. The same gate covers
+`file.import`, plugin `file.export`, and `doc.open` when a plugin format handles
+the file. Desktop batch and script requests refuse these external calls; send
+them individually so they run on the cancellable worker. A host or MCP caller is responsible
 for its existing user-consent policy and package-folder scope. Desktop disable preferences apply
 to the running desktop session and all plugin worker copies; a separate CLI process has its own
 policy, not the GUI's preferences.
@@ -128,7 +134,8 @@ policy, not the GUI's preferences.
 | Entry deadline | 5 s / 30 s |
 | Core instances / tables | 8 / 2 (guest plus canonical ABI shim) |
 | Table elements / guest stack | 10,000 / 512 KiB |
-| Host engine calls | 256 |
+| Non-stream host calls | 256 |
+| Stream calls / chunk / total input or output | 4096 / 64 KiB / 64 MiB |
 | Params, one host result, final result | 1 MiB each, bounded JSON parser depth |
 | Log messages | 1 KiB each, 64 KiB per call; control characters stripped |
 
@@ -225,3 +232,115 @@ two edits grouped into one undo step, measured volume, undo/redo and cold reopen
 the package; guest traps, fuel/memory exhaustion, forbidden calls, stale approval, disabled plugins,
 and caller path scopes. The desktop tests cover worker scheduling and rejection of stale results.
 The PR records actual validation results; this guide is not a claim that a particular build passed.
+
+
+## Importer and exporter entries
+
+All entry kinds use the same `command.execute(entry, params)` export. App command
+names and arguments remain JSON data; the WIT never defines CAD-specific types.
+The new `io` import provides invocation-local file streams. A component that
+only implements commands does not need to import `io`.
+
+Declare each file format in the manifest's `runtime.entries` list:
+
+```json
+[
+  {
+    "name": "read-part",
+    "kind": "importer",
+    "extensions": ["part", "assembly"],
+    "input_schema": {
+      "type": "object",
+      "properties": {"units": {"type": "string", "enum": ["mm", "inch"]}}
+    }
+  },
+  {
+    "name": "write-part",
+    "kind": "exporter",
+    "extensions": ["part"],
+    "input_schema": {"type": "object", "properties": {}}
+  }
+]
+```
+
+Each format requires 1..32 distinct extensions of 1..16 lowercase ASCII letters
+or digits. Dots, path separators and duplicates are refused. Importers default
+to `effect: "edit"`; exporters default to `effect: "read"`. An explicit effect
+that disagrees with its kind is refused. Existing string entries remain edit
+commands, and command declarations must not include extensions.
+
+Format options use a bounded offline JSON Schema subset: `type` (including a
+list of types), `properties`, `required`, `additionalProperties`, `items`,
+`enum`, `const`, `allOf`, `anyOf`, `oneOf`, local `$ref`/`$defs`, numeric minimum
+and maximum bounds (including exclusive bounds), string length and array length
+bounds. An options object is validated before any plugin code runs. Common
+annotation fields (`title`, `description`, `default`, `examples` and schema
+metadata) are accepted. Unsupported validation keywords and remote references
+are refused in format manifests. Validation caps schema depth and total work;
+recursive references cannot hang the host.
+Integer options use signed or unsigned 64-bit JSON integers without floating-point
+conversion, matching the native command field types.
+
+An importer calls `io.input-name()` for the input's base file name, then
+`io.read-input(max-bytes)` repeatedly. Request 1..65536 bytes per call. A short
+read is valid; an empty chunk means EOF. The host rejects input larger than
+64 MiB. It exposes no implicit filesystem access. To read an assembly sibling,
+use `files.read-file` with a matching manifest permission and an app-approved
+folder grant. Absolute paths and traversal outside that grant are refused by
+the existing capability-based file host. Sibling reads retain the existing
+1 MiB per-file bound.
+
+The importer creates the design through approved `engine.run` commands and
+returns a JSON loss report as the successful `execute` result:
+
+```json
+{
+  "counts": {"bodies_read": 2, "materials_skipped": 1},
+  "items": [
+    {"item": "Body 2", "code": "material-unsupported", "message": "Material was omitted"}
+  ]
+}
+```
+
+`counts` has at most 128 printable keys of at most 64 characters and unsigned
+integer values. `items` has at most 4096 entries. Each item identifies the source
+object (1..256 printable characters), a stable lowercase code using the manifest
+id syntax, and a message (1..1024 printable characters). Empty reports use
+`{"counts":{},"items":[]}`. The final JSON still has the existing 1 MiB limit.
+The host validates the report before committing; malformed reports roll back
+all commands. Plugin messages are displayed as text, without markup execution.
+
+An exporter queries the design through `engine.run` and calls
+`io.write-output(bytes)` repeatedly with chunks no larger than 64 KiB. Its total
+output must fit 64 MiB. It returns a small JSON result, for example `{}`.
+Read-effect enforcement applies to every command, independent of manifest
+permissions. Format entries cannot write through the filesystem interface,
+even with a write grant. The app stages the output and writes the destination only after
+a successful call. A failed or cancelled exporter never publishes partial bytes.
+
+File-format ids do not bypass the caller's file scope. Scoped MCP/control callers
+must allow the package folder (manifest and component) as well as the input or
+output folder, as for `plugin.inspect` and `plugin.run`. Granting those caller
+paths does not grant the guest access to sibling files: guest folder access
+still requires a separate named `FileGrant` and manifest permission.
+
+An explicit dotted export format with non-null `approval` or `options` marks a
+plugin request. If that exporter is missing or disabled, the command refuses it
+instead of falling back to a native writer with the same extension. Legacy
+filename-shaped native `format` values remain supported without plugin fields.
+
+The app-independent Rust runtime exposes `run_io` with an owned `IoStreams`.
+`InputStream` contains `name` and an owned `Read + Send`; output is an owned
+`Write + Send`. This lets hosts use files, memory or their own bounded streams.
+Streams are not guest filesystem grants. The existing `run` API remains for
+commands. Hosts must stage external writes until success, since a generic sink
+cannot roll back bytes already written.
+
+The same fuel, memory, stack, deadline, progress, cancellation and no-network
+policy covers all kinds. A stream error poisons the call even when guest code
+ignores its result. Cancellation is checked during streaming and before commit.
+SolidCraft builds an import in a fresh session, then publishes it as a new unsaved
+design only after the whole call succeeds. No saved plugin dependency is added.
+The host draws the loss list and options from data for menu actions; a component
+supplies no UI. Programmatic imports return the report in JSON without opening
+a report window, picker or approval dialog.

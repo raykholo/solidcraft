@@ -98,3 +98,93 @@ fn host_errors_are_machine_readable() {
     assert_eq!(serde_json::from_value::<HostError>(value).unwrap(), error);
     assert!(WIT.contains(&format!("package {API};")));
 }
+
+#[test]
+fn importer_and_exporter_declarations_roundtrip_and_enforce_rights() {
+    let mut value = manifest();
+    value["runtime"]["entries"] = json!([
+        {"name":"read-part","kind":"importer","extensions":["part","assembly"],
+         "input_schema":{"type":"object","properties":{"units":{"type":"string"}}}},
+        {"name":"write-part","kind":"exporter","extensions":["part"]}
+    ]);
+    let runtime = parse(&value).unwrap().runtime.unwrap();
+    assert_eq!(runtime.entries[0].kind, EntryKind::Importer);
+    assert_eq!(runtime.entries[0].effect, Effect::Edit);
+    assert_eq!(runtime.entries[1].kind, EntryKind::Exporter);
+    assert_eq!(runtime.entries[1].effect, Effect::Read);
+    let serialized = serde_json::to_value(&runtime.entries[1]).unwrap();
+    assert_eq!(serde_json::from_value::<Entry>(serialized).unwrap().extensions, ["part"]);
+    for extensions in [json!([]), json!([".part"]), json!(["PART"]), json!(["part", "part"]), json!(["../part"])] {
+        value["runtime"]["entries"][0]["extensions"] = extensions;
+        assert!(matches!(parse(&value), Err(HostError::InvalidManifest { field, .. }) if field.ends_with("extensions")));
+    }
+    value["runtime"]["entries"][0]["extensions"] = json!(["part"]);
+    value["runtime"]["entries"][1]["effect"] = json!("edit");
+    assert!(matches!(parse(&value), Err(HostError::InvalidManifest { field, .. }) if field.ends_with("effect")));
+    value["runtime"]["entries"][1]["effect"] = json!("read");
+    value["runtime"]["entries"][0]["effect"] = json!("read");
+    assert!(parse(&value).is_err());
+    value["runtime"]["entries"] = json!([{"name":"make","extensions":["part"]}]);
+    assert!(parse(&value).is_err());
+}
+
+#[test]
+fn loss_reports_are_structured_bounded_data() {
+    let mut report = LossReport {
+        counts: [("bodies_read".into(), 2), ("materials_skipped".into(), 1)].into(),
+        items: vec![ItemLoss { item: "Body 2".into(), code: "material-unsupported".into(), message: "Material was omitted".into() }],
+    };
+    report.validate().unwrap();
+    let json = serde_json::to_value(&report).unwrap();
+    assert_eq!(json["counts"]["bodies_read"], 2);
+    assert_eq!(serde_json::from_value::<LossReport>(json).unwrap(), report);
+    report.items[0].code = "".into();
+    assert!(report.validate().is_err());
+    report.items[0].code = "unsupported".into();
+    report.items[0].message = "bad\nmessage".into();
+    assert!(report.validate().is_err());
+    report.items[0].message = "Unsupported material".into();
+    report.items = vec![report.items[0].clone(); MAX_LOSS_ITEMS + 1];
+    assert!(report.validate().is_err());
+}
+
+#[test]
+fn format_options_are_validated_offline_before_execution() {
+    let mut value = manifest();
+    value["runtime"]["entries"] = json!([{"name":"read","kind":"importer","extensions":["part"],
+        "input_schema":{"type":"object","additionalProperties":false,"required":["scale","units"],
+            "properties":{"scale":{"type":"number","exclusiveMinimum":0,"maximum":10},
+                "units":{"enum":["mm","inch"]},
+                "names":{"type":"array","maxItems":2,"items":{"type":"string","minLength":1}}}}}]);
+    let entry = parse(&value).unwrap().runtime.unwrap().entries.remove(0);
+    entry.validate_options(&json!({"scale":1,"units":"mm","names":["part"]})).unwrap();
+    for invalid in [
+        json!({}),
+        json!({"scale":0,"units":"mm"}),
+        json!({"scale":1,"units":"m"}),
+        json!({"scale":1,"units":"mm","unknown":true}),
+        json!({"scale":1,"units":"mm","names":[""]}),
+    ] {
+        assert!(matches!(entry.validate_options(&invalid), Err(HostError::InvalidInput { .. })));
+    }
+    value["runtime"]["entries"][0]["input_schema"]["properties"]["scale"] = json!({"$ref":"https://example.invalid/schema"});
+    assert!(parse(&value).is_err());
+    value["runtime"]["entries"][0]["input_schema"]["properties"]["scale"] = json!({"type":"string","pattern":".*"});
+    assert!(parse(&value).is_err(), "unsupported keywords cannot silently bypass validation");
+    let mut entry = entry;
+    entry.input_schema = json!({"type":"object","$defs":{"positive":{"type":"number","minimum":1}},"properties":{"n":{"$ref":"#/$defs/positive"}}});
+    assert!(entry.validate_options(&json!({"n":0})).is_err());
+    entry.input_schema = json!({"type":"object","default":42,"properties":{"n":{"$ref":"#/default"}}});
+    assert!(entry.validate_options(&json!({"n":1})).is_err(), "references must resolve to schemas");
+    entry.input_schema = json!({"type":"object","properties":{"seed":{"type":"integer","maximum":u64::MAX - 1}}});
+    assert!(entry.validate_options(&json!({"seed":u64::MAX - 1})).is_ok());
+    assert!(entry.validate_options(&json!({"seed":u64::MAX})).is_err(), "integer bounds retain all 64 bits");
+    entry.input_schema = json!({"type":"object","properties":{"values":{"oneOf":[
+        {"type":"array","items":{"type":"integer"}}, {"type":"array"}]}}});
+    assert!(
+        matches!(entry.validate_options(&json!({"values":vec![0;8189]})), Err(HostError::LimitExceeded { .. })),
+        "alternatives must propagate exhausted validation budgets instead of counting them as mismatches"
+    );
+    entry.input_schema = json!({"type":"object","$ref":"#"});
+    assert!(entry.validate_options(&json!({})).is_err(), "recursive refs are bounded");
+}

@@ -56,11 +56,19 @@ pub enum Kind {
     Recover { id: String, dir: Option<String> },
     /// Export a snapshot of the current design without adopting the worker's session.
     ExportDxf,
+    /// Export through an installed format on the same cancellable worker.
+    ExportPlugin,
     /// Read the active design's linked designs again (`component.update_links`, with the
     /// request's options: `component` or `components` reads only those links).
     UpdateLinks,
     /// Read a point cloud's file again (`pointcloud.reload`, with the request's `cloud`).
     ReloadCloud,
+}
+
+#[derive(Clone)]
+struct PluginPolicy {
+    disabled: std::collections::BTreeSet<String>,
+    limits: solidcraft_engine::plugin::HostLimits,
 }
 
 pub struct Request {
@@ -84,6 +92,8 @@ pub struct Request {
     /// Insert the file as a mesh whatever its extension says: a PLY goes to `pointcloud.insert`
     /// unless the person chose Insert Mesh for it (then it needs its faces).
     pub mesh: bool,
+    /// Preserve an explicit plugin import even when routing solely by extension.
+    pub plugin_import: bool,
     /// The level the caller's own `param_check` named and the warnings it found before the run:
     /// the reply says both (#9184).
     pub(crate) param_check: Option<(solidcraft_engine::schema::ParamCheck, Vec<String>)>,
@@ -91,6 +101,9 @@ pub struct Request {
     pub note: Option<String>,
     /// Which operation it is ([`crate::operations::serial`]).
     pub serial: u64,
+    /// Folder grants approved for this one plugin invocation.
+    pub plugin_grants: Vec<solidcraft_engine::plugin::FileGrant>,
+    plugin_policy: Option<PluginPolicy>,
     /// The tab whose design it works on (an insert, an export, Update Links), set when it is
     /// queued: it starts and lands only while that tab is shown.
     pub tab: Option<u64>,
@@ -110,12 +123,23 @@ impl Request {
             design: None,
             chat_turn: None,
             mesh: false,
+            plugin_import: false,
             param_check: None,
             note: None,
             serial: crate::operations::serial(),
+            plugin_grants: Vec::new(),
+            plugin_policy: None,
             tab: None,
             tries: 0,
         }
+    }
+    fn policy_changed(&self, app: &SolveApp) -> bool {
+        self.plugin_policy
+            .as_ref()
+            .is_some_and(|p| p.disabled != app.preferences.disabled_plugins || p.limits != crate::plugins::host_limits(&app.preferences))
+    }
+    fn exports(&self) -> bool {
+        matches!(self.kind, Kind::ExportDxf | Kind::ExportPlugin)
     }
     /// It adds what it reads to the active design.
     fn insert(&self) -> bool {
@@ -133,6 +157,7 @@ impl Request {
     }
     fn command(&self) -> (&'static str, Value) {
         match &self.kind {
+            Kind::Open if self.plugin_import || self.options.get("format").and_then(Value::as_str).is_some() => ("file.import", self.params()),
             Kind::Open => ("doc.open", self.params()),
             Kind::Insert if self.mesh || solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert if solidcraft_engine::io::is_point_cloud_path(&self.path) => ("pointcloud.insert", self.params()),
@@ -140,6 +165,7 @@ impl Request {
             Kind::InsertDesign => ("component.insert_design", self.params()),
             Kind::Recover { id, dir } => ("doc.recover", json!({"id": id, "dir": dir})),
             Kind::ExportDxf => ("file.export_view_dxf", Value::Object(self.options.clone())),
+            Kind::ExportPlugin => ("file.export", self.params()),
             Kind::UpdateLinks => ("component.update_links", Value::Object(self.options.clone())),
             Kind::ReloadCloud => ("pointcloud.reload", Value::Object(self.options.clone())),
         }
@@ -202,7 +228,7 @@ struct Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if self.request.kind == Kind::ExportDxf {
+        if self.request.exports() {
             self.progress.cancel();
         }
     }
@@ -268,6 +294,11 @@ impl Running {
     /// it reads a feature's STEP file: the kernel's last count stays behind once the file is
     /// read, and would hide "Rebuilding feature N of M" until the next import (#10198).
     fn work(&self) -> Option<(&'static str, usize, usize)> {
+        if self.request.plugin_policy.is_some()
+            && let Some((_, done, total)) = self.progress.item()
+        {
+            return Some(("plugin", done, total));
+        }
         match &self.staged {
             Some(s) if s.opening.is_some() && s.reading.is_none() => None,
             _ => self.progress.work(),
@@ -338,7 +369,7 @@ impl FileLoad {
         // Imports only change a scratch session. Disconnect their result and preview channels
         // so a slow cancellation checkpoint cannot block the next file or apply a late result.
         // Exports publish a file: keep their reply until the worker reports whether it committed.
-        if self.running.as_ref().is_some_and(|r| r.request.kind != Kind::ExportDxf)
+        if self.running.as_ref().is_some_and(|r| !r.request.exports())
             && let Some(r) = self.running.take()
         {
             r.request.answer(Err("file operation cancelled".into()));
@@ -415,7 +446,7 @@ fn steps(r: &Running) -> Option<(usize, usize)> {
     // As the card reads them: in the web app a design opened a few features a frame counts them
     // itself ([`Running::features`], [`Running::work`]).
     let phase = r.phase.load(Ordering::Relaxed);
-    if let Some((_, d, t)) = r.work().filter(|(_, d, t)| r.request.kind == Kind::ExportDxf || (phase == 0 && d < t)) {
+    if let Some((_, d, t)) = r.work().filter(|(_, d, t)| r.request.exports() || (phase == 0 && d < t)) {
         return Some((d, t));
     }
     let (done, total) = r.features();
@@ -450,6 +481,12 @@ pub(crate) fn step_folder_option(app: &SolveApp, path: &str, options: &mut serde
 
 /// Queue a file operation; on the web (no threads) it runs now.
 pub fn begin_request(app: &mut SolveApp, mut request: Request) -> Result<(), String> {
+    crate::plugins::sync_policy(app);
+    let (command, params) = request.command();
+    if crate::plugins::is_runtime_request(command, &params) {
+        request.plugin_policy =
+            Some(PluginPolicy { disabled: app.preferences.disabled_plugins.clone(), limits: crate::plugins::host_limits(&app.preferences) });
+    }
     if crate::control::chat_turn_cancelled(request.chat_turn.as_deref()) {
         request.answer(Err("the agent chat turn ended".into()));
         return Ok(());
@@ -457,7 +494,7 @@ pub fn begin_request(app: &mut SolveApp, mut request: Request) -> Result<(), Str
     if app.file_load.idle() && reuse_open(app, &request) {
         return Ok(());
     }
-    if matches!(request.kind, Kind::Open | Kind::Insert) {
+    if request.plugin_policy.is_none() && matches!(request.kind, Kind::Open | Kind::Insert) {
         step_folder_option(app, &request.path, &mut request.options);
     }
     #[cfg(target_arch = "wasm32")]
@@ -497,7 +534,7 @@ pub fn begin_request(app: &mut SolveApp, mut request: Request) -> Result<(), Str
                 }
                 r
             }
-            Kind::ExportDxf => {
+            Kind::ExportDxf | Kind::ExportPlugin => {
                 let (command, params) = request.command();
                 let r = app.run(command, params);
                 if r.is_ok() && !request.path.is_empty() {
@@ -543,7 +580,7 @@ pub(crate) fn queue(app: &mut SolveApp, mut request: Request) -> Result<(), Stri
 /// Answer each ordinary open separately, including queued requests for the same file.
 /// Validate the caller's scope before looking at existing sessions or resolving paths.
 fn reuse_open(app: &mut SolveApp, request: &Request) -> bool {
-    if request.kind != Kind::Open {
+    if request.kind != Kind::Open || request.plugin_import || request.options.get("format").and_then(Value::as_str).is_some() {
         return false;
     }
     let reused = solidcraft_engine::io::vfs::scoped(request.scope.clone(), || {
@@ -586,6 +623,8 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         "doc.open" => Kind::Open,
         "file.insert_step" | "file.insert_mesh" | "pointcloud.insert" => Kind::Insert,
         "file.export_view_dxf" => Kind::ExportDxf,
+        "file.import" => Kind::Open,
+        "file.export" if crate::plugins::is_runtime_request(id, req.params.get("params").unwrap_or(&Value::Null)) => Kind::ExportPlugin,
         "pointcloud.reload" => Kind::ReloadCloud,
         _ => return Some(req),
     };
@@ -638,9 +677,12 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         design: None,
         chat_turn: req.chat_turn,
         mesh: false,
+        plugin_import: id == "file.import",
         param_check,
         note: None,
         serial: crate::operations::serial(),
+        plugin_grants: Vec::new(),
+        plugin_policy: None,
         tab: None,
         tries: 0,
     };
@@ -694,6 +736,12 @@ fn start(app: &mut SolveApp) {
     let shown = app.docs.active_tab();
     let Some(next) = app.file_load.queued.iter().position(|r| r.tab.is_none_or(|tab| tab == shown)) else { return };
     let Some(request) = app.file_load.queued.remove(next) else { return };
+    if request.policy_changed(app) {
+        let error = app.tr("ui.plugin_context_changed").to_string();
+        crate::operations::ended(app, &format!("file:{}", request.serial), Outcome::Cancelled);
+        request.answer(Err(error));
+        return;
+    }
     if crate::control::chat_turn_cancelled(request.chat_turn.as_deref()) {
         request.answer(Err("the agent chat turn ended".into()));
         return;
@@ -722,9 +770,13 @@ fn start(app: &mut SolveApp) {
     let insert = request.insert();
     let before = if insert { crate::open_meshing::session_world(&app.session).bodies.iter().map(|b| b.name.clone()).collect() } else { Vec::new() };
     let update = request.reads_again();
-    let mut scratch = if insert || update || request.kind == Kind::ExportDxf { app.session.scratch() } else { Session::default() };
+    let mut scratch = if insert || update || request.exports() { app.session.scratch() } else { Session::default() };
     // A design opened or recovered here is run through the host's pre-command check too, and
     // evaluated under the user's validation mode.
+    scratch.plugin_state = app.session.plugin_state.clone();
+    scratch.plugin_state.file_grants.extend(request.plugin_grants.clone());
+    scratch.disabled_plugins = app.session.disabled_plugins.clone();
+    scratch.plugin_limits = app.session.plugin_limits;
     scratch.set_command_check(app.session.command_check());
     scratch.set_validation(app.preferences.validation);
     crate::print_face_ui::sync(&mut scratch, &app.preferences);
@@ -780,6 +832,7 @@ fn start(app: &mut SolveApp) {
         });
         partial_rx
     });
+    let retained_grants = app.session.plugin_state.file_grants.clone();
     let worker_finished = finished;
     #[cfg(test)]
     let worker_gate = app.file_load.worker_gate.take();
@@ -816,6 +869,10 @@ fn start(app: &mut SolveApp) {
             })
         }))
         .unwrap_or_else(|_| Err("the file operation failed; the current design is unchanged".into()));
+        let result = result.map(|mut made| {
+            made.session.plugin_state.file_grants = retained_grants;
+            made
+        });
         worker_finished.store(true, Ordering::Relaxed);
         let _ = tx.send(result);
     });
@@ -1225,7 +1282,7 @@ fn compute(
     let result =
         solidcraft_engine::io::vfs::scoped(scope, || solidcraft_engine::doc::progress::watch(progress.clone(), || session.execute(command, params)))
             .map_err(|e| e.to_string())?;
-    if command == "file.export_view_dxf" {
+    if matches!(command, "file.export_view_dxf" | "file.export") {
         // A successful export has already published its complete file. A Cancel arriving
         // after that commit must not turn a completed save into a misleading cancellation.
         return Ok(Made { session, result, thumbnail: false });
@@ -1258,6 +1315,10 @@ fn compute(
 }
 
 pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
+    let policy_changed = app.file_load.running.as_ref().is_some_and(|r| r.request.policy_changed(app));
+    if policy_changed {
+        app.file_load.cancel_running();
+    }
     // Stop must release the waiting slot even if the worker has not reached its next check.
     let chat_cancelled = app.file_load.running.as_ref().is_some_and(|r| crate::control::chat_turn_cancelled(r.request.chat_turn.as_deref()));
     if chat_cancelled && let Some(running) = &app.file_load.running {
@@ -1265,7 +1326,7 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // As with FileLoad::cancel, a publishing export retains its worker until it reports back.
     if chat_cancelled
-        && app.file_load.running.as_ref().is_some_and(|r| r.request.kind != Kind::ExportDxf)
+        && app.file_load.running.as_ref().is_some_and(|r| !r.request.exports())
         && let Some(running) = app.file_load.running.take()
     {
         running.request.answer(Err("the agent chat turn ended".into()));
@@ -1400,7 +1461,7 @@ fn quiet(app: &SolveApp, r: &Running) -> bool {
 fn landing(app: &SolveApp, r: &Running) -> Land {
     let Some(job) = r.ready.as_ref() else { return Land::Wait };
     // As it always was: the design waited for it.
-    if app.preferences.file_operations_wait || r.cancelled() || job.is_err() || r.request.kind == Kind::ExportDxf {
+    if app.preferences.file_operations_wait || r.cancelled() || job.is_err() || r.request.exports() || r.request.policy_changed(app) {
         return Land::Now;
     }
     // The tab list is being edited (a close prompt, a quit, Close Other/All Tabs): landing a
@@ -1445,6 +1506,9 @@ fn behind(app: &mut SolveApp, mut running: Running) {
             }
             let name = std::path::Path::new(&request.path).file_name().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
             app.set_status(solidcraft_ui_text::format("file_load.opened_behind", &[("name", &name)]), false);
+            if request.reply.is_none() {
+                crate::plugins::record_loss_report(app, &made.result);
+            }
             request.answer(Ok(made.result));
         }
         Err(e) => {
@@ -1504,11 +1568,15 @@ fn land_now(app: &mut SolveApp, mut running: Running) {
     {
         let request = &running.request;
         match job {
-            Ok(made) if request.kind == Kind::ExportDxf => {
+            Ok(made) if request.exports() => {
                 if !request.path.is_empty() {
                     app.set_status(solidcraft_ui_text::format("ui.saved_to", &[("path", &request.path)]), false);
                 }
                 request.answer(Ok(made.result));
+            }
+            _ if request.policy_changed(app) => {
+                outcome = Outcome::Cancelled;
+                request.answer(Err(app.tr("ui.plugin_context_changed").to_string()));
             }
             _ if running.cancelled() => {
                 outcome = Outcome::Cancelled;
@@ -1624,6 +1692,9 @@ fn land_now(app: &mut SolveApp, mut running: Running) {
                         app.set_status(note.clone(), false);
                     }
                 }
+                if request.reply.is_none() {
+                    crate::plugins::record_loss_report(app, &made.result);
+                }
                 request.answer(Ok(made.result));
             }
             Ok(_) => {
@@ -1736,7 +1807,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let phase = r.phase.load(Ordering::Relaxed);
     let (done, total) = r.features();
     // Long work inside one feature (a large STEP file) has progress of its own.
-    let export = r.request.kind == Kind::ExportDxf;
+    let export = r.request.exports();
     let work = r.work().filter(|(_, d, t)| export || (phase == 0 && d < t));
     let screen = ctx.content_rect();
     // Leave the title bar to the window. The resize edges are a foreground layer above this.
@@ -1774,6 +1845,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             Kind::Open => "file_load.opening",
             Kind::Recover { .. } => "file_load.recovering",
             Kind::ExportDxf => "dxf.exporting",
+            Kind::ExportPlugin => "plugin_io.exporting",
             Kind::UpdateLinks => "file_load.updating_links",
             Kind::ReloadCloud => "file_load.reloading_cloud",
         })
@@ -1782,7 +1854,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         Kind::Insert | Kind::InsertDesign => "import",
         Kind::Open => "open",
         Kind::Recover { .. } => "restore",
-        Kind::ExportDxf => "export",
+        Kind::ExportDxf | Kind::ExportPlugin => "export",
         Kind::UpdateLinks => "update",
         Kind::ReloadCloud => "import",
     };
@@ -1803,7 +1875,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             // An open or an import goes through three steps the card lists; the other operations
             // (and a cancelled one) say what they are doing in a line.
-            let stepped = !cancelled && matches!(r.request.kind, Kind::Open | Kind::Insert | Kind::InsertDesign | Kind::Recover { .. });
+            let stepped = !cancelled
+                && r.request.plugin_policy.is_none()
+                && matches!(r.request.kind, Kind::Open | Kind::Insert | Kind::InsertDesign | Kind::Recover { .. });
             if stepped {
                 let cad = matches!(r.request.kind, Kind::Open | Kind::Insert)
                     && (solidcraft_engine::io::is_step_path(&r.request.path) || solidcraft_engine::io::is_iges_path(&r.request.path));
@@ -1818,6 +1892,13 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 } else {
                     match (phase, work) {
                         (_, work) if r.request.kind == Kind::ExportDxf => crate::dialogs_view_dxf::progress_text(work),
+                        (_, Some(("plugin", done, total))) => solidcraft_ui_text::format(
+                            "plugin_io.progress",
+                            &[
+                                ("message", &r.progress.item().map(|i| i.0).unwrap_or_default()),
+                                ("percent", &(done.saturating_mul(100) / total.max(1)).to_string()),
+                            ],
+                        ),
                         (_, Some(("reading", d, t))) => {
                             solidcraft_ui_text::format("file_load.reading_percent", &[("percent", &(d * 100 / t.max(1)).to_string())])
                         }
@@ -1906,8 +1987,12 @@ mod tests {
     }
 
     fn completed_open(app: &mut SolveApp, request: Request, session: Session) {
+        completed_open_with_result(app, request, session, json!({"loaded": true}));
+    }
+
+    fn completed_open_with_result(app: &mut SolveApp, request: Request, session: Session, result: Value) {
         let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(Ok(Made { session, result: json!({"loaded": true}), thumbnail: false })).unwrap();
+        tx.send(Ok(Made { session, result, thumbnail: false })).unwrap();
         app.file_load.running = Some(Running {
             request,
             base: app.session.doc.clone(),
@@ -1924,6 +2009,108 @@ mod tests {
             ready: None,
             sketch: None,
         });
+    }
+
+    #[test]
+    fn plugin_import_completion_returns_losses_without_opening_a_programmatic_report() {
+        let result = json!({"path":"part.sample","format":"sample.read","loss_report":{"counts":{"bodies_read":1},"items":[{"item":"Body 1","code":"material-skipped","message":"Material unavailable"}]}});
+        for programmatic in [true, false] {
+            let mut h = crate::scenario::Harness::new();
+            let mut imported = Session::default();
+            imported.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+            let mut request = Request::new("part.sample", Kind::Open);
+            request.plugin_import = true;
+            request.options.insert("format".into(), json!("sample.read"));
+            let (tx, rx) = std::sync::mpsc::channel();
+            if programmatic {
+                request.reply = Some(tx);
+            }
+            completed_open_with_result(&mut h.app, request, imported, result.clone());
+            tick(&mut h.app, &h.ctx);
+            h.frames(3);
+            assert_eq!(h.widget("Import loss report").is_some(), !programmatic);
+            if programmatic {
+                let reply = rx.try_recv().unwrap();
+                assert_eq!(reply["ok"], true, "{reply}");
+                assert_eq!(reply["result"], result, "the complete structured report is returned unchanged");
+            }
+        }
+    }
+
+    #[test]
+    fn plugin_import_for_step_extension_omits_native_history_folder_options() {
+        let mut app = SolveApp::new(Session::default(), Default::default());
+        app.preferences.history_bar_groups = true;
+        let (started, _started_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        app.file_load.worker_gate = Some((started, release_rx));
+        let mut request = Request::new("part.step", Kind::Open);
+        request.options = serde_json::from_value(json!({"format":"sample.read","approval":"hash","options":{}})).unwrap();
+        begin_request(&mut app, request).unwrap();
+        let request = &app.file_load.running.as_ref().unwrap().request;
+        assert_eq!(request.command().0, "file.import");
+        assert!(!request.command().1.as_object().unwrap().contains_key("folder"));
+        app.file_load.cancel_running();
+        release.send(()).unwrap();
+    }
+
+    #[test]
+    fn plugin_file_requests_keep_format_options_and_exports_publish_without_adoption() {
+        let mut import = Request::new("part.sample", Kind::Open);
+        import.options = serde_json::from_value(json!({"format":"sample.read","approval":"hash","options":{"assembly":true}})).unwrap();
+        assert_eq!(
+            import.command(),
+            ("file.import", json!({"path":"part.sample","format":"sample.read","approval":"hash","options":{"assembly":true}}))
+        );
+        let mut export = Request::new("part.sample", Kind::ExportPlugin);
+        export.options = serde_json::from_value(json!({"format":"sample.write","approval":"hash"})).unwrap();
+        assert_eq!(export.command().0, "file.export");
+        assert_eq!(export.command().1["path"], "part.sample");
+        assert!(export.exports());
+        let mut extension_only = Request::new("part.step", Kind::Open);
+        extension_only.plugin_import = true;
+        extension_only.options.insert("approval".into(), json!("hash"));
+        assert_eq!(extension_only.command(), ("file.import", json!({"path":"part.step","approval":"hash"})));
+        let mut native = Request::new("part.step", Kind::Open);
+        native.options.insert("format".into(), Value::Null);
+        assert_eq!(native.command().0, "doc.open");
+        assert!(!crate::plugins::is_runtime_request("doc.open", &native.command().1));
+    }
+
+    #[test]
+    fn cancelling_a_plugin_import_discards_a_completed_scratch_without_opening_a_design() {
+        let ctx = egui::Context::default();
+        let mut app = SolveApp::new(Session::default(), Default::default());
+        let before = app.session.doc.to_json();
+        let mut imported = Session::default();
+        imported.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        let mut request = Request::new("part.sample", Kind::Open);
+        request.options.insert("format".into(), json!("sample.read"));
+        completed_open(&mut app, request, imported);
+        app.file_load.cancel_running();
+        tick(&mut app, &ctx);
+        assert_eq!(app.session.doc.to_json(), before);
+        assert_eq!(app.docs.count(), 1);
+        assert!(app.file_load.idle());
+    }
+
+    #[test]
+    fn changed_plugin_limits_discard_a_finished_import_before_adoption() {
+        let ctx = egui::Context::default();
+        let mut app = SolveApp::new(Session::default(), Default::default());
+        let before = app.session.doc.to_json();
+        let mut imported = Session::default();
+        imported.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        let mut request = Request::new("part.sample", Kind::Open);
+        request.options.insert("format".into(), json!("sample.read"));
+        request.plugin_policy =
+            Some(PluginPolicy { disabled: app.preferences.disabled_plugins.clone(), limits: crate::plugins::host_limits(&app.preferences) });
+        completed_open(&mut app, request, imported);
+        app.preferences.plugin_max_memory_mib = app.preferences.plugin_max_memory_mib.saturating_add(1);
+        tick(&mut app, &ctx);
+        assert_eq!(app.session.doc.to_json(), before);
+        assert_eq!(app.docs.count(), 1);
+        assert!(app.file_load.idle());
     }
 
     /// An Open says which design it brought in, by the name its tab shows, and whether it took

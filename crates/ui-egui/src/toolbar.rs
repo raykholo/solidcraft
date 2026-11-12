@@ -420,9 +420,12 @@ fn file_menu(app: &mut SolveApp, ctx: &egui::Context) {
     if !ctx.data(|d| d.get_temp::<bool>(id).unwrap_or(false)) {
         return;
     }
+    let just_opened = ctx.data(|d| d.get_temp::<u64>(egui::Id::unique("sc_file_menu_opened"))) == Some(ctx.cumulative_pass_nr());
+    if just_opened || crate::plugins::formats_loading(app) {
+        crate::plugins::refresh_formats(app, ctx);
+    }
     let rows = file_rows(app);
     let at = pos2(ctx.data(|d| d.get_temp::<f32>(egui::Id::unique("sc_file_menu_x"))).unwrap_or(100.0), APP_BAR_HEIGHT);
-    let just_opened = ctx.data(|d| d.get_temp::<u64>(egui::Id::unique("sc_file_menu_opened"))) == Some(ctx.cumulative_pass_nr());
     let out = app_bar::file_menu(ctx, &rows, at, egui::Id::unique("sc_file_area"), just_opened);
     if let Some(chosen) = out.chosen {
         run_file_row(app, &chosen);
@@ -459,6 +462,12 @@ fn file_rows(app: &SolveApp) -> Vec<app_bar::FileRow> {
     recent.push(FileRow::Separator);
     recent.push(button("clear_recent", app.tr("ui.clear_recent"), "delete", None));
     rows.push(FileRow::Sub { label: app.tr("ui.open_recent").to_string(), rows: recent });
+    let plugin_imports = plugin_format_rows(app, false, true);
+    if !plugin_imports.is_empty() {
+        let mut imports = vec![row("import_builtin", app.tr("plugin_io.builtin_import"), "", "import", true), FileRow::Separator];
+        imports.extend(plugin_imports);
+        rows.push(FileRow::Sub { label: app.tr("plugin_io.import_menu").to_string(), rows: imports });
+    }
     rows.push(row("file.insert_step", &format!("{}…", app.tr_label("Insert STEP")), "", "import", shown));
     rows.push(row("file.insert_mesh", &format!("{}…", app.tr_label("Insert Mesh")), "", "import", shown));
     rows.push(row("pointcloud.insert", &format!("{}…", app.tr_label("Insert Point Cloud")), "", "import", shown));
@@ -478,6 +487,7 @@ fn file_rows(app: &SolveApp) -> Vec<app_bar::FileRow> {
     rows.push(FileRow::Separator);
     // Each format's item runs its own command, so it shows that command's key.
     let key = |id: &str| crate::keymap::effective(app, id).unwrap_or_default();
+    let export_start = rows.len();
     rows.push(row("file.export_stl", app.tr_label("Export STL…"), &key("file.export_stl"), "mesh_export", shown));
     rows.push(row("file.export_3mf", app.tr_label("Export 3MF…"), &key("file.export_3mf"), "mesh_export", shown));
     rows.push(row("file.send_to_slicer", app.tr("cmd.file_send_to_slicer"), "", "mesh_export", shown && crate::dialogs_save_mesh::available(app)));
@@ -487,6 +497,13 @@ fn file_rows(app: &SolveApp) -> Vec<app_bar::FileRow> {
     rows.push(row("export_glb", &format!("{}…", app.tr("ui.export_glb")), "", "export", shown));
     rows.push(row("file.export_urdf", app.tr_label("Export URDF…"), &key("file.export_urdf"), "export", shown));
     rows.push(row("export_json", app.tr_label("Export Design as JSON…"), "", "export", true));
+    let plugin_exports = plugin_format_rows(app, true, shown);
+    if !plugin_exports.is_empty() {
+        let mut exports: Vec<FileRow> = rows[export_start..].to_vec();
+        exports.push(FileRow::Separator);
+        exports.extend(plugin_exports);
+        rows.push(FileRow::Sub { label: app.tr("plugin_io.export_menu").to_string(), rows: exports });
+    }
     rows.push(FileRow::Separator);
     rows.push(row("document.metadata", &format!("{}…", app.tr_label("Design Properties")), "", "settings", shown));
     rows.push(FileRow::Separator);
@@ -500,8 +517,34 @@ fn file_rows(app: &SolveApp) -> Vec<app_bar::FileRow> {
     rows
 }
 
+fn plugin_format_rows(app: &SolveApp, export: bool, enabled: bool) -> Vec<app_bar::FileRow> {
+    let kind = if export { solidcraft_engine::plugin::EntryKind::Exporter } else { solidcraft_engine::plugin::EntryKind::Importer };
+    app.plugin_io
+        .formats
+        .iter()
+        .filter(|(k, f)| *k == kind && crate::plugins::enabled(app, &f.plugin_id))
+        .map(|(_, f)| {
+            app_bar::FileRow::Item(app_bar::FileItem {
+                id: format!("plugin_{}:{}", if export { "export" } else { "import" }, f.id),
+                label: format!("{} (.{})…", f.name, f.extensions.join(", .")),
+                key: String::new(),
+                icon: if export { "export" } else { "import" }.into(),
+                enabled,
+            })
+        })
+        .collect()
+}
+
 /// Runs the File menu's row `id` ([`file_rows`]).
 fn run_file_row(app: &mut SolveApp, id: &str) {
+    if let Some(format) = id.strip_prefix("plugin_import:") {
+        crate::plugins::choose_format(app, format, false);
+        return;
+    }
+    if let Some(format) = id.strip_prefix("plugin_export:") {
+        crate::plugins::choose_format(app, format, true);
+        return;
+    }
     if let Some(i) = id.strip_prefix("recent:").and_then(|i| i.parse::<usize>().ok()) {
         if let Some(path) = app.home.recent.get(i).cloned() {
             FileAction::OpenRecent(path).run(app);
@@ -511,6 +554,11 @@ fn run_file_row(app: &mut SolveApp, id: &str) {
     match id {
         "new" => FileAction::New.run(app),
         "open" => FileAction::Open.run(app),
+        "import_builtin" => app.pick_open_for(&["step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb", "dxf", "svg"], |app, path| {
+            if let Some(path) = path {
+                app.open_path_async(&path);
+            }
+        }),
         "clear_recent" => FileAction::ClearRecent.run(app),
         "file.insert_step" => FileAction::Command("file.insert_step").run(app),
         "file.insert_mesh" => FileAction::Command("file.insert_mesh").run(app),
@@ -2830,6 +2878,54 @@ mod header_report_tests {
         assert!(h.dir.join("Exported copy.json").is_file());
         h.app.run("file.save", json!({})).unwrap();
         assert!(!solidcraft_engine::io::is_design_container(&std::fs::read(saved).unwrap()), "subsequent Save keeps a .json choice");
+    }
+
+    #[test]
+    fn plugin_file_menu_routes_import_and_export_extensions_beside_builtins() {
+        use solidcraft_engine::plugin::{EntryKind, PluginFormat};
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        for (kind, entry) in [(EntryKind::Importer, "read"), (EntryKind::Exporter, "write")] {
+            h.app.plugin_io.formats.push((
+                kind,
+                PluginFormat {
+                    id: format!("sample.{entry}"),
+                    plugin_id: "sample".into(),
+                    entry: entry.into(),
+                    name: "Sample".into(),
+                    extensions: vec!["abc".into(), "xyz".into()],
+                    approval: "hash".into(),
+                    input_schema: json!({"type":"object"}),
+                    permissions: Default::default(),
+                },
+            ));
+        }
+        let rows = file_rows(&h.app);
+        let sub = |label: &str| {
+            rows.iter()
+                .find_map(|row| match row {
+                    app_bar::FileRow::Sub { label: name, rows } if name == label => Some(rows),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        let ids = |rows: &[app_bar::FileRow]| {
+            rows.iter()
+                .filter_map(|r| match r {
+                    app_bar::FileRow::Item(item) => Some((item.id.clone(), item.label.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let imports = ids(sub("Import"));
+        assert!(imports.iter().any(|(id, _)| id == "import_builtin"));
+        assert!(imports.iter().any(|(id, label)| id == "plugin_import:sample.read" && label.contains(".abc, .xyz")));
+        let exports = ids(sub("Export"));
+        assert!(exports.iter().any(|(id, _)| id == "file.export_step"));
+        assert!(exports.iter().any(|(id, _)| id == "plugin_export:sample.write"));
+        h.app.preferences.disabled_plugins.insert("sample".into());
+        assert!(plugin_format_rows(&h.app, false, true).is_empty());
+        assert!(plugin_format_rows(&h.app, true, true).is_empty());
     }
 
     /// File › Export STL… and Export 3MF… both open the Save as mesh dialog with their format

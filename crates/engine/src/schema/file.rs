@@ -110,13 +110,20 @@ pub struct ExportUrdfParams {
 #[derive(Debug, JsonSchema)]
 #[schemars(deny_unknown_fields, transform = export_required)]
 pub struct ExportParams {
+    /// Exact reviewed plugin.inspect hash when exporting through a plugin.
+    #[serde(default)]
+    pub approval: Option<String>,
+    /// Plugin exporter options checked against its declared schema.
+    #[serde(default)]
+    pub options: Option<Value>,
     // `path` is optional in the type and required in the schema: left out, the handler refuses it
     // with its own message.
     /// The file to write.
     #[serde(default)]
     pub path: Option<String>,
-    /// The format: stl, stla, obj, step, 3mf, 3mf-tagged, glb, urdf or json, or a file name whose
-    /// extension names it. Default: from the path's extension.
+    /// The format: an installed plugin.entry exporter id, stl, stla, obj, step, 3mf,
+    /// 3mf-tagged, glb, urdf or json, or a file name whose extension names it.
+    /// Default: from the path's extension (built-in formats take precedence).
     #[serde(default)]
     pub format: Option<String>,
     /// The bodies to export, by name. Default: every body. Design JSON and URDF export the
@@ -179,8 +186,18 @@ fn names<E: serde::de::Error>(m: &Map<String, Value>) -> Result<Option<StringLis
 impl<'de> Deserialize<'de> for ExportParams {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let m = Map::<String, Value>::deserialize(d)?;
-        let mut out =
-            ExportParams { path: None, format: None, bodies: None, quality: None, objects: None, mesh_prefix: None, effort: None, velocity: None };
+        let mut out = ExportParams {
+            approval: None,
+            options: None,
+            path: None,
+            format: None,
+            bodies: None,
+            quality: None,
+            objects: None,
+            mesh_prefix: None,
+            effort: None,
+            velocity: None,
+        };
         // The handler reads `path` first and refuses anything but a name it can write to; the
         // other keys are read only once it has one, and the format is known.
         out.path = match m.get("path") {
@@ -189,6 +206,8 @@ impl<'de> Deserialize<'de> for ExportParams {
             Some(_) => return Err(refuse::<D::Error>("`path` is required")),
         };
         out.format = text::<D::Error>(&m, "format")?;
+        out.approval = text::<D::Error>(&m, "approval")?;
+        out.options = m.get("options").cloned();
         let Some(format) = out.format.as_deref().or(out.path.as_deref()).and_then(|n| Format::from_name(n).ok()) else {
             // The handler refuses a format it does not know before it reads anything else.
             return Ok(out);
@@ -412,6 +431,15 @@ impl JsonSchema for MaxPoints {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct OpenParams {
+    /// Namespaced plugin importer id, when opening through an installed plugin.
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Exact reviewed plugin.inspect hash for a plugin importer.
+    #[serde(default)]
+    pub approval: Option<String>,
+    /// Plugin importer options checked against its declared schema.
+    #[serde(default)]
+    pub options: Option<Value>,
     /// The file to open; the kind of file is read from its extension.
     pub path: OpenPath,
     /// For a STEP, IGES, FreeCAD, Rhino or glTF file only (refused for any other): which way is up
@@ -605,6 +633,8 @@ pub struct OpenedFile {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum OpenResult {
+    /// A plugin importer opens a new unsaved design and reports conversion losses.
+    Plugin(crate::schema::plugin::ImportResult),
     /// A SolidCraft design.
     Design(OpenedDesign),
     /// A `.dxf` or `.svg` drawing.
@@ -730,6 +760,8 @@ pub struct RecoveryDiscardResult {
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum FileExportResult {
+    /// A plugin exporter writes its declared format.
+    Plugin(crate::schema::plugin::ExportResult),
     /// STL, OBJ, STEP, 3MF, GLB or design JSON.
     File(ExportResult),
     /// URDF.

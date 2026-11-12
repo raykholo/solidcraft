@@ -13,6 +13,35 @@ use serde::Deserialize;
 use crate::SolveApp;
 use crate::ui_kit::BackingTooltipExt as _;
 
+/// Identify external-code requests using only command data; never scan packages on the window.
+pub(crate) fn is_runtime_request(id: &str, params: &serde_json::Value) -> bool {
+    let id = solidcraft_engine::find_command(id).map_or(id, |spec| spec.id);
+    let path = params.get("path").and_then(serde_json::Value::as_str);
+    match id {
+        "plugin.run" | "file.import" => true,
+        "file.export" => {
+            ["approval", "options"].iter().any(|key| params.get(*key).is_some_and(|value| !value.is_null()))
+                || params
+                    .get("format")
+                    .and_then(serde_json::Value::as_str)
+                    .or(path)
+                    .is_some_and(|format| solidcraft_engine::io::Format::from_name(format).is_err())
+        }
+        "doc.open" => {
+            params.get("approval").is_some()
+                || params.get("format").and_then(serde_json::Value::as_str).is_some()
+                || path.is_some_and(|path| {
+                    !solidcraft_engine::io::is_design_path(path)
+                        && !solidcraft_engine::io::is_step_path(path)
+                        && !solidcraft_engine::io::is_mesh_path(path)
+                        && !solidcraft_engine::io::is_point_cloud_path(path)
+                        && solidcraft_engine::cmd::drawing_import_command(path).is_none()
+                })
+        }
+        _ => false,
+    }
+}
+
 /// Route namespaced entries through the existing approval gate and dedicated transaction worker.
 pub(crate) fn normalize_request(session: &solidcraft_engine::Session, method: &str, params: &mut serde_json::Value) -> Result<(), String> {
     fn normalize(session: &solidcraft_engine::Session, step: &mut serde_json::Value) -> Result<(), String> {
@@ -38,6 +67,264 @@ pub(crate) fn normalize_request(session: &solidcraft_engine::Session, method: &s
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+type FormatList = Vec<(solidcraft_engine::plugin::EntryKind, solidcraft_engine::plugin::PluginFormat)>;
+
+/// The host owns all file-format UI; packages supply data only.
+#[derive(Default)]
+pub struct PluginIo {
+    pub(crate) formats: FormatList,
+    catalogue: Option<std::sync::mpsc::Receiver<FormatList>>,
+    refreshed: Option<std::time::Instant>,
+    pending: Option<FormatPrompt>,
+    report: Option<serde_json::Value>,
+}
+
+struct FormatPrompt {
+    format: solidcraft_engine::plugin::PluginFormat,
+    export: bool,
+    options: String,
+    error: Option<String>,
+    siblings: bool,
+    fields: std::collections::BTreeMap<String, String>,
+}
+
+/// Discover packages beside the window. Even a large component is never read on the UI thread.
+pub(crate) fn formats_loading(app: &SolveApp) -> bool {
+    app.plugin_io.catalogue.is_some()
+}
+
+pub(crate) fn refresh_formats(app: &mut SolveApp, ctx: &egui::Context) {
+    sync_policy(app);
+    if let Some(rx) = &app.plugin_io.catalogue {
+        match rx.try_recv() {
+            Ok(formats) => {
+                app.plugin_io.formats = formats;
+                app.plugin_io.catalogue = None;
+                app.plugin_io.refreshed = Some(std::time::Instant::now());
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                app.plugin_io.catalogue = None;
+                app.plugin_io.refreshed = Some(std::time::Instant::now());
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(50)),
+        }
+        return;
+    }
+    if cfg!(target_arch = "wasm32") || app.plugin_io.refreshed.is_some_and(|t| t.elapsed().as_secs() < 3) {
+        return;
+    }
+    let mut session = solidcraft_engine::Session::default();
+    session.plugin_state = app.session.plugin_state.clone();
+    session.disabled_plugins = app.session.disabled_plugins.clone();
+    session.plugin_limits = app.session.plugin_limits;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let repaint = ctx.clone();
+    let spawned = std::thread::Builder::new().name("plugin-formats".into()).spawn(move || {
+        let mut formats = Vec::new();
+        for kind in [solidcraft_engine::plugin::EntryKind::Importer, solidcraft_engine::plugin::EntryKind::Exporter] {
+            formats.extend(solidcraft_engine::plugin::formats(&session, kind).into_iter().map(|format| (kind, format)));
+        }
+        let _ = tx.send(formats);
+        repaint.request_repaint();
+    });
+    if spawned.is_ok() {
+        app.plugin_io.catalogue = Some(rx);
+    } else {
+        app.plugin_io.refreshed = Some(std::time::Instant::now());
+    }
+}
+
+/// A menu click opens a host approval form. Programmatic commands never call this path.
+pub(crate) fn choose_format(app: &mut SolveApp, id: &str, export: bool) {
+    let action = if export { crate::toolbar::FileAction::Command("file.export") } else { crate::toolbar::FileAction::Open };
+    if !action.enabled(app) || app.plugin_io.pending.is_some() {
+        return;
+    }
+    let kind = if export { solidcraft_engine::plugin::EntryKind::Exporter } else { solidcraft_engine::plugin::EntryKind::Importer };
+    let Some((_, format)) = app.plugin_io.formats.iter().find(|(k, f)| *k == kind && f.id == id) else { return };
+    if !enabled(app, &format.plugin_id) {
+        return;
+    }
+    app.plugin_io.pending =
+        Some(FormatPrompt { format: format.clone(), export, options: "{}".into(), error: None, siblings: false, fields: Default::default() });
+}
+
+fn pick_format(app: &mut SolveApp, prompt: FormatPrompt, options: serde_json::Value) {
+    let extensions: Vec<&str> = prompt.format.extensions.iter().map(String::as_str).collect();
+    let params = serde_json::json!({"format": prompt.format.id, "approval": prompt.format.approval, "options": options});
+    let export = prompt.export;
+    let sibling_names: Vec<String> =
+        if prompt.siblings { prompt.format.permissions.files.iter().filter(|p| p.read).map(|p| p.name.clone()).collect() } else { Vec::new() };
+    let complete = move |app: &mut SolveApp, path: Option<String>| {
+        let Some(path) = path else { return };
+        sync_policy(app);
+        let mut request =
+            crate::file_load::Request::new(&path, if export { crate::file_load::Kind::ExportPlugin } else { crate::file_load::Kind::Open });
+        request.plugin_import = !export;
+        request.options = params.as_object().cloned().unwrap_or_default();
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            request.plugin_grants = sibling_names
+                .iter()
+                .map(|name| solidcraft_engine::plugin::FileGrant { name: name.clone(), folder: parent.to_path_buf(), read: true, write: false })
+                .collect();
+        }
+        let _ = crate::file_load::begin_request(app, request);
+    };
+    if export {
+        let name = format!("{}.{}", app.session.doc.name, extensions.first().copied().unwrap_or("dat"));
+        app.pick_save(&name, &extensions, complete);
+    } else {
+        app.pick_open_for(&extensions, complete);
+    }
+}
+
+pub(crate) fn record_loss_report(app: &mut SolveApp, result: &serde_json::Value) {
+    if let Some(report) = result.get("loss_report").filter(|r| r.is_object()) {
+        app.plugin_io.report = Some(report.clone());
+    }
+}
+
+fn simple_properties(prompt: &FormatPrompt) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    let properties = prompt.format.input_schema.get("properties")?.as_object()?;
+    (properties.len() <= 128
+        && properties
+            .values()
+            .all(|p| matches!(p.get("type").and_then(serde_json::Value::as_str), Some("string" | "number" | "integer" | "boolean"))))
+    .then_some(properties)
+}
+
+fn draw_options(prompt: &mut FormatPrompt, ui: &mut egui::Ui, app: &SolveApp) {
+    let Some(properties) = simple_properties(prompt).cloned() else {
+        if prompt.format.input_schema.get("properties").is_none() && prompt.format.input_schema.get("required").is_none() {
+            return;
+        }
+        crate::ui_kit::text(ui, app.tr("plugin_io.options_schema"), crate::ui_kit::Text::Note("schema"));
+        egui::ScrollArea::vertical().max_height(crate::ui_kit::row_height() * 5.0).show(ui, |ui| {
+            ui.label(prompt.format.input_schema.to_string());
+        });
+        crate::ui_kit::text_row(ui, app.tr("plugin_io.options"), &mut prompt.options, "");
+        return;
+    };
+    for (name, schema) in properties {
+        let label = schema.get("title").and_then(serde_json::Value::as_str).unwrap_or(&name);
+        let text = prompt
+            .fields
+            .entry(name.clone())
+            .or_insert_with(|| schema.get("default").map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).unwrap_or_default());
+        if schema.get("type").and_then(serde_json::Value::as_str) == Some("boolean") {
+            let mut checked = text == "true";
+            if ui.checkbox(&mut checked, label).changed() {
+                *text = checked.to_string();
+            }
+        } else {
+            crate::ui_kit::text_row(ui, label, text, schema.get("description").and_then(serde_json::Value::as_str).unwrap_or_default());
+        }
+    }
+}
+
+fn read_options(prompt: &FormatPrompt) -> Result<serde_json::Value, ()> {
+    let Some(properties) = simple_properties(prompt) else {
+        if prompt.options.len() > solidcraft_engine::plugin::MAX_JSON_BYTES {
+            return Err(());
+        }
+        let value: serde_json::Value = serde_json::from_str(&prompt.options).map_err(|_| ())?;
+        return value.is_object().then_some(value).ok_or(());
+    };
+    let mut options = serde_json::Map::new();
+    for (name, schema) in properties {
+        let required = prompt
+            .format
+            .input_schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|a| a.iter().any(|v| v.as_str() == Some(name)));
+        let value = prompt.fields.get(name).map(String::as_str).unwrap_or_default();
+        if value.is_empty() && !required {
+            continue;
+        }
+        let value = match schema.get("type").and_then(serde_json::Value::as_str) {
+            Some("string") => serde_json::Value::String(value.into()),
+            Some("boolean") => serde_json::Value::Bool(value == "true"),
+            Some("integer") => {
+                value.parse::<i64>().map(serde_json::Value::from).or_else(|_| value.parse::<u64>().map(serde_json::Value::from)).map_err(|_| ())?
+            }
+            Some("number") => serde_json::Number::from_f64(value.parse::<f64>().map_err(|_| ())?).map(serde_json::Value::Number).ok_or(())?,
+            _ => return Err(()),
+        };
+        options.insert(name.clone(), value);
+    }
+    let value = serde_json::Value::Object(options);
+    if value.to_string().len() > solidcraft_engine::plugin::MAX_JSON_BYTES {
+        return Err(());
+    }
+    Ok(value)
+}
+
+/// Permission review, options and losses use host widgets and the ordinary themed window.
+pub(crate) fn show_file_formats(app: &mut SolveApp, ctx: &egui::Context) {
+    if let Some(mut prompt) = app.plugin_io.pending.take() {
+        let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::unique("plugin_io_approval"), "import", app.tr("plugin_io.approval"))
+            .actions(app.tr("plugin_io.allow_choose"), app.tr("ui.cancel"), None)
+            .show(ctx, true, |ui| {
+                crate::ui_kit::text(ui, &prompt.format.name, crate::ui_kit::Text::Report("format", false));
+                crate::ui_kit::text(ui, app.tr("plugin_io.permission_note"), crate::ui_kit::Text::Note("permissions"));
+                if prompt.format.permissions.clock {
+                    ui.label(app.tr("plugin_io.clock"));
+                }
+                for permission in &prompt.format.permissions.files {
+                    let access = app.tr(if permission.write { "plugin_io.folder_write" } else { "plugin_io.folder_read" });
+                    ui.label(solidcraft_ui_text::format("plugin_io.folder_permission", &[("name", &permission.name), ("access", access)]));
+                }
+                if !prompt.format.permissions.clock && prompt.format.permissions.files.is_empty() {
+                    ui.label(app.tr("plugin_io.no_permissions"));
+                }
+                if !prompt.export && prompt.format.permissions.files.iter().any(|p| p.read) {
+                    ui.checkbox(&mut prompt.siblings, app.tr("plugin_io.siblings"));
+                }
+                draw_options(&mut prompt, ui, app);
+                if let Some(error) = &prompt.error {
+                    crate::ui_kit::text(ui, error, crate::ui_kit::Text::Error("options"));
+                }
+            });
+        if action == crate::ui_kit::Action::Ok {
+            match read_options(&prompt) {
+                Ok(options) => pick_format(app, prompt, options),
+                Err(()) => {
+                    prompt.error = Some(app.tr("plugin_io.options_invalid").to_string());
+                    app.plugin_io.pending = Some(prompt);
+                }
+            }
+        } else if !closed && action != crate::ui_kit::Action::Cancel {
+            app.plugin_io.pending = Some(prompt);
+        }
+    }
+    if let Some(report) = app.plugin_io.report.take() {
+        let (closed, action) = crate::ui_kit::Window::new(egui::Id::unique("plugin_io_report"), "inspect", app.tr("plugin_io.report"))
+            .fields()
+            .actions("", app.tr("ui.close"), None)
+            .show(ctx, true, |ui| {
+                if let Some(counts) = report.get("counts").and_then(serde_json::Value::as_object) {
+                    for (name, count) in counts {
+                        crate::ui_kit::row(ui, name, |ui| crate::ui_kit::text(ui, &count.to_string(), crate::ui_kit::Text::Cell));
+                    }
+                }
+                egui::ScrollArea::vertical().max_height(crate::ui_kit::row_height() * 12.0).show(ui, |ui| {
+                    if let Some(items) = report.get("items").and_then(serde_json::Value::as_array) {
+                        for item in items {
+                            let code = item.get("code").and_then(serde_json::Value::as_str).unwrap_or_default();
+                            let message = item.get("message").and_then(serde_json::Value::as_str).unwrap_or_default();
+                            let name = item.get("item").and_then(serde_json::Value::as_str).unwrap_or_default();
+                            crate::ui_kit::text(ui, &format!("{name} [{code}]: {message}"), crate::ui_kit::Text::Report("loss", false));
+                        }
+                    }
+                });
+            });
+        if !closed && action != crate::ui_kit::Action::Cancel {
+            app.plugin_io.report = Some(report);
+        }
     }
 }
 
@@ -368,6 +655,137 @@ fn plugin_card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugi
 mod tests {
     use super::*;
 
+    fn file_format() -> solidcraft_engine::plugin::PluginFormat {
+        solidcraft_engine::plugin::PluginFormat {
+            id: "sample.read".into(),
+            plugin_id: "sample".into(),
+            entry: "read".into(),
+            name: "Sample format".into(),
+            extensions: vec!["sample".into()],
+            approval: "approved-content-hash".into(),
+            input_schema: serde_json::json!({"type":"object"}),
+            permissions: Default::default(),
+        }
+    }
+
+    #[test]
+    fn plugin_export_classifier_preserves_legacy_filename_formats_and_null_options() {
+        for params in [
+            serde_json::json!({"path":"part.stl","format":"part.stl"}),
+            serde_json::json!({"path":"part.stl","format":"part.stl","approval":null,"options":null}),
+        ] {
+            assert!(!is_runtime_request("file.export", &params));
+        }
+        assert!(is_runtime_request("file.export", &serde_json::json!({"path":"part.stl","format":"sample.stl","approval":"hash"})));
+        assert!(is_runtime_request("file.export", &serde_json::json!({"path":"part.sample","approval":"hash"})));
+        assert!(is_runtime_request("FILE.EXPORT", &serde_json::json!({"path":"part.sample"})));
+    }
+
+    #[test]
+    fn plugin_options_form_keeps_values_typed_and_refuses_nonfinite_numbers() {
+        let mut format = file_format();
+        format.input_schema = serde_json::json!({"type":"object","properties":{"scale":{"type":"number"},"merge":{"type":"boolean"},"label":{"type":"string"},"count":{"type":"integer"}},"required":["scale"]});
+        let mut prompt = FormatPrompt { format, export: false, options: "{}".into(), error: None, siblings: false, fields: Default::default() };
+        prompt.fields.insert("scale".into(), "2.5".into());
+        prompt.fields.insert("merge".into(), "true".into());
+        prompt.fields.insert("count".into(), u64::MAX.to_string());
+        assert_eq!(read_options(&prompt).unwrap(), serde_json::json!({"scale":2.5,"merge":true,"count":u64::MAX}));
+        prompt.fields.insert("scale".into(), "NaN".into());
+        assert!(read_options(&prompt).is_err());
+    }
+
+    #[test]
+    fn plugin_file_format_requires_host_review_before_the_picker() {
+        let mut h = crate::scenario::Harness::new();
+        h.app.plugin_io.formats.push((solidcraft_engine::plugin::EntryKind::Importer, file_format()));
+        choose_format(&mut h.app, "sample.read", false);
+        assert!(h.app.plugin_io.pending.is_some());
+        assert!(h.app.file_picker.is_none(), "permission review precedes file access");
+        h.app.plugin_io.pending = None;
+        h.app.preferences.disabled_plugins.insert("sample".into());
+        choose_format(&mut h.app, "sample.read", false);
+        assert!(h.app.plugin_io.pending.is_none());
+        h.app.preferences.disabled_plugins.clear();
+        h.app.issue_report.draft = Some(crate::issue_report::draft_for(&h.app, None, None));
+        choose_format(&mut h.app, "sample.read", false);
+        assert!(h.app.plugin_io.pending.is_none(), "file actions wait behind the issue report");
+    }
+
+    #[test]
+    fn plugin_file_format_picker_receives_declared_extensions_and_cancel_changes_nothing() {
+        let mut h = crate::scenario::Harness::new();
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let captured = seen.clone();
+        h.app.services.pick_open = Some(Box::new(move |extensions| {
+            *captured.borrow_mut() = extensions.iter().map(|e| e.to_string()).collect::<Vec<_>>();
+            Box::pin(std::future::ready(None))
+        }));
+        let before = h.app.session.doc.to_json();
+        pick_format(
+            &mut h.app,
+            FormatPrompt { format: file_format(), export: false, options: "{}".into(), error: None, siblings: false, fields: Default::default() },
+            serde_json::json!({}),
+        );
+        assert_eq!(*seen.borrow(), ["sample"]);
+        crate::file_picker::tick(&mut h.app, &h.ctx);
+        assert!(h.app.file_picker.is_none());
+        assert!(h.app.file_load.idle());
+        assert_eq!(h.app.session.doc.to_json(), before);
+        assert!(h.app.session.plugin_state.file_grants.is_empty());
+    }
+
+    #[test]
+    fn plugin_loss_report_draws_structured_counts_and_item_messages() {
+        let mut h = crate::scenario::Harness::new();
+        record_loss_report(
+            &mut h.app,
+            &serde_json::json!({"loss_report":{"counts":{"bodies_read":1},"items":[{"item":"Body 1","code":"material-skipped","message":"Material was unavailable"}]}}),
+        );
+        h.frames(3);
+        assert!(h.widget("Import loss report").is_some());
+        assert!(h.widget("Body 1 [material-skipped]: Material was unavailable").is_some());
+        if let Ok(dir) = std::env::var("SOLIDCRAFT_PLUGIN_IO_EVIDENCE") {
+            std::fs::create_dir_all(&dir).unwrap();
+            let ctx = crate::fonts::test_context();
+            let mut textures = std::collections::HashMap::new();
+            for name in ["loss-report", "approval"] {
+                if name == "approval" {
+                    h.app.plugin_io.report = None;
+                    h.app.plugin_io.pending = Some(FormatPrompt {
+                        format: file_format(),
+                        export: false,
+                        options: "{}".into(),
+                        error: None,
+                        siblings: false,
+                        fields: Default::default(),
+                    });
+                }
+                let mut output = egui::FullOutput::default();
+                for _ in 0..3 {
+                    output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0))),
+                            focused: true,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            h.app.logic(ui.ctx());
+                            h.app.ui(ui);
+                        },
+                    );
+                    crate::ui_kit::test_textures_update(&mut textures, &output.textures_delta);
+                    output.textures_delta.clear();
+                }
+                crate::ui_kit::test_raster(&ctx, output.shapes.clone(), output.pixels_per_point, ctx.content_rect(), &textures)
+                    .save(std::path::Path::new(&dir).join(format!("{name}.png")))
+                    .unwrap();
+                let png = std::fs::read(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();
+                let hex: String = png.iter().map(|byte| format!("{byte:02x}")).collect();
+                println!("PLUGIN_IO_EVIDENCE {name} {hex}");
+            }
+        }
+    }
+
     fn page_frame(app: &mut SolveApp, ctx: &egui::Context, dir: &Path, events: Vec<egui::Event>) {
         crate::scenario::clear_handles();
         let mut output = crate::test_support::frame(
@@ -597,7 +1015,7 @@ mod tests {
         assert_eq!(plugins.len(), 1);
         assert_eq!(plugins[0].id, "ftc-frc-parts");
         assert_eq!(plugins[0].name, "FTC and FRC parts");
-        assert!(skipped.iter().any(|s| s.folder == "broken" && s.reason.contains("does not match")));
+        assert!(skipped.iter().any(|s| s.folder == "broken" && s.reason.contains("id") && s.reason.contains("package folder")), "{skipped:?}");
         assert!(skipped.iter().any(|s| s.folder == "notes" && s.reason.contains("no plugin.json")));
         let _ = std::fs::remove_dir_all(&dir);
     }

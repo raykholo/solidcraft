@@ -413,6 +413,325 @@ mod native {
         assert_eq!(s.doc.to_json(), before);
         assert!(s.undo.is_empty());
     }
+    fn format_component(code: &str, report: &Value) -> Vec<u8> {
+        let (package, version) = API.split_once('@').unwrap();
+        let template = include_str!("fixture.wat").replace("__PACKAGE__", package).replace("__VERSION__", version);
+        let (types, _) = template.split_once(&format!("  (type $ty-{package}/engine@{version}")).unwrap();
+        let text = report.to_string();
+        let data: String = text.as_bytes().iter().map(|byte| format!("\\{byte:02x}")).collect();
+        let length = text.len();
+        let source = format!(
+            r#"{types}
+(type $engine-type (instance
+  (alias outer 1 $json (type $json)) (export "json" (type (eq $json)))
+  (alias outer 1 $plugin-error (type $error)) (export "plugin-error" (type (eq $error)))
+  (type $result (result $json (error $error)))
+  (export "run" (func (param "command" string) (param "args" $json) (result $result)))
+))
+(import "{package}/engine@{version}" (instance $engine (type $engine-type)))
+(type $io-type (instance
+  (alias outer 1 $plugin-error (type $error)) (export "plugin-error" (type (eq $error)))
+  (export "input-name" (func (result string)))
+  (export "read-input" (func (param "max-bytes" u32) (result (result (list u8) (error $error)))))
+  (export "write-output" (func (param "data" (list u8)) (result (result (error $error)))))
+))
+(import "{package}/io@{version}" (instance $io (type $io-type)))
+(alias export $engine "run" (func $run))
+(alias export $io "input-name" (func $name))
+(alias export $io "read-input" (func $read))
+(alias export $io "write-output" (func $write))
+(core module $allocation
+  (memory (export "memory") 3)
+  (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 65536)
+)
+(core instance $allocation (instantiate $allocation))
+(alias core export $allocation "memory" (core memory $memory))
+(alias core export $allocation "realloc" (core func $realloc))
+(core func $run (canon lower (func $run) (memory $memory) (realloc $realloc)))
+(core func $name (canon lower (func $name) (memory $memory) (realloc $realloc)))
+(core func $read (canon lower (func $read) (memory $memory) (realloc $realloc)))
+(core func $write (canon lower (func $write) (memory $memory) (realloc $realloc)))
+(core instance $imports
+  (export "run" (func $run)) (export "name" (func $name))
+  (export "read" (func $read)) (export "write" (func $write)) (export "memory" (memory $memory))
+)
+(core module $main
+  (import "host" "run" (func $run (param i32 i32 i32 i32 i32)))
+  (import "host" "name" (func $name (param i32)))
+  (import "host" "read" (func $read (param i32 i32)))
+  (import "host" "write" (func $write (param i32 i32 i32)))
+  (import "host" "memory" (memory 3))
+  (data (i32.const 512) "solid.box")
+  (data (i32.const 544) "model.mesh")
+  (data (i32.const 1024) "{{\22length\22:2,\22width\22:3,\22height\22:4}}")
+  (data (i32.const 2048) "{data}")
+  (data (i32.const 4096) "exported bytes")
+  (func $body i32.const 512 i32.const 9 i32.const 1024 i32.const 33 i32.const 256 call $run)
+  (func (export "execute") (param i32 i32 i32 i32) (result i32)
+    (local $count i32)
+    {code}
+    i32.const 0 i32.const 0 i32.store
+    i32.const 4 i32.const 2048 i32.store
+    i32.const 8 i32.const {length} i32.store
+    i32.const 0
+  )
+)
+(core instance $main (instantiate $main (with "host" (instance $imports))))
+(alias core export $main "execute" (core func $execute))
+(func $execute (param "entry" string) (param "params" $json) (result (result $json (error $plugin-error)))
+  (canon lift (core func $execute) (memory $memory) (realloc $realloc)))
+(instance $command (export "json" (type $json)) (export "plugin-error" (type $plugin-error)) (export "execute" (func $execute)))
+(export "{package}/command@{version}" (instance $command))
+)"#
+        );
+        wat::parse_str(source).unwrap()
+    }
+
+    fn importer_fixture(code: &str) -> Fixture {
+        let f = Fixture::new("call $box");
+        let mut m = manifest();
+        m["runtime"]["entries"] = json!([{"name":"make","kind":"importer","extensions":["sample"],"input_schema":{"type":"object"}}]);
+        m["runtime"]["commands"] = json!(["solid.box", "component.activate", "component.create"]);
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let report = r#"{"counts":{"bodies":1,"losses":1},"items":[{"item":"Body1","code":"colour-omitted","message":"Colour was omitted"}]}"#;
+        let bytes: String = report.bytes().map(|b| format!("\\{b:02x}")).collect();
+        let code =
+            format!("{code} i32.const 0 i32.const 0 i32.store i32.const 4 i32.const 3000 i32.store i32.const 8 i32.const {} i32.store", report.len());
+        let template = component_template().replacen("      call $box\n      call $box\n", &format!("      {code}\n"), 1).replacen(
+            "    (data (;2;)",
+            &format!("    (data (i32.const 3000) \"{bytes}\")\n    (data (;2;)"),
+            1,
+        );
+        let template = template
+            .replace("\"file.export\"", "\"component.activate\"")
+            .replace(
+                "    (func $execute",
+                "    (func $root (type 2) i32.const 2048 i32.const 18 i32.const 3500 i32.const 15 i32.const 0 call $run)\n    (func $execute",
+            )
+            .replace(
+                "    (data (;2;)",
+                r#"    (data (i32.const 3500) "{\22component\22:0}")
+    (data (;2;)"#,
+            );
+        let template = template
+            .replace(
+                "    (func $root",
+                "    (func $child (type 2) i32.const 3600 i32.const 16 i32.const 3650 i32.const 16 i32.const 0 call $run)\n    (func $root",
+            )
+            .replace(
+                "    (data (;2;)",
+                r#"    (data (i32.const 3600) "component.create")
+    (data (i32.const 3650) "{\22name\22:\22Child\22}")
+    (data (;2;)"#,
+            );
+        std::fs::write(f.0.join("sample/plugin.wasm"), wat::parse_str(template).unwrap()).unwrap();
+        std::fs::write(f.0.join("part.sample"), b"untrusted input").unwrap();
+        f
+    }
+
+    fn import_args(f: &Fixture, s: &mut Session) -> Value {
+        let inspection = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
+        json!({"path":f.0.join("part.sample").to_string_lossy(),"format":"sample.make","approval":inspection["approval"]})
+    }
+
+    #[test]
+    fn plugin_import_opens_an_unsaved_component_and_returns_structured_losses() {
+        let f = importer_fixture("call $box");
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":10,"width":10,"height":10})).unwrap();
+        let args = import_args(&f, &mut s);
+        s.param_check = crate::schema::ParamCheck::Strict;
+        let result = s.execute("file.import", &args).unwrap();
+        assert_eq!(result["format"], "sample.make");
+        assert_eq!(result["loss_report"]["counts"]["losses"], 1);
+        assert_eq!(result["loss_report"]["items"][0]["code"], "colour-omitted");
+        assert_eq!(s.doc.name, "part");
+        assert!(s.path.is_none());
+        assert!(s.is_dirty());
+        assert!(s.undo.is_empty());
+        let state = s.model.state();
+        assert_eq!(state.bodies.len(), 1);
+        assert_ne!(state.bodies[0].component, 0);
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 24.);
+        assert_eq!(s.doc.features.len(), 1, "the host adds no plugin feature row");
+    }
+
+    #[test]
+    fn plugin_imported_assembly_contents_are_rigid_until_unlocked() {
+        let f = importer_fixture("call $child call $box");
+        let mut s = Session::default();
+        let args = import_args(&f, &mut s);
+        s.execute("file.import", &args).unwrap();
+        let component = s.doc.components.iter().find(|c| c.name == "part").unwrap().id;
+        let child = s.doc.components.iter().find(|c| c.name == "Child").unwrap().id;
+        let occurrence = s.doc.occurrence_of(child).unwrap().id;
+        assert_eq!(s.contents_joints(component).len(), 1);
+        assert!(
+            s.execute("occurrence.move", &json!({"occurrence":occurrence,"translate":[1,0,0]})).unwrap_err().to_string().contains("Unlock Contents")
+        );
+        s.execute("component.unlock", &json!({"component":component})).unwrap();
+        s.execute("occurrence.move", &json!({"occurrence":occurrence,"translate":[1,0,0]})).unwrap();
+    }
+
+    #[test]
+    fn plugin_import_refuses_bodies_outside_the_file_component() {
+        let f = importer_fixture("call $root call $box");
+        let mut s = Session::default();
+        let args = import_args(&f, &mut s);
+        let before = s.doc.to_json();
+        let error = s.execute("file.import", &args).unwrap_err();
+        assert!(matches!(error, EngineError::Plugin(HostError::InvalidInput { ref field, .. }) if field == "design"));
+        assert_eq!(s.doc.to_json(), before);
+        assert!(s.undo.is_empty());
+    }
+
+    #[test]
+    fn plugin_import_cancellation_preserves_the_open_design_and_undo_history() {
+        let f = importer_fixture("call $box");
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":7,"width":8,"height":9})).unwrap();
+        s.path = Some("original.sc".into());
+        let args = import_args(&f, &mut s);
+        let before = s.doc.to_json();
+        let undo = s.undo.len();
+        let progress = std::sync::Arc::new(solidcraft_doc::progress::Progress::default());
+        let cancel = progress.clone();
+        let entered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let seen = entered.clone();
+        s.set_command_check(Some(std::sync::Arc::new(move |id, _, _| {
+            if id == "solid.box" {
+                seen.store(true, Ordering::Relaxed);
+                cancel.cancel();
+            }
+            Ok(())
+        })));
+        let result = solidcraft_doc::progress::watch(progress, || s.execute("file.import", &args));
+        assert!(entered.load(Ordering::Relaxed), "cancellation happened inside the importer");
+        assert!(result.is_err());
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!(s.undo.len(), undo);
+        assert_eq!(s.path.as_deref(), Some("original.sc"));
+    }
+
+    #[test]
+    fn plugin_extension_routing_is_case_insensitive_explicit_and_ignores_disabled_packages() {
+        let f = importer_fixture("call $box");
+        let mut s = Session::default();
+        let args = import_args(&f, &mut s);
+        let commands = s.execute("engine.commands", &json!({})).unwrap();
+        assert!(commands.as_array().unwrap().iter().all(|entry| entry["id"] != "sample.make"));
+        assert!(describe_entry(&s, "sample.make").unwrap().is_none());
+        assert_eq!(resolve_format(&s, EntryKind::Importer, None, "PART.SAMPLE").unwrap().unwrap().id, "sample.make");
+        assert!(resolve_format(&s, EntryKind::Exporter, None, "part.sample").unwrap().is_none());
+        let mut args = args;
+        args.as_object_mut().unwrap().remove("format");
+        s.execute("doc.open", &args).unwrap();
+        assert_eq!(s.model.state().bodies.len(), 1);
+        let mut m = manifest();
+        m["runtime"]["entries"] = json!([
+            {"name":"make","kind":"importer","extensions":["sample"]},
+            {"name":"other","kind":"importer","extensions":["sample"]}
+        ]);
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        assert!(resolve_format(&s, EntryKind::Importer, None, "part.sample").unwrap_err().to_string().contains("multiple"));
+        assert_eq!(resolve_format(&s, EntryKind::Importer, Some("sample.other"), "part.sample").unwrap().unwrap().entry, "other");
+        s.disabled_plugins.insert("sample".into());
+        assert!(formats(&s, EntryKind::Importer).iter().all(|f| f.plugin_id != "sample"));
+    }
+
+    #[test]
+    fn plugin_format_ids_override_extensions_while_native_formats_keep_precedence() {
+        let f = importer_fixture("call $box");
+        let manifest_path = f.0.join("sample/plugin.json");
+        let mut m: Value = serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        m["runtime"]["entries"][0]["extensions"] = json!(["stl"]);
+        std::fs::write(manifest_path, m.to_string()).unwrap();
+        let path = f.0.join("part.stl");
+        std::fs::write(&path, b"invalid STL input").unwrap();
+        let mut s = Session::default();
+        let approval = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap()["approval"].clone();
+        let before = s.doc.to_json();
+        assert!(s.execute("doc.open", &json!({"path":path.to_string_lossy(),"approval":approval})).is_err());
+        assert_eq!(s.doc.to_json(), before);
+        let result = s.execute("doc.open", &json!({"path":path.to_string_lossy(),"format":"sample.make","approval":approval})).unwrap();
+        assert_eq!(result["format"], "sample.make");
+        assert_eq!(s.model.state().bodies.len(), 1);
+    }
+
+    #[test]
+    fn plugin_import_refuses_an_oversized_source_without_opening_a_design() {
+        let f = importer_fixture("call $box");
+        let mut s = Session::default();
+        let args = import_args(&f, &mut s);
+        std::fs::File::options().write(true).open(f.0.join("part.sample")).unwrap().set_len(craft_plugin::MAX_STREAM_BYTES + 1).unwrap();
+        let before = s.doc.to_json();
+        let error = s.execute("file.import", &args).unwrap_err();
+        assert!(matches!(error, EngineError::Plugin(HostError::LimitExceeded { .. })));
+        assert_eq!(s.doc.to_json(), before);
+    }
+
+    #[test]
+    fn plugin_export_stream_is_published_without_editing_the_design() {
+        let f = Fixture::new("");
+        let mut m = manifest();
+        m["runtime"]["entries"] = json!([{"name":"stl","kind":"exporter","extensions":["sample"]}]);
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        std::fs::write(f.0.join("sample/plugin.wasm"), format_component("i32.const 4096 i32.const 14 i32.const 128 call $write", &json!({})))
+            .unwrap();
+        let path = f.0.join("output.sample");
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        let approval = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap()["approval"].clone();
+        let before = s.doc.to_json();
+        let undo = s.undo.len();
+        s.param_check = crate::schema::ParamCheck::Strict;
+        let result = s.execute("file.export", &json!({"path":path.to_string_lossy(),"format":"sample.stl","approval":approval})).unwrap();
+        assert_eq!(result["bytes"], 14);
+        assert_eq!(result["format"], "sample.stl");
+        assert_eq!(std::fs::read(path).unwrap(), b"exported bytes");
+        let routed = s.execute("file.export", &json!({"path":f.0.join("routed.sample").to_string_lossy(),"approval":approval})).unwrap();
+        assert_eq!(routed["format"], "sample.stl");
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!(s.undo.len(), undo);
+    }
+
+    #[test]
+    fn missing_plugin_export_ids_do_not_fall_back_to_native_filename_formats() {
+        let f = Fixture::new("");
+        let path = f.0.join("output.stl");
+        std::fs::write(&path, b"previous complete file").unwrap();
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        let before = s.doc.to_json();
+        for extra in [json!({"approval":"missing"}), json!({"options":{}})] {
+            let mut params = json!({"path":path.to_string_lossy(),"format":"missing-plugin.stl"});
+            params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            let error = s.execute("file.export", &params).unwrap_err();
+            assert!(error.to_string().contains("unknown plugin format"));
+            assert_eq!(std::fs::read(&path).unwrap(), b"previous complete file");
+        }
+        let reply = s.execute("file.export", &json!({"path":path.to_string_lossy(),"format":"part.stl"})).unwrap();
+        assert_eq!(reply["format"], "StlBinary");
+        assert_eq!(std::fs::read(path).unwrap().len(), 684, "a box has12 triangles:84+12*50 bytes");
+        assert_eq!(s.doc.to_json(), before);
+    }
+
+    #[test]
+    fn plugin_export_trap_preserves_the_previous_destination_and_design() {
+        let f = Fixture::new("unreachable");
+        let mut m = manifest();
+        m["runtime"]["entries"] = json!([{"name":"make","kind":"exporter","extensions":["sample"]}]);
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let path = f.0.join("output.sample");
+        std::fs::write(&path, b"previous complete file").unwrap();
+        let mut s = Session::default();
+        let approval = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap()["approval"].clone();
+        let before = s.doc.to_json();
+        assert!(s.execute("file.export", &json!({"path":path.to_string_lossy(),"format":"sample.make","approval":approval})).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"previous complete file");
+        assert_eq!(s.doc.to_json(), before);
+        assert!(s.undo.is_empty());
+    }
 }
 
 #[test]

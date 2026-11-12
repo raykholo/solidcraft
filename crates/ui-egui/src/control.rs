@@ -269,7 +269,7 @@ const MAX_BATCH: usize = 10_000;
 /// Commands that load a file: through `engine.execute` they go to the app's file loader
 /// (`file_load::control`: off the window thread, with progress and Cancel), which a batch would
 /// bypass.
-const LOADS_A_FILE: [&str; 5] = ["doc.open", "file.insert_step", "file.insert_mesh", "pointcloud.insert", "pointcloud.reload"];
+const LOADS_A_FILE: [&str; 6] = ["file.import", "doc.open", "file.insert_step", "file.insert_mesh", "pointcloud.insert", "pointcloud.reload"];
 
 /// Edit in Place, Finish Edit and the next or previous tab go to another design's tab: a batch's
 /// rollback, or a script's later steps, would land in the wrong design.
@@ -288,7 +288,7 @@ fn switches_design(step: &Value) -> Option<&'static str> {
 /// Why `engine.batch` refuses these steps before running any: a step loads a file or switches
 /// to another design (send such steps one by one).
 pub(crate) fn batch_refusal(steps: &[Value]) -> Option<String> {
-    if steps.iter().any(|step| batch_step_command(step).is_some_and(|id| id.eq_ignore_ascii_case("plugin.run"))) {
+    if steps.iter().any(|step| batch_step_command(step).is_some_and(|id| crate::plugins::is_runtime_request(id, &step_params(step)))) {
         return Some(solidcraft_ui_text::tr("ui.plugin_standalone").into());
     }
     if let Some((i, c)) = steps.iter().enumerate().find_map(|(i, step)| switches_design(step).map(|c| (i, c))) {
@@ -414,7 +414,9 @@ fn batch(app: &mut SolveApp, q: params::Batch) -> Outcome {
 /// is a panel command.
 fn script(app: &mut SolveApp, p: &Value) -> Outcome {
     let steps = p.as_array().or_else(|| p.get("commands").and_then(Value::as_array));
-    if steps.is_some_and(|steps| steps.iter().any(|step| batch_step_command(step).is_some_and(|id| id.eq_ignore_ascii_case("plugin.run")))) {
+    if steps.is_some_and(|steps| {
+        steps.iter().any(|step| batch_step_command(step).is_some_and(|id| crate::plugins::is_runtime_request(id, &step_params(step))))
+    }) {
         return err(solidcraft_ui_text::tr("ui.plugin_standalone"));
     }
     let steps = match solidcraft_engine::script_steps(p) {
@@ -2522,6 +2524,25 @@ mod tests {
             Outcome::Screenshot { .. } => panic!("ui.render took a screenshot"),
         }
         std::fs::read(path).unwrap()
+    }
+
+    #[test]
+    fn plugin_file_formats_are_refused_in_batches_and_scripts_before_any_step_runs() {
+        let mut h = crate::scenario::Harness::new();
+        for (id, params) in [
+            ("file.import", json!({"path":"part.sample","format":"sample.read","approval":"hash"})),
+            ("file.export", json!({"path":"part.sample","approval":"hash"})),
+            ("FILE.EXPORT", json!({"path":"part.sample","format":"sample.write","approval":"hash"})),
+            ("doc.open", json!({"path":"part.sample","approval":"hash"})),
+        ] {
+            let steps = vec![json!({"command":"solid.box","params":{}}), json!({"command":id,"params":params})];
+            assert!(batch_refusal(&steps).is_some(), "{id}");
+            let before = h.app.session.doc.to_json();
+            let Outcome::Done(reply) = script(&mut h.app, &json!({"commands":steps})) else { panic!("script needs a reply") };
+            assert_eq!(reply["ok"], false, "{id}: {reply}");
+            assert_eq!(h.app.session.doc.to_json(), before, "{id}: no step ran");
+        }
+        assert!(batch_refusal(&[json!({"command":"file.export","params":{"path":"part.stl","format":"stl"}})]).is_none());
     }
 
     /// `ui.render` draws in the window's theme (#974): its background is the viewport's, light

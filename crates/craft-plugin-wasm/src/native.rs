@@ -1,6 +1,9 @@
-use crate::RuntimeOptions;
+use crate::{IoStreams, RuntimeOptions};
 use cap_std::fs::{Dir, OpenOptions};
-use craft_plugin::{CommandSchema, Effect, HostError, Limits, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, Manifest, PluginHost, Result};
+use craft_plugin::{
+    CommandSchema, Effect, EntryKind, HostError, Limits, LossReport, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, MAX_STREAM_BYTES, MAX_STREAM_CHUNK_BYTES,
+    Manifest, PluginHost, Result,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -19,6 +22,7 @@ mod bindings {
 include!(concat!(env!("OUT_DIR"), "/aliases.rs"));
 
 const MAX_CALLS: usize = 256;
+const MAX_STREAM_CALLS: usize = 4096;
 const MAX_LOG_BYTES: usize = 64 * 1024;
 const EPOCH_POLL: Duration = Duration::from_millis(10);
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
@@ -60,11 +64,16 @@ struct State<H> {
     host: H,
     commands: BTreeMap<String, CommandSchema>,
     effect: Effect,
+    kind: EntryKind,
+    streams: IoStreams,
+    input_bytes: u64,
+    output_bytes: u64,
     folders: BTreeMap<String, Folder>,
     clock: bool,
     limits: StoreLimits,
     failed: Option<HostError>,
     calls: usize,
+    stream_calls: usize,
     log_bytes: usize,
     deadline: Instant,
 }
@@ -73,7 +82,7 @@ impl<H: PluginHost> State<H> {
         self.failed.get_or_insert_with(|| error.clone());
         wit_error(error)
     }
-    fn check(&mut self) -> std::result::Result<(), PluginError> {
+    fn check_limits(&mut self) -> std::result::Result<(), PluginError> {
         if let Some(error) = &self.failed {
             return Err(wit_error(error.clone()));
         }
@@ -83,6 +92,18 @@ impl<H: PluginHost> State<H> {
         if Instant::now() >= self.deadline {
             return Err(self.fail(limit("deadline")));
         }
+        Ok(())
+    }
+    fn check_stream(&mut self) -> std::result::Result<(), PluginError> {
+        self.check_limits()?;
+        self.stream_calls = self.stream_calls.saturating_add(1);
+        if self.stream_calls > MAX_STREAM_CALLS {
+            return Err(self.fail(limit("stream host call count")));
+        }
+        Ok(())
+    }
+    fn check(&mut self) -> std::result::Result<(), PluginError> {
+        self.check_limits()?;
         self.calls = self.calls.saturating_add(1);
         if self.calls > MAX_CALLS {
             return Err(self.fail(limit("host call count")));
@@ -92,7 +113,7 @@ impl<H: PluginHost> State<H> {
     fn file_path(&mut self, grant: &str, path: &str, write: bool) -> std::result::Result<(), PluginError> {
         self.check()?;
         let valid = !path.is_empty() && Path::new(path).components().all(|c| matches!(c, PathComponent::Normal(_)));
-        let granted = self.folders.get(grant).is_some_and(|f| if write { f.write } else { f.read });
+        let granted = (!write || self.kind == EntryKind::Command) && self.folders.get(grant).is_some_and(|f| if write { f.write } else { f.read });
         if !valid || !granted {
             return Err(self.fail(HostError::PermissionDenied { permission: format!("files.{}:{grant}", if write { "write" } else { "read" }) }));
         }
@@ -100,6 +121,57 @@ impl<H: PluginHost> State<H> {
     }
 }
 impl<H: PluginHost> types::Host for State<H> {}
+impl<H: PluginHost> io::Host for State<H> {
+    fn input_name(&mut self) -> String {
+        if self.check_stream().is_err() {
+            return String::new();
+        }
+        match &self.streams.input {
+            Some(input) => input.name.clone(),
+            None => {
+                self.fail(HostError::PermissionDenied { permission: "input stream".into() });
+                String::new()
+            }
+        }
+    }
+    fn read_input(&mut self, max_bytes: u32) -> std::result::Result<Vec<u8>, PluginError> {
+        self.check_stream()?;
+        let size = max_bytes as usize;
+        if size == 0 || size > MAX_STREAM_CHUNK_BYTES {
+            return Err(self.fail(limit("input stream chunk size")));
+        }
+        let Some(input) = self.streams.input.as_mut() else {
+            return Err(self.fail(HostError::PermissionDenied { permission: "input stream".into() }));
+        };
+        // Read one extra byte only when approaching the cap, so an oversized
+        // source is distinguished from an exactly full source followed by EOF.
+        let capacity = size.min(MAX_STREAM_BYTES.saturating_sub(self.input_bytes).saturating_add(1) as usize);
+        let mut bytes = vec![0; capacity];
+        let read = input.reader.read(&mut bytes).map_err(|e| self.fail(trap(format!("input stream read failed: {e}"))))?;
+        self.input_bytes = self.input_bytes.saturating_add(read as u64);
+        if self.input_bytes > MAX_STREAM_BYTES {
+            return Err(self.fail(limit("input stream size")));
+        }
+        bytes.truncate(read);
+        self.check_limits()?;
+        Ok(bytes)
+    }
+    fn write_output(&mut self, data: Vec<u8>) -> std::result::Result<(), PluginError> {
+        self.check_stream()?;
+        if data.len() > MAX_STREAM_CHUNK_BYTES {
+            return Err(self.fail(limit("output stream chunk size")));
+        }
+        self.output_bytes = self.output_bytes.saturating_add(data.len() as u64);
+        if self.output_bytes > MAX_STREAM_BYTES {
+            return Err(self.fail(limit("output stream size")));
+        }
+        let Some(output) = self.streams.output.as_mut() else {
+            return Err(self.fail(HostError::PermissionDenied { permission: "output stream".into() }));
+        };
+        output.write_all(&data).map_err(|e| self.fail(trap(format!("output stream write failed: {e}"))))?;
+        self.check_limits()
+    }
+}
 impl<H: PluginHost> engine::Host for State<H> {
     fn run(&mut self, command: String, args: String) -> std::result::Result<String, PluginError> {
         self.check()?;
@@ -260,6 +332,7 @@ pub(super) fn run<H: PluginHost + 'static>(
     entry: &str,
     params: &Value,
     options: RuntimeOptions,
+    streams: Option<IoStreams>,
 ) -> (H, Result<Value>) {
     let prepared = (|| {
         if bytes.len() > MAX_COMPONENT_BYTES {
@@ -275,6 +348,29 @@ pub(super) fn run<H: PluginHost + 'static>(
             .iter()
             .find(|e| e.name == entry)
             .ok_or_else(|| HostError::InvalidInput { field: "entry".into(), reason: "unknown entry".into() })?;
+        if entry.kind != EntryKind::Command {
+            entry.validate_options(params)?;
+        }
+        let valid_streams = match (entry.kind, streams.as_ref()) {
+            (EntryKind::Command, None) => true,
+            (EntryKind::Importer, Some(streams)) => streams.input.is_some() && streams.output.is_none(),
+            (EntryKind::Exporter, Some(streams)) => streams.input.is_none() && streams.output.is_some(),
+            _ => false,
+        };
+        if !valid_streams {
+            return Err(HostError::InvalidInput {
+                field: "streams".into(),
+                reason: "commands require run; importers require input and exporters require output through run_io".into(),
+            });
+        }
+        if let Some(input) = streams.as_ref().and_then(|streams| streams.input.as_ref())
+            && (input.name.is_empty() || input.name.len() > 1024 || input.name.chars().any(char::is_control))
+        {
+            return Err(HostError::InvalidInput {
+                field: "input_name".into(),
+                reason: "requires a printable file name of at most 1024 bytes".into(),
+            });
+        }
         if !(64 * 1024..=64 * 1024 * 1024).contains(&options.stack_bytes) {
             return Err(HostError::InvalidInput { field: "stack_bytes".into(), reason: "must be 64 KiB..64 MiB".into() });
         }
@@ -305,7 +401,7 @@ pub(super) fn run<H: PluginHost + 'static>(
         Ok(prepared) => prepared,
         Err(error) => return (host, Err(error)),
     };
-    let (mut host, outcome) = execute(host, runtime, entry, params, engine, component, commands, folders);
+    let (mut host, outcome) = execute(host, runtime, entry, params, engine, component, commands, folders, streams.unwrap_or_default());
     let result = (|| match outcome {
         Ok(value) => match host.commit_transaction() {
             Ok(()) => Ok(value),
@@ -332,16 +428,22 @@ fn execute<H: PluginHost + 'static>(
     component: Component,
     commands: BTreeMap<String, CommandSchema>,
     folders: BTreeMap<String, Folder>,
+    streams: IoStreams,
 ) -> (H, Result<Value>) {
     let limits = &runtime.limits;
     let state = State {
         host,
         commands,
         effect: entry.effect,
+        kind: entry.kind,
+        streams,
+        input_bytes: 0,
+        output_bytes: 0,
         folders,
         clock: runtime.permissions.clock,
         failed: None,
         calls: 0,
+        stream_calls: 0,
         log_bytes: 0,
         deadline: Instant::now() + Duration::from_millis(limits.deadline_ms),
         limits: StoreLimitsBuilder::new()
@@ -405,7 +507,18 @@ fn execute<H: PluginHost + 'static>(
         if Instant::now() >= store.data().deadline {
             return Err(limit("deadline"));
         }
-        serde_json::from_str(&text).map_err(|e| HostError::InvalidInput { field: "result".into(), reason: format!("entry result is not JSON: {e}") })
+        let value: Value = serde_json::from_str(&text)
+            .map_err(|e| HostError::InvalidInput { field: "result".into(), reason: format!("entry result is not JSON: {e}") })?;
+        if entry.kind == EntryKind::Importer {
+            let report: LossReport =
+                serde_json::from_value(value.clone()).map_err(|e| HostError::InvalidInput { field: "loss_report".into(), reason: e.to_string() })?;
+            report.validate()?;
+        }
+        if let Some(output) = store.data_mut().streams.output.as_mut() {
+            output.flush().map_err(|e| trap(format!("output stream flush failed: {e}")))?;
+        }
+        store.data_mut().check_limits().map_err(host_error)?;
+        Ok(value)
     })();
     (store.into_data().host, outcome)
 }
