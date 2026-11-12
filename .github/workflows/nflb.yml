@@ -1,0 +1,19 @@
+# No File Left Behind (https://no-file-left-behind.github.io/): checks .nflb.json, SolidCraft's statement
+# of which version of the pattern its "Save changes to N designs?" window meets, and says on the pull
+# request what merging it declares. Optional: the adopters list reads .nflb.json on its own without it.
+name: No File Left Behind
+on:
+  pull_request:
+    paths: [".nflb.json"]
+  push:
+    branches: [main]
+    paths: [".nflb.json"]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  declaration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: no-file-left-behind/adopters@46148a1d1f0ec1687d1f5c5fafc4bb7e18ff8435 # v1.1
