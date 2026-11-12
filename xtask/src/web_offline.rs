@@ -26,6 +26,24 @@ const ON_DEMAND: &[&str] = &["fonts/"];
 /// The version that makes sw.js retire (the template's own).
 const RETIRE_VERSION: &str = "dev";
 
+/// The plugin worker's loader as the app starts it: trunk names its loader by a hash of its
+/// content, so the hook copies it to this fixed name.
+const WORKER_LOADER: &str = "solidcraft-plugin-worker_loader.js";
+
+/// Copy the plugin worker's hashed loader (`solidcraft-plugin-worker-<hash>_loader.js`) to
+/// [`WORKER_LOADER`], where the app looks for it. Nothing to do for a site without one.
+pub fn alias_worker_loader(dir: &Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let found = entries
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n != WORKER_LOADER && n.starts_with("solidcraft-plugin-worker") && n.ends_with("_loader.js"));
+    if let Some(name) = found {
+        std::fs::copy(dir.join(&name), dir.join(WORKER_LOADER)).map_err(|e| format!("{name}: {e}"))?;
+    }
+    Ok(())
+}
+
 pub fn run(root: &Path, dir: Option<&str>) -> Result<(), String> {
     let dir = match dir {
         Some(d) => PathBuf::from(d),
@@ -33,6 +51,7 @@ pub fn run(root: &Path, dir: Option<&str>) -> Result<(), String> {
             let dir = PathBuf::from(
                 std::env::var("TRUNK_STAGING_DIR").map_err(|_| "web-offline: give the built site's directory (or run as Trunk's hook)")?,
             );
+            alias_worker_loader(&dir)?;
             if std::env::var("TRUNK_PROFILE").is_ok_and(|p| p != "release") {
                 retire(root, &dir)?;
                 println!("web-offline: debug build, {SW} retires a kept release build");

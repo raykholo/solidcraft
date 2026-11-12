@@ -16,7 +16,7 @@
 //! placeholder.
 
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use tiny_skia as sk;
 
@@ -195,6 +195,7 @@ pub struct IconSet {
     data: IconData,
     extension: IconExtension,
     table: OnceLock<Table>,
+    dynamic: OnceLock<RwLock<HashMap<&'static str, (u64, &'static Doc)>>>,
 }
 
 /// The parsed masters: full size, and the small-slot variants.
@@ -220,7 +221,31 @@ impl IconSet {
     /// The set over `data` with a host's own masters, aliases and default accents, which take
     /// precedence for a name both have. `data` is not copied: it is the same static tables.
     pub const fn extended(data: IconData, extension: IconExtension) -> Self {
-        Self { data, extension, table: OnceLock::new() }
+        Self { data, extension, table: OnceLock::new(), dynamic: OnceLock::new() }
+    }
+
+    /// Register runtime artwork parsed against this set's colour roles.
+    /// A name and drawing are retained for the lifetime of the set.
+    pub fn register_dynamic(&'static self, name: &str, svg: &str) -> Result<(), String> {
+        use std::hash::{Hash as _, Hasher as _};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        svg.hash(&mut hash);
+        let hash = hash.finish();
+        let mut icons = self.dynamic.get_or_init(|| RwLock::new(HashMap::new())).write().map_err(|_| "icon table unavailable".to_string())?;
+        if icons.get(name).is_some_and(|(h, _)| *h == hash) {
+            return Ok(());
+        }
+        let doc: &'static Doc = Box::leak(Box::new(self.parse(svg)?));
+        let key = match icons.get_key_value(name) {
+            Some((key, _)) => *key,
+            None => Box::leak(name.to_string().into_boxed_str()),
+        };
+        icons.insert(key, (hash, doc));
+        Ok(())
+    }
+
+    fn dynamic_icon(&self, name: &str) -> Option<(&'static str, &'static Doc)> {
+        self.dynamic.get()?.read().ok()?.get_key_value(name).map(|(key, (_, doc))| (*key, *doc))
     }
 
     /// The set's data (without its extension).
@@ -387,6 +412,12 @@ impl IconSet {
     }
 
     fn resolve_master(&'static self, name: &str) -> Resolved {
+        if let Some((master, _)) = self.dynamic_icon(name) {
+            return Resolved { master, accent: None, placeholder: false };
+        }
+        if name.starts_with("plugin:") {
+            return self.resolve_master("play");
+        }
         let big = &self.table().big;
         let placeholder = Resolved { master: PLACEHOLDER, accent: None, placeholder: true };
         let find = |aliases: &'static [(&'static str, &'static str, &'static str)]| aliases.iter().find(|(a, _, _)| *a == name);
@@ -408,6 +439,9 @@ impl IconSet {
     /// The master to draw at `px` pixels: the small-slot variant where one exists, the
     /// placeholder for an unknown master, `None` when the set has neither.
     pub fn doc_for(&'static self, master: &str, px: u32) -> Option<&'static Doc> {
+        if let Some((_, doc)) = self.dynamic_icon(master) {
+            return Some(doc);
+        }
         let Table { big, small } = self.table();
         if let Some(doc) = small.get(master).filter(|_| px <= 24) {
             return Some(doc);

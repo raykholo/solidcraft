@@ -51,6 +51,7 @@ pub mod dialogs_move;
 pub mod dialogs_part_size;
 pub mod dialogs_parts;
 pub mod dialogs_plastic;
+pub mod dialogs_plugin;
 pub mod dialogs_save_mesh;
 pub mod dialogs_sheet;
 pub mod dialogs_surface;
@@ -222,6 +223,7 @@ pub mod params_dialog;
 pub mod personal_sheet_rules;
 pub(crate) mod pick_index;
 pub(crate) mod place_gizmo;
+pub mod plugin_report;
 pub(crate) mod plugins;
 pub mod point_clouds;
 pub mod prefs;
@@ -471,9 +473,27 @@ impl Default for UiState {
     }
 }
 
+/// Read the installed plugins again: the browser host calls it once its storage is loaded.
+pub fn reload_plugins(app: &SolveApp) {
+    plugins::reload(app);
+}
+
+/// What a host's plugin runtime is handed: see [`Services::run_plugin_import`].
+pub type PluginImportHost = Box<
+    dyn Fn(
+        solidcraft_engine::plugin::HostRequest,
+        std::sync::Arc<solidcraft_engine::doc::progress::Progress>,
+        Box<dyn FnOnce(Result<solidcraft_engine::plugin::Imported, String>)>,
+    ),
+>;
+
 /// Host services injected by the app so this crate stays portable.
 #[derive(Default)]
 pub struct Services {
+    /// Run an importer plugin in the host's own plugin runtime (the browser's runs each import in
+    /// a Web Worker): the import, the progress to report to and to watch for Cancel, and what to
+    /// do with its result. None: importers run in the engine (desktop).
+    pub run_plugin_import: Option<PluginImportHost>,
     /// Ask for a file to open. The extensions are the file type the command reads, offered as
     /// the picker's first filter (`&[]`: designs, CAD files and meshes, #1801).
     pub pick_open: Option<Box<dyn Fn(&[&str]) -> FilePickerFuture>>,
@@ -1308,6 +1328,7 @@ impl SolveApp {
         }
         // Before a design given at start opens: its paths follow the network preferences.
         prefs::sync_surface_analysis(self);
+        crate::plugins::sync_policy(self);
         prefs::apply_network(&self.preferences);
         // Before a file given at start opens: the largest file it may be (#4086).
         prefs::apply_file_limits(&self.preferences);
@@ -1342,6 +1363,11 @@ impl SolveApp {
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         if solidcraft_engine::panels::commands::is_command(id) {
             return self.run_panel_command(id, &params).map_err(solidcraft_engine::panels::commands::error_text);
+        }
+        crate::plugins::sync_policy(self);
+        if id == "plugin.run" {
+            let key = if cfg!(target_arch = "wasm32") { "ui.plugins_desktop" } else { "ui.plugin_standalone" };
+            return Err(self.tr(key).into());
         }
         if self.file_load.busy() || self.file_picker.is_some() || self.saving.is_some() {
             return Err("a file operation is in progress".into());
@@ -2144,6 +2170,20 @@ impl SolveApp {
         }
         if id == "component.relink" {
             linked_source::start_selected(self);
+            return;
+        }
+        // A plugin's command: its dialog, drawn from what it declares (an importer's asks for
+        // the file first).
+        if dialogs_plugin::handles(id) {
+            dialogs_plugin::start(self, id);
+            return;
+        }
+        if id == "file.import" {
+            self.pick_open(|app, path| {
+                if let Some(path) = path {
+                    file_load::begin_import(app, &path);
+                }
+            });
             return;
         }
         if id == "file.insert_mesh" {
@@ -3561,6 +3601,7 @@ impl SolveApp {
         }
         issue_report::CadInput::block(self, ui, report_input);
         file_load::show(self, ui.ctx());
+        plugin_report::show(self, ui.ctx());
         open_meshing::show(self, ui.ctx());
         documents::prompt(self, ui.ctx());
         open_elsewhere::show(self, ui.ctx());

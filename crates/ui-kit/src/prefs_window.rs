@@ -84,6 +84,10 @@ pub trait Host: Sized {
     /// Put the settings back (Cancel). An error keeps the window open with the snapshot, and the
     /// next close tries again.
     fn restore(&mut self, snapshot: &Self::Snapshot) -> Result<(), String>;
+    /// Validate and commit draft inputs before OK or Apply accepts them.
+    fn validate_accept(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     /// What Apply does before the settings become the new snapshot, for a setting a running part
     /// of the host takes up only on Apply. An error keeps the old snapshot.
     fn apply(&mut self) -> Result<(), String> {
@@ -177,14 +181,31 @@ pub fn apply_pending<S: Host>(host: &S) -> bool {
     host.window_ref().snapshot.as_ref().is_some_and(|snapshot| !host.matches(snapshot))
 }
 
-/// Do what `button` does, from the footer or from a command. Returns why [`Host::apply`] failed.
+/// Do what `button` does, from the footer or a command. Returns why validation or applying failed.
 pub fn press<S: Host>(host: &mut S, pages: &[Page<S>], button: Button) -> Result<(), String> {
+    press_inner(host, pages, button).map_err(|error| match error {
+        PressError::Validation(reason) | PressError::Apply(reason) => reason,
+    })
+}
+
+enum PressError {
+    Validation(String),
+    Apply(String),
+}
+
+fn press_inner<S: Host>(host: &mut S, pages: &[Page<S>], button: Button) -> Result<(), PressError> {
     match button {
-        Button::Ok => close(host, false),
+        Button::Ok => {
+            if host.window_ref().restore_error.is_none() {
+                host.validate_accept().map_err(PressError::Validation)?;
+            }
+            close(host, false);
+        }
         Button::Cancel => close(host, true),
         Button::Apply => {
             if host.window_ref().restore_error.is_none() {
-                host.apply()?;
+                host.validate_accept().map_err(PressError::Validation)?;
+                host.apply().map_err(PressError::Apply)?;
                 let snapshot = host.take_snapshot();
                 host.window().snapshot = Some(snapshot);
             }
@@ -301,9 +322,10 @@ pub fn show<S: Host>(ctx: &egui::Context, host: &mut S, pages: &[Page<S>], optio
         crate::Action::None if closed => Some(Button::Cancel),
         crate::Action::None => None,
     };
-    // A failed Apply shows on the window like a failed restore: Apply waits and a close reverts.
+    // A failed Apply shows like a failed restore. Invalid drafts remain editable, so fixing a
+    // field can retry validation without cancelling and reopening the window.
     if let Some(button) = button
-        && let Err(reason) = press(host, pages, button)
+        && let Err(PressError::Apply(reason)) = press_inner(host, pages, button)
     {
         host.window().restore_error = Some(reason);
     }

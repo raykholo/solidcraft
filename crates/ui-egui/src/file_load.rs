@@ -67,6 +67,12 @@ pub struct Request {
     /// The saved design this request is for, when it must not run on another: one shown in its
     /// place by the time the request starts drops it.
     pub design: Option<String>,
+    /// An open through `file.import`: a file an importer plugin converts (or one SolidCraft
+    /// reads, as doc.open), opened as a new design in its own tab.
+    pub import: bool,
+    /// The command that does it instead of the kind's own (a plugin's import command, which
+    /// checks its options): it is given the path and the options.
+    pub command: Option<&'static str>,
     /// The chat turn that requested the load. It must still be current when the file lands.
     pub(crate) chat_turn: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Insert the file as a mesh whatever its extension says: a PLY goes to `pointcloud.insert`
@@ -91,6 +97,8 @@ impl Request {
             options: Default::default(),
             allow_hosts: Vec::new(),
             design: None,
+            import: false,
+            command: None,
             chat_turn: None,
             mesh: false,
             param_check: None,
@@ -113,7 +121,11 @@ impl Request {
         Value::Object(params)
     }
     fn command(&self) -> (&'static str, Value) {
+        if let Some(command) = self.command {
+            return (command, self.params());
+        }
         match &self.kind {
+            Kind::Open if self.import => ("file.import", self.params()),
             Kind::Open => ("doc.open", self.params()),
             Kind::Insert if self.mesh || solidcraft_engine::io::is_mesh_path(&self.path) => ("file.insert_mesh", self.params()),
             Kind::Insert if solidcraft_engine::io::is_point_cloud_path(&self.path) => ("pointcloud.insert", self.params()),
@@ -357,6 +369,14 @@ fn steps(r: &Running) -> Option<(usize, usize)> {
     (total > 0).then_some(if phase == 0 { (done, total) } else { (total, total) })
 }
 
+/// Import `path` as a new design through `file.import` (an importer plugin, or SolidCraft's own
+/// reader for a format it reads), off the window thread.
+pub fn begin_import(app: &mut SolveApp, path: &str) {
+    let mut request = Request::new(path, Kind::Open);
+    request.import = true;
+    let _ = begin_request(app, request);
+}
+
 pub fn begin(app: &mut SolveApp, path: &str, insert: bool) {
     // An STL or OBJ file states no unit: ask which, then import (see `crate::mesh_units`).
     if crate::mesh_units::ask(app, path, insert) {
@@ -385,6 +405,12 @@ pub fn begin_request(app: &mut SolveApp, mut request: Request) -> Result<(), Str
     }
     if matches!(request.kind, Kind::Open | Kind::Insert) {
         step_folder_option(app, &request.path, &mut request.options);
+    }
+    // A host with a plugin runtime of its own (the browser's) runs importer plugins there.
+    if hosted(app, &request) {
+        app.file_load.queued.push_back(request);
+        start_hosted(app);
+        return Ok(());
     }
     #[cfg(target_arch = "wasm32")]
     {
@@ -497,17 +523,17 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
     if cfg!(target_arch = "wasm32") || !matches!(req.method.as_str(), "engine.execute" | "command") {
         return Some(req);
     }
-    // In any spelling the engine takes: another would run on the window thread.
-    let Some(id) =
-        req.params.get("command").or(req.params.get("id")).and_then(Value::as_str).and_then(solidcraft_engine::find_command).map(|spec| spec.id)
-    else {
-        return Some(req);
-    };
-    let kind = match id {
-        "doc.open" => Kind::Open,
-        "file.insert_step" | "file.insert_mesh" | "pointcloud.insert" => Kind::Insert,
-        "file.export_view_dxf" => Kind::ExportDxf,
-        "pointcloud.reload" => Kind::ReloadCloud,
+    let command = req.params.get("command").or(req.params.get("id")).and_then(Value::as_str).and_then(solidcraft_engine::find_command);
+    let Some(id) = command.map(|c| c.id) else { return Some(req) };
+    let plugin_import = command.filter(|c| c.plugin.is_some_and(|p| p.imports())).map(|c| c.id);
+    let into_current = req.params.get("params").and_then(|p| p.get("into")).and_then(Value::as_str) == Some("current");
+    let kind = match command.map(|c| c.id) {
+        _ if plugin_import.is_some() && into_current => Kind::Insert,
+        _ if plugin_import.is_some() => Kind::Open,
+        Some("doc.open" | "file.import") => Kind::Open,
+        Some("file.insert_step" | "file.insert_mesh" | "pointcloud.insert") => Kind::Insert,
+        Some("file.export_view_dxf") => Kind::ExportDxf,
+        Some("pointcloud.reload") => Kind::ReloadCloud,
         _ => return Some(req),
     };
     let params = req.params.get("params");
@@ -549,6 +575,7 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         options.remove("path");
         options.retain(|_, v| !v.is_null());
     }
+    let import = id == "file.import" || (plugin_import.is_some() && kind == Kind::Open);
     let request = Request {
         path: path.into(),
         kind,
@@ -557,6 +584,8 @@ pub fn control(app: &mut SolveApp, req: crate::control::ControlRequest) -> Optio
         options,
         allow_hosts: Vec::new(),
         design: None,
+        import,
+        command: plugin_import,
         chat_turn: req.chat_turn,
         mesh: false,
         param_check,
@@ -631,6 +660,11 @@ fn start(app: &mut SolveApp) {
     if insert {
         scratch.selection = app.session.selection.clone();
     }
+    // An open may run an importer plugin: it does so under the user's plugin policy.
+    scratch.disabled_plugins.clone_from(&app.session.disabled_plugins);
+    scratch.plugin_limits = app.session.plugin_limits;
+    scratch.plugin_approvals.clone_from(&app.session.plugin_approvals);
+    scratch.plugins_dir.clone_from(&app.session.plugins_dir);
     if update {
         // Link paths are kept relative to the design's own file.
         scratch.path.clone_from(&app.session.path);
@@ -740,6 +774,84 @@ fn start(app: &mut SolveApp) {
             let e = format!("could not start file operation: {e}");
             request.answer(Err(e.clone()));
             app.set_status(e, true);
+        }
+    }
+}
+
+/// Whether `request` is a plugin import for the host's own plugin runtime.
+fn hosted(app: &SolveApp, request: &Request) -> bool {
+    if app.services.run_plugin_import.is_none() || !matches!(request.kind, Kind::Open | Kind::Insert) {
+        return false;
+    }
+    if request.import || request.command.is_some() {
+        return true;
+    }
+    // A file SolidCraft does not open itself that an allowed importer claims.
+    request.kind == Kind::Open
+        && !solidcraft_engine::io::is_design_path(&request.path)
+        && solidcraft_engine::plugin::importer_for(&app.session, &request.path).is_some()
+}
+
+/// Run a plugin import through the host's plugin runtime: the command runs on a copy of the
+/// session until it reaches the importer, which the host then runs (in the browser, in a Web
+/// Worker, with the progress and Cancel of a file load); with its result the command runs
+/// again to the end, and [`tick`] adopts it as any file load.
+fn start_hosted(app: &mut SolveApp) {
+    if app.file_load.running.is_some() {
+        return;
+    }
+    let Some(request) = app.file_load.queued.pop_front() else { return };
+    if crate::control::chat_turn_cancelled(request.chat_turn.as_deref()) {
+        request.answer(Err("the agent chat turn ended".into()));
+        return;
+    }
+    let insert = request.insert();
+    let before = if insert { crate::open_meshing::session_world(&app.session).bodies.iter().map(|b| b.name.clone()).collect() } else { Vec::new() };
+    let mut session = if insert { app.session.scratch() } else { Session::default() };
+    if insert {
+        session.selection = app.session.selection.clone();
+    }
+    session.set_command_check(app.session.command_check());
+    session.set_validation(app.preferences.validation);
+    session.disabled_plugins.clone_from(&app.session.disabled_plugins);
+    session.plugin_limits = app.session.plugin_limits;
+    session.plugin_approvals.clone_from(&app.session.plugin_approvals);
+    session.plugins_dir.clone_from(&app.session.plugins_dir);
+    let (command, params) = request.command();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let progress = Arc::new(Progress::default());
+    let scope = request.scope.clone();
+    let (first, asked) =
+        solidcraft_engine::io::vfs::scoped(scope.clone(), || solidcraft_engine::plugin::ask_host(|| session.execute(command, &params)));
+    let running = Running {
+        base: app.session.doc.clone(),
+        base_revision: app.session.revision,
+        before,
+        rx,
+        phase: Arc::new(AtomicU8::new(0)),
+        progress: progress.clone(),
+        preview_rx: None,
+        preview: None,
+        partial_rx: None,
+        built: None,
+        staged: None,
+        request,
+    };
+    app.file_load.running = Some(running);
+    match (asked, app.services.run_plugin_import.as_ref()) {
+        (Some(asked), Some(host)) => {
+            let key = asked.key.clone();
+            let done: Box<dyn FnOnce(Result<solidcraft_engine::plugin::Imported, String>)> = Box::new(move |result| {
+                let r = solidcraft_engine::io::vfs::scoped(scope, || {
+                    solidcraft_engine::plugin::answer_host(&key, result, || session.execute(command, &params))
+                });
+                let _ = tx.send(r.map(|result| Made { session, result, thumbnail: false }).map_err(|e| e.to_string()));
+            });
+            host(asked, progress, done);
+        }
+        // It needed no importer after all (or failed before one): its result as it is.
+        _ => {
+            let _ = tx.send(first.map(|result| Made { session, result, thumbnail: false }).map_err(|e| e.to_string()));
         }
     }
 }
@@ -1264,8 +1376,13 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
                 }
                 crate::frame_watch::step(app, "stand-up offer");
                 let warnings = made.result.get("warnings").and_then(Value::as_array);
+                let plugin_report = crate::plugin_report::from_reply(&made.result, &request.path);
                 if let Kind::Recover { .. } = request.kind {
                     recovered(app, request);
+                } else if let Some(report) = plugin_report {
+                    // An importer plugin's import: what it brought over, and its notes.
+                    app.set_status(report.summary.clone(), false);
+                    crate::plugin_report::open(ctx, report);
                 } else {
                     app.set_status(
                         if made.result.get("read_only").and_then(Value::as_bool) == Some(true) {
@@ -1336,6 +1453,9 @@ pub fn tick(app: &mut SolveApp, ctx: &egui::Context) {
             solidcraft_engine::recovery::reopen_finished(dir, &request.path);
         }
     }
+    if app.file_load.running.is_none() && app.file_load.queued.front().is_some_and(|r| hosted(app, r)) {
+        start_hosted(app);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     start(app);
     #[cfg(target_arch = "wasm32")]
@@ -1390,6 +1510,19 @@ fn load_steps(
         _ => (1, count("file_load.step_feature", done, total)),
     };
     (labels, current, detail)
+}
+
+/// What an importer plugin says it is doing, as the progress card shows it.
+fn plugin_stage_text(stage: &str, done: usize, total: usize) -> String {
+    let key = match stage {
+        "plugin.preparing" => "file_load.plugin_preparing",
+        "plugin.reading" => "file_load.plugin_reading",
+        "plugin.decoding" => "file_load.plugin_decoding",
+        "plugin.mapping" => "file_load.plugin_mapping",
+        _ => "file_load.plugin_writing",
+    };
+    let text = solidcraft_ui_text::tr(key).to_string();
+    if total > 1 { format!("{text} ({}%)", done * 100 / total.max(1)) } else { text }
 }
 
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
@@ -1481,7 +1614,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             }
             // An open or an import goes through three steps the card lists; the other operations
             // (and a cancelled one) say what they are doing in a line.
-            let stepped = !cancelled && matches!(r.request.kind, Kind::Open | Kind::Insert | Kind::InsertDesign | Kind::Recover { .. });
+            let stepped = !cancelled
+                && !work.is_some_and(|(stage, _, _)| stage.starts_with("plugin."))
+                && matches!(r.request.kind, Kind::Open | Kind::Insert | Kind::InsertDesign | Kind::Recover { .. });
             if stepped {
                 let cad = matches!(r.request.kind, Kind::Open | Kind::Insert)
                     && (solidcraft_engine::io::is_step_path(&r.request.path) || solidcraft_engine::io::is_iges_path(&r.request.path));
@@ -1496,6 +1631,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 } else {
                     match (phase, work) {
                         (_, work) if r.request.kind == Kind::ExportDxf => crate::dialogs_view_dxf::progress_text(work),
+                        (_, Some((stage, d, t))) if stage.starts_with("plugin.") => plugin_stage_text(stage, d, t),
                         (_, Some(("reading", d, t))) => {
                             solidcraft_ui_text::format("file_load.reading_percent", &[("percent", &(d * 100 / t.max(1)).to_string())])
                         }
@@ -2054,6 +2190,60 @@ mod tests {
         assert!(app.file_load.running.is_none());
         assert!(app.status.as_ref().is_some_and(|s| s.2 && s.0.contains("junk.step")), "{:?}", app.status);
         assert!(Arc::ptr_eq(&before, &app.session.doc));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A host with a plugin runtime of its own (the browser's) is handed the import, reports
+    /// progress, and its result opens as a new design through the usual file load.
+    #[test]
+    fn a_hosts_plugin_runtime_runs_the_import_and_the_file_load_adopts_it() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let dir = std::env::temp_dir().join(format!("solidcraft-hosted-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let package = dir.join("package/fixture-importer");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::create_dir_all(dir.join("plugins")).unwrap();
+        let manifest = json!({"id": "fixture-importer", "name": "Fixture importer", "version": "0.1.0", "runtime": {
+            "api": "solidcraft:plugin@0.1.0", "module": "plugin.wasm", "kind": "importer", "web": {"module": "plugin-web.wasm"},
+            "formats": [{"extension": "fixd", "name": "Fixture"}], "limits": {"fuel": 1000, "memory_mib": 4, "deadline_ms": 1000}}});
+        std::fs::write(package.join("plugin.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+        std::fs::write(package.join("plugin.wasm"), b"component").unwrap();
+        std::fs::write(package.join("plugin-web.wasm"), b"web module").unwrap();
+        let mut source = Session::default();
+        source.execute("solid.box", &json!({"length": 20, "width": 10, "height": 3})).unwrap();
+        let saved = dir.join("source.sc");
+        source.execute("file.save", &json!({"path": saved})).unwrap();
+        let design = std::fs::read(&saved).unwrap();
+        let file = dir.join("part.fixd");
+        std::fs::write(&file, b"source bytes").unwrap();
+        // The host: records what it was handed, reports a step, answers with the design.
+        let asked: Rc<RefCell<Vec<solidcraft_engine::plugin::HostRequest>>> = Rc::default();
+        let host: crate::PluginImportHost = {
+            let asked = asked.clone();
+            Box::new(move |request, progress, done| {
+                progress.report_work("plugin.decoding", 0, 1);
+                asked.borrow_mut().push(request);
+                let payload = solidcraft_engine::plugin::Payload::Design(design.clone());
+                done(Ok(solidcraft_engine::plugin::Imported { payload, notes: "from the host".into() }));
+            })
+        };
+        let mut app = SolveApp::new(Session::default(), crate::Services { run_plugin_import: Some(host), ..Default::default() });
+        app.session.plugins_dir = Some(dir.join("plugins"));
+        let installed = app.run("plugin.install", json!({"path": package})).unwrap();
+        app.preferences.plugin_approvals.insert("fixture-importer".into(), installed["approval"].as_str().unwrap().to_string());
+        crate::plugins::sync_policy(&mut app);
+        begin_import(&mut app, &file.to_string_lossy());
+        let ctx = egui::Context::default();
+        for _ in 0..20 {
+            tick(&mut app, &ctx);
+        }
+        let asked = asked.borrow();
+        assert_eq!(asked.len(), 1, "the host ran the import once");
+        assert_eq!(asked[0].bytes, b"source bytes");
+        assert_eq!(asked[0].web_module.as_deref(), Some(&b"web module"[..]));
+        assert_eq!(app.session.doc.features.len(), source.doc.features.len(), "the design the host made is open");
+        assert!(app.session.path.is_none(), "as a new, unsaved design");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

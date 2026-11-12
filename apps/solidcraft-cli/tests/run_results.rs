@@ -820,3 +820,142 @@ fn render_setup_overrides_obey_shared_validation_before_host_initialization() {
         assert!(!out.exists());
     }
 }
+
+#[test]
+fn explicit_plugin_host_settings_allow_reviewed_larger_requests_and_reject_bad_policy() {
+    let scratch = Scratch::new();
+    let package = scratch.0.join("sample");
+    std::fs::create_dir(&package).unwrap();
+    let wat = include_str!("../../../crates/engine/src/plugin/fixture.wat").replace("\r\n", "\n").replace(
+        "      call $box\n      call $box\n",
+        "      call $box\n      call $box i32.const 2048 memory.grow i32.const -1 i32.eq if unreachable end\n",
+    );
+    assert!(wat.contains("memory.grow"), "the fixture must actually request more than 128 MiB");
+    std::fs::write(package.join("plugin.wasm"), wat::parse_str(wat).unwrap()).unwrap();
+    let manifest = json!({"id":"sample","name":"Sample","version":"1","runtime":{"api":solidcraft_engine::plugin::API,"module":"plugin.wasm","entries":["make"],"commands":["solid.box"],"limits":{"fuel":200_000_000_000_u64,"memory_mib":256,"deadline_ms":30000}}});
+    std::fs::write(package.join("plugin.json"), manifest.to_string()).unwrap();
+    let args = json!({"path":package}).to_string();
+    let inspected = json_output(cli().args(["exec", "plugin.inspect", &args]).output().unwrap());
+    assert_eq!(inspected["within_host_limits"], false);
+    let run = json!({"path":package,"approval":inspected["approval"],"entry":"make"}).to_string();
+    let refused = cli().args(["exec", "plugin.run", &run]).output().unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("more than the plugin settings allow"));
+    let policy = scratch.0.join("limits.json");
+    std::fs::write(&policy, json!({"max_fuel":u64::MAX,"max_memory_mib":512}).to_string()).unwrap();
+    let high = json_output(cli().arg("--plugin-limits").arg(&policy).args(["exec", "plugin.inspect", &args]).output().unwrap());
+    assert_eq!(high["within_host_limits"], true);
+    assert_eq!(high["host_limits"]["max_fuel"].as_u64(), Some(u64::MAX));
+    let output = cli().arg("--plugin-limits").arg(&policy).args(["exec", "plugin.run", &run]).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mut bom = vec![0xef, 0xbb, 0xbf];
+    bom.extend(json!({"max_memory_mib":512}).to_string().as_bytes());
+    std::fs::write(&policy, bom).unwrap();
+    let high = json_output(cli().arg("--plugin-limits").arg(&policy).args(["exec", "plugin.inspect", &args]).output().unwrap());
+    assert_eq!(high["host_limits"]["max_fuel"].as_u64(), Some(100_000_000_000));
+    assert_eq!(high["host_limits"]["max_memory_mib"], 512);
+    assert_eq!(high["within_host_limits"], false, "omitted fields keep the original ceiling");
+    for extra in [vec!["exec", "plugin.inspect", "{}", "--connect", "127.0.0.1:1"], vec!["mcp"]] {
+        let output = cli().arg(format!("--plugin-limits={}", policy.display())).args(extra).output().unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("controls local sessions"), "refuse before any connection attempt");
+    }
+    for bad in [json!({"max_fuel":0}), json!({"max_memory_mib":4097}), json!({"max_fuel":1.25}), json!({"unknown":true})] {
+        std::fs::write(&policy, bad.to_string()).unwrap();
+        let o = cli().arg("--plugin-limits").arg(&policy).args(["exec", "plugin.run", &run]).output().unwrap();
+        assert!(!o.status.success());
+    }
+}
+
+#[test]
+fn plugin_network_imports_and_net_permissions_are_refused_through_the_cli() {
+    let scratch = Scratch::new();
+    let package = scratch.0.join("sample");
+    std::fs::create_dir(&package).unwrap();
+    let template = include_str!("../../../crates/engine/src/plugin/fixture.wat").replace("\r\n", "\n");
+    let component = wat::parse_str(&template).unwrap();
+    let mut manifest = json!({"id":"sample","name":"Sample","version":"1","runtime":{
+        "api":solidcraft_engine::plugin::API,"module":"plugin.wasm","entries":["make"],"commands":["solid.box"],
+        "limits":{"fuel":1_000_000,"memory_mib":4,"deadline_ms":5000}}});
+    std::fs::write(package.join("plugin.json"), manifest.to_string()).unwrap();
+    std::fs::write(package.join("plugin.wasm"), &component).unwrap();
+    let args = json!({"path":package}).to_string();
+    let run = || {
+        let inspected = json_output(cli().args(["exec", "plugin.inspect", &args]).output().unwrap());
+        let params = json!({"path":package,"approval":inspected["approval"],"entry":"make"}).to_string();
+        cli().args(["exec", "plugin.run", &params]).output().unwrap()
+    };
+    // A working component is the control: refusals below must come from the network policy.
+    let allowed = run();
+    assert!(allowed.status.success(), "{}", String::from_utf8_lossy(&allowed.stderr));
+    for import in [
+        r#"(import "wasi:sockets/instance-network@0.2.12" (instance))"#,
+        r#"(import "wasi:http/outgoing-handler@0.2.12" (instance))"#,
+        r#"(import "fetch" (func))"#,
+    ] {
+        // These unused declarations must be refused even when Wasmtime could elide them.
+        let end = template.rfind(')').unwrap();
+        let text = format!("{}\n  {import}\n)", &template[..end]);
+        assert!(text.contains(import));
+        std::fs::write(package.join("plugin.wasm"), wat::parse_str(text).unwrap()).unwrap();
+        let denied = run();
+        assert!(!denied.status.success());
+        let error = String::from_utf8_lossy(&denied.stderr);
+        assert!(error.contains("network import is forbidden"), "{import}: {error}");
+    }
+    std::fs::write(package.join("plugin.wasm"), component).unwrap();
+    manifest["permissions"] = json!(["net"]);
+    std::fs::write(package.join("plugin.json"), manifest.to_string()).unwrap();
+    let denied = cli().args(["exec", "plugin.inspect", &args]).output().unwrap();
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("`net` permission is forbidden"));
+}
+
+#[test]
+fn plugin_importer_network_refusals_and_traps_preserve_the_open_design() {
+    let scratch = Scratch::new();
+    let package = scratch.0.join("importer");
+    std::fs::create_dir(&package).unwrap();
+    let manifest = json!({"id":"importer","name":"Importer","version":"1","runtime":{
+        "api":solidcraft_engine::plugin::API,"module":"plugin.wasm","kind":"importer",
+        "formats":[{"extension":"fixd","name":"Fixture"}],
+        "limits":{"fuel":1_000_000,"memory_mib":4,"deadline_ms":5000}}});
+    std::fs::write(package.join("plugin.json"), manifest.to_string()).unwrap();
+    let template = include_str!("../../../crates/engine/src/plugin/importer_fixture.wat");
+    let echo = "i32.const 0 i32.const 0 i32.store8 i32.const 4 i32.const 0 i32.store8 \
+        i32.const 8 local.get $bytes i32.store i32.const 12 local.get $bytes_len i32.store \
+        i32.const 16 local.get $name i32.store i32.const 20 local.get $name_len i32.store i32.const 0";
+    let write_component = |body: &str, import: &str| {
+        let text = template.replace(";; BODY", body).replace(";; EXTRA-IMPORT", import);
+        std::fs::write(package.join("plugin.wasm"), wat::parse_str(text).unwrap()).unwrap();
+    };
+    let input = scratch.0.join("source.fixd");
+    std::fs::write(&input, solidcraft_engine::doc::Document::default().to_json()).unwrap();
+    let mut session = solidcraft_engine::Session::default();
+    // Keep compilation artifacts in this fixture, rather than the user's data directory.
+    session.plugins_dir = Some(scratch.0.join("plugins"));
+    let run = |session: &mut solidcraft_engine::Session| {
+        let inspected = session.execute("plugin.inspect", &json!({"path":package})).unwrap();
+        session.execute("file.import", &json!({"path":input,"plugin":package,"approval":inspected["approval"]}))
+    };
+    write_component(echo, "");
+    assert_eq!(run(&mut session).unwrap()["notes"], "source.fixd");
+    session.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+    let before = session.doc.to_json();
+    let history = (session.undo.len(), session.redo.len());
+    for import in [
+        r#"(import "wasi:sockets/instance-network@0.2.12" (instance))"#,
+        r#"(import "wasi:http/outgoing-handler@0.2.12" (instance))"#,
+        r#"(import "fetch" (func))"#,
+    ] {
+        write_component(echo, import);
+        let error = run(&mut session).unwrap_err().to_string();
+        assert!(error.contains("network import is forbidden"), "{import}: {error}");
+        assert_eq!(session.doc.to_json(), before);
+        assert_eq!((session.undo.len(), session.redo.len()), history);
+    }
+    write_component("unreachable", "");
+    assert!(run(&mut session).unwrap_err().to_string().contains("UnreachableCodeReached"));
+    assert_eq!(session.doc.to_json(), before);
+    assert_eq!((session.undo.len(), session.redo.len()), history);
+}

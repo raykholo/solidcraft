@@ -1,0 +1,952 @@
+use super::*;
+use serde_json::{Value, json};
+use solidcraft_geom::Vec3Geom as _;
+
+fn manifest() -> Value {
+    json!({"id":"sample", "name":"Sample", "version":"0.1.0", "runtime":{
+        "api":API,"module":"plugin.wasm","entries":["make"],"commands":["solid.box"],
+        "limits":{"fuel":100000,"memory_mib":1,"deadline_ms":5000}}})
+}
+#[test]
+fn manifest_is_inert_bounded_and_refuses_unknown_capabilities() {
+    assert!(parse_manifest(br#"{"id":"sample","name":"Sample","version":"1"}"#, "sample").unwrap().runtime.is_none());
+    assert!(parse_manifest(&serde_json::to_vec(&manifest()).unwrap(), "sample").is_ok());
+    let mut explicit = manifest();
+    explicit["runtime"]["limits"]["fuel"] = json!(100_000_000_000_u64);
+    assert!(parse_manifest(&serde_json::to_vec(&explicit).unwrap(), "sample").is_ok());
+    assert_eq!(Limits::default().fuel, 10_000_000);
+    let old = parse_manifest(br#"{"id":"sample","name":" Sample ","version":" 1 ","description":" Old metadata "}"#, "sample").unwrap();
+    assert_eq!((old.name.as_str(), old.version.as_str(), old.description.as_str()), ("Sample", "1", "Old metadata"));
+    for mutate in [
+        |m: &mut Value| m["runtime"]["module"] = json!("../other.wasm"),
+        |m: &mut Value| m["runtime"]["commands"] = json!(["file.export"]),
+        |m: &mut Value| m["runtime"]["commands"] = json!(["plugin.run"]),
+        |m: &mut Value| m["runtime"]["entries"] = json!(["make", "make"]),
+        |m: &mut Value| m["runtime"]["limits"]["memory_mib"] = json!(4097),
+        |m: &mut Value| m["runtime"]["limits"]["fuel"] = json!(0),
+        |m: &mut Value| m["runtime"]["limits"]["deadline_ms"] = json!(30_001),
+        |m: &mut Value| m["runtime"]["api"] = json!("solidcraft:plugin@99.0.0"),
+        |m: &mut Value| m["network"] = json!(true),
+    ] {
+        let mut m = manifest();
+        mutate(&mut m);
+        assert!(parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").is_err(), "{m}");
+    }
+    assert!(parse_manifest(&vec![b' '; MAX_MANIFEST_BYTES + 1], "sample").is_err());
+}
+#[test]
+fn plugin_net_permission_is_explicitly_refused() {
+    for permission in [json!(["net"]), json!({"net":["https://example.invalid"]}), json!([{"name":"net"}])] {
+        for runtime in [false, true] {
+            let mut m = manifest();
+            if runtime {
+                m["runtime"]["permissions"] = permission.clone();
+            } else {
+                m["permissions"] = permission.clone();
+            }
+            let err = parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").unwrap_err().to_string();
+            assert!(err.contains("`net` permission is forbidden"), "{err}");
+        }
+    }
+}
+
+#[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[test]
+fn plugin_linker_exposes_no_network_interfaces() {
+    // Empty instance types test the interface's presence, without relying on a mismatched
+    // function signature to refuse it. An allowed interface is a positive control.
+    let clock = wat::parse_str(r#"(component (import "wasi:clocks/wall-clock@0.2.0" (instance)))"#).unwrap();
+    super::runtime::check_plugin_link(&clock, true).unwrap();
+    for interface in [
+        "wasi:sockets/network",
+        "wasi:sockets/instance-network",
+        "wasi:sockets/ip-name-lookup",
+        "wasi:sockets/tcp",
+        "wasi:sockets/tcp-create-socket",
+        "wasi:sockets/udp",
+        "wasi:sockets/udp-create-socket",
+        "wasi:http/types",
+        "wasi:http/outgoing-handler",
+        "wasi:http/incoming-handler",
+    ] {
+        for version in ["0.2.0", "0.2.6", "0.2.12"] {
+            let import = format!("{interface}@{version}");
+            let bytes = wat::parse_str(format!(r#"(component (import "{import}" (instance)))"#)).unwrap();
+            for importer in [false, true] {
+                let err = super::runtime::check_plugin_link(&bytes, importer).unwrap_err().to_string();
+                assert!(err.contains(interface), "{import}: {err}");
+            }
+        }
+    }
+    let fetch = wat::parse_str(r#"(component (import "fetch" (func)))"#).unwrap();
+    for importer in [false, true] {
+        assert!(super::runtime::check_plugin_link(&fetch, importer).unwrap_err().to_string().contains("fetch"));
+    }
+}
+
+#[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn wasi_component(text: &str) -> Vec<u8> {
+    // Wasmtime cannot directly re-export an imported function. The three test functions
+    // below have no arguments and an indirect result; a canonical lower/lift round trip
+    // exercises the real host callback through a core Wasm wrapper and its return area.
+    let wrapper = r#"
+        (core module $memory
+            (memory (export "memory") 1)
+            (func (export "realloc") (param i32 i32 i32 i32) (result i32) i32.const 64))
+        (core instance $memory (instantiate $memory))
+        (alias core export $memory "memory" (core memory $memory))
+        (alias core export $memory "realloc" (core func $realloc))
+        (core func $lower (canon lower (func $get) (memory $memory) (realloc $realloc)))
+        (core module $wrapper
+            (import "" "call" (func $call (param i32)))
+            (func (export "check") (result i32) i32.const 0 call $call i32.const 0))
+        (core instance $wrapper (instantiate $wrapper
+            (with "" (instance (export "call" (func $lower))))))
+        (alias core export $wrapper "check" (core func $check))
+        (func $check (type $check-type) (canon lift (core func $check) (memory $memory) (realloc $realloc)))
+        (export "check" (func $check))
+    "#;
+    wat::parse_str(text.replace("(export \"check\" (func $get))", wrapper)).unwrap()
+}
+
+#[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[test]
+fn plugin_wasi_adapter_has_no_folders_environment_or_wall_clock() {
+    use wasmtime::component::Val;
+    let dirs = wasi_component(
+        r#"(component
+        (import "wasi:filesystem/types@0.2.12" (instance $types (export "descriptor" (type (sub resource)))))
+        (alias export $types "descriptor" (type $descriptor))
+        (type $dirs (list (tuple (own $descriptor) string)))
+        (type $check-type (func (result $dirs)))
+        (import "wasi:filesystem/preopens@0.2.12" (instance $preopens (export "get-directories" (func (type $check-type)))))
+        (alias export $preopens "get-directories" (func $get))
+        (export "check" (func $get)))"#,
+    );
+    assert!(matches!(super::runtime::importer_host_value(&dirs).unwrap(), Val::List(v) if v.is_empty()));
+    let env = wasi_component(
+        r#"(component
+        (type $env (list (tuple string string)))
+        (type $check-type (func (result $env)))
+        (import "wasi:cli/environment@0.2.12" (instance $env (export "get-environment" (func (type $check-type)))))
+        (alias export $env "get-environment" (func $get))
+        (export "check" (func $get)))"#,
+    );
+    assert!(matches!(super::runtime::importer_host_value(&env).unwrap(), Val::List(v) if v.is_empty()));
+    let clock = wasi_component(
+        r#"(component
+        (import "wasi:clocks/wall-clock@0.2.12" (instance $clock
+            (type (record (field "seconds" u64) (field "nanoseconds" u32)))
+            (export "datetime" (type (eq 0)))
+            (type (func (result 1)))
+            (export "now" (func (type 2)))))
+        (alias export $clock "datetime" (type $time))
+        (type $check-type (func (result $time)))
+        (alias export $clock "now" (func $get))
+        (export "check" (func $get)))"#,
+    );
+    let Val::Record(fields) = super::runtime::importer_host_value(&clock).unwrap() else { panic!("expected clock record") };
+    assert!(matches!(&fields[..], [(seconds, Val::U64(0)), (nanos, Val::U32(0))] if seconds == "seconds" && nanos == "nanoseconds"));
+}
+
+#[test]
+fn disabled_ids_survive_scratch_and_new_design() {
+    let mut s = Session::default();
+    s.disabled_plugins.insert("sample".into());
+    assert!(s.scratch().disabled_plugins.contains("sample"));
+    s.execute("file.new", &json!({})).unwrap();
+    assert!(s.disabled_plugins.contains("sample"));
+}
+
+#[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod native {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    struct Fixture(std::path::PathBuf);
+    impl Fixture {
+        fn new(code: &str) -> Self {
+            let root =
+                solidcraft_io::vfs::temp_dir().join(format!("solidcraft-plugin-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            let dir = root.join("sample");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("plugin.json"), serde_json::to_vec(&manifest()).unwrap()).unwrap();
+            std::fs::write(dir.join("plugin.wasm"), component(code)).unwrap();
+            Self(root)
+        }
+        fn path(&self) -> String {
+            self.0.join("sample").to_string_lossy().into_owned()
+        }
+        fn run(&self, s: &mut Session) -> crate::Result<Value> {
+            let approval = s.execute("plugin.inspect", &json!({"path":self.path()}))?["approval"].clone();
+            s.execute("plugin.run", &json!({"path":self.path(),"approval":approval,"entry":"make","params":{}}))
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    // An original component fixture. A real canonical lift/lower crosses the host boundary.
+    // $box asks for a 2 x 3 x 4 mm solid; memory at 0 is the canonical result area.
+    fn component(code: &str) -> Vec<u8> {
+        let template = include_str!("fixture.wat").replace("\r\n", "\n");
+        let original = "      call $box\n      call $box\n";
+        assert!(template.contains(original));
+        wat::parse_str(template.replacen(original, &format!("      {code}\n"), 1)).unwrap()
+    }
+    #[test]
+    fn larger_declared_budgets_need_user_ceilings_and_exact_content_approval() {
+        let f = Fixture::new("call $box i32.const 2048 memory.grow i32.const -1 i32.eq if unreachable end");
+        let path = f.0.join("sample/plugin.json");
+        let mut m = manifest();
+        m["runtime"]["limits"] = json!({"fuel":200_000_000_000_u64,"memory_mib":256,"deadline_ms":5000});
+        std::fs::write(&path, m.to_string()).unwrap();
+        let mut s = Session::default();
+        let inspection = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
+        assert_eq!(inspection["within_host_limits"], false);
+        assert_eq!(inspection["host_limits"]["max_memory_mib"], 128);
+        assert!(inspection["limits_error"].as_str().unwrap().contains("more than the plugin settings allow"));
+        let before = s.doc.to_json();
+        assert!(f.run(&mut s).unwrap_err().to_string().contains("more than the plugin settings allow"));
+        assert_eq!(s.doc.to_json(), before);
+        assert!(s.undo.is_empty());
+        s.plugin_limits = HostLimits { max_fuel: 200_000_000_000, max_memory_mib: 256, ..Default::default() };
+        let approved = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
+        assert_eq!(approved["within_host_limits"], true);
+        assert_eq!(approved["approval"], inspection["approval"], "approval pins the exact request; a ceiling change never changes its budget");
+        f.run(&mut s).unwrap();
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 24.);
+        assert_eq!(s.undo.len(), 1);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc.to_json(), before);
+        // Even the largest u64 budget reaches Wasmtime exactly; a new request needs new approval.
+        m["runtime"]["limits"]["fuel"] = json!(u64::MAX);
+        std::fs::write(&path, m.to_string()).unwrap();
+        s.plugin_limits.max_fuel = u64::MAX;
+        assert!(s.execute("plugin.run", &json!({"path":f.path(),"approval":approved["approval"],"entry":"make"})).is_err());
+        assert_eq!(s.doc.to_json(), before);
+        f.run(&mut s).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc.to_json(), before);
+        // Reducing the host policy blocks a previously reviewed package.
+        s.plugin_limits = HostLimits::default();
+        assert!(f.run(&mut s).is_err());
+        assert_eq!(s.doc.to_json(), before);
+    }
+    #[test]
+    fn a_plugin_prepared_under_an_old_host_policy_is_not_adopted() {
+        let f = Fixture::new("call $box");
+        let mut s = Session::default();
+        let i = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
+        let params = json!({"path":f.path(),"approval":i["approval"],"entry":"make"});
+        let prepared = s.scratch().compute_commands(&[("plugin.run".into(), params)], None).unwrap();
+        assert!(prepared.is_current(&s));
+        s.plugin_limits.max_memory_mib = 512;
+        assert!(!prepared.is_current(&s));
+        let before = s.doc.to_json();
+        assert!(s.accept_commands(prepared).is_err());
+        assert_eq!(s.doc.to_json(), before);
+        assert!(s.undo.is_empty());
+    }
+    #[test]
+    fn component_edits_are_one_undo_step_and_reopen_without_the_plugin() {
+        let f = Fixture::new("call $box call $box");
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        let before = s.doc.to_json();
+        let undo = s.undo.len();
+        f.run(&mut s).unwrap();
+        assert_eq!(s.doc.features.len(), 3);
+        assert_eq!(s.undo.len(), undo + 1);
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 72.);
+        let saved = s.doc.to_json();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc.to_json(), before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(s.doc.to_json(), saved);
+        drop(f);
+        let mut reopened = Session::new(solidcraft_doc::Document::from_json(&saved).unwrap());
+        assert_eq!(reopened.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 72.);
+    }
+    #[test]
+    fn traps_fuel_memory_and_denied_calls_leave_design_and_history_untouched() {
+        for (code, diagnostic) in [
+            ("call $box unreachable", "trap=UnreachableCodeReached"),
+            ("call $box i32.const 8 i32.const 1 i32.store", "entry result is not JSON"),
+            ("call $box (loop $forever br $forever)", "trap=OutOfFuel"),
+            ("call $box i32.const 10000 memory.grow drop", "forcing trap when growing memory"),
+            ("call $box i32.const -1 i32.load drop", "trap=MemoryOutOfBounds"),
+            ("call $box i32.const 1 i32.const 0 i32.div_u drop", "trap=IntegerDivisionByZero"),
+            ("call $box i32.const 2048 i32.const 11 i32.const 1024 i32.const 33 i32.const 0 call $run", "not granted"),
+            (
+                "call $box i32.const 2048 i32.const 11 i32.const 1024 i32.const 33 i32.const 0 call $run i32.const 0 i32.const 0 i32.store i32.const 4 i32.const 1024 i32.store i32.const 8 i32.const 33 i32.store",
+                "not granted",
+            ),
+        ] {
+            let f = Fixture::new(code);
+            let mut s = Session::default();
+            s.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+            s.execute("edit.undo", &json!({})).unwrap();
+            let before = s.doc.to_json();
+            let history = (s.undo.len(), s.redo.len());
+            let message = f.run(&mut s).unwrap_err().to_string();
+            assert!(message.contains(diagnostic), "{code}: {message}");
+            if diagnostic == "trap=OutOfFuel" {
+                assert!(message.contains("fuel_consumed=100000"), "{message}");
+                assert!(message.contains("fuel_remaining=0"), "{message}");
+            }
+            assert_eq!(s.doc.to_json(), before, "{code}");
+            assert_eq!((s.undo.len(), s.redo.len()), history, "{code}");
+            assert_eq!(s.active_sketch, None);
+            assert_eq!(solidcraft_io::vfs::current_scope(), None);
+        }
+    }
+    #[test]
+    fn epoch_interrupt_is_distinct_from_fuel_exhaustion_in_diagnostics() {
+        let mut config = wasmtime::Config::new();
+        config.consume_fuel(true).epoch_interruption(true);
+        let engine = wasmtime::Engine::new(&config).unwrap();
+        let module = wasmtime::Module::from_binary(&engine, &wat::parse_str(r#"(module (func (export "run") (loop br 0)))"#).unwrap()).unwrap();
+        let mut store = wasmtime::Store::new(&engine, ());
+        let limits = Limits { fuel: 100_000, memory_mib: 1, deadline_ms: 5000, ..Limits::default() };
+        store.set_fuel(limits.fuel).unwrap();
+        store.set_epoch_deadline(1);
+        let instance = wasmtime::Instance::new(&mut store, &module, &[]).unwrap();
+        let run = instance.get_typed_func::<(), ()>(&mut store, "run").unwrap();
+        // Advance the engine explicitly: no sleeps or wall-clock race in this test.
+        engine.increment_epoch();
+        let failure = run.call(&mut store, ()).unwrap_err();
+        let remaining = store.get_fuel().unwrap();
+        assert!(remaining > 0);
+        let message = crate::plugin::runtime::execution_error(&failure, Some(remaining), &limits).to_string();
+        assert!(message.contains("trap=Interrupt"), "{message}");
+        assert!(!message.contains("OutOfFuel"), "{message}");
+        assert!(message.contains(&format!("fuel_remaining={remaining}")), "{message}");
+    }
+    #[test]
+    fn a_granted_component_reads_only_the_evaluated_mesh_and_preserves_history() {
+        let f = Fixture::new("call $box");
+        let template = include_str!("fixture.wat").replace("\r\n", "\n");
+        let old_args = r#"{\22length\22:2,\22width\22:3,\22height\22:4}"#;
+        assert!(template.contains(old_args));
+        assert_eq!(template.matches("i32.const 9\n").count(), 1);
+        assert_eq!(template.matches("i32.const 33\n").count(), 1);
+        let wat = template
+            .replace("      call $box\n      call $box\n", "      call $box\n")
+            .replace("solid.box", "model.mesh")
+            .replace(old_args, r#"{\22body\22:\22Box\22}"#)
+            .replace("i32.const 9\n", "i32.const 10\n")
+            .replace("i32.const 33\n", "i32.const 14\n");
+        std::fs::write(f.0.join("sample/plugin.wasm"), wat::parse_str(wat).unwrap()).unwrap();
+        let mut m = manifest();
+        m["runtime"]["commands"] = json!(["model.mesh"]);
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4,"body_name":"Box"})).unwrap();
+        let before = s.doc.to_json();
+        let history = (s.undo.len(), s.redo.len());
+        let result = f.run(&mut s).unwrap();
+        assert_eq!(result["result"]["frame"], "component-local-mm");
+        assert!(!result["result"]["triangles"].as_array().unwrap().is_empty());
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!((s.undo.len(), s.redo.len()), history);
+    }
+
+    #[test]
+    fn approval_binds_exact_bytes_and_disabled_plugins_never_execute() {
+        let f = Fixture::new("call $box");
+        let mut s = Session::default();
+        let inspected = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap();
+        let args = json!({"path":f.path(),"approval":inspected["approval"],"entry":"make"});
+        let path = f.0.join("sample/plugin.json");
+        let mut bytes = std::fs::read(&path).unwrap();
+        bytes.push(b' ');
+        std::fs::write(&path, bytes).unwrap();
+        assert!(s.execute("plugin.run", &args).unwrap_err().to_string().contains("approval"));
+        s.disabled_plugins.insert("sample".into());
+        assert!(f.run(&mut s).unwrap_err().to_string().contains("disabled"));
+        assert!(s.doc.features.is_empty());
+        solidcraft_io::vfs::scoped(Some(Default::default()), || {
+            assert!(s.execute("plugin.inspect", &json!({"path":f.path()})).is_err());
+        });
+    }
+}
+
+#[test]
+fn evaluated_mesh_transfer_is_bounded_and_does_not_edit_the_design() {
+    let mut s = Session::default();
+    s.execute("solid.box", &json!({"length":2,"width":3,"height":4,"body_name":"Box"})).unwrap();
+    let before = s.doc.to_json();
+    let undo = s.undo.len();
+    let result = s.execute("model.mesh", &json!({"body":"Box"})).unwrap();
+    assert_eq!(result["frame"], "component-local-mm");
+    let positions: Vec<[f64; 3]> = serde_json::from_value(result["positions"].clone()).unwrap();
+    let triangles: Vec<[u32; 3]> = serde_json::from_value(result["triangles"].clone()).unwrap();
+    let volume: f64 = triangles
+        .iter()
+        .map(|t| {
+            let a = solidcore_record::Vec3::from(positions[t[0] as usize]);
+            let b = solidcore_record::Vec3::from(positions[t[1] as usize]);
+            let c = solidcore_record::Vec3::from(positions[t[2] as usize]);
+            a.dot(b.cross(c)) / 6.
+        })
+        .sum();
+    assert!((volume.abs() - 24.).abs() < 1e-8);
+    assert_eq!(s.doc.to_json(), before);
+    assert_eq!(s.undo.len(), undo);
+    assert!(s.execute("model.mesh", &json!({"body":"Box","tolerance":0})).is_err());
+    assert!(s.execute("model.mesh", &json!({"body":"Missing"})).is_err());
+}
+
+#[test]
+fn evaluated_mesh_transfer_refuses_an_oversized_input_without_truncation() {
+    let mut doc = solidcraft_doc::Document::default();
+    doc.add_feature(
+        solidcraft_doc::FeatureKind::MeshImport {
+            file: "budget.stl".into(),
+            meshes: vec![solidcraft_doc::MeshData {
+                name: "Many".into(),
+                positions: (0..8193).flat_map(|i| [i as f64, (i % 2) as f64, 0.]).collect(),
+                triangles: (0..2731).flat_map(|i| [3 * i, 3 * i + 1, 3 * i + 2]).collect(),
+                corner_normals: Default::default(),
+                color: None,
+            }],
+        },
+        Some("Budget mesh"),
+    )
+    .unwrap();
+    doc.features.last_mut().unwrap().body_names = vec!["Many".into()];
+    let mut s = Session::new(doc);
+    let before = s.doc.to_json();
+    assert!(s.execute("model.mesh", &json!({"body":"Many"})).unwrap_err().to_string().contains("transfer budget"));
+    assert_eq!(s.doc.to_json(), before);
+}
+
+#[test]
+fn host_resource_policy_is_exact_user_state_and_never_design_data() {
+    let defaults = HostLimits::default();
+    assert_eq!((defaults.max_fuel, defaults.max_memory_mib, defaults.max_deadline_ms), (100_000_000_000, 128, 30_000));
+    // The plain choices, each exact ceilings, and the default is Normal.
+    assert_eq!(LimitPreset::of(&defaults), Some(LimitPreset::Normal));
+    assert_eq!((LimitPreset::Large.limits().max_fuel, LimitPreset::Large.limits().max_memory_mib), (1_000_000_000_000, 2048));
+    assert_eq!((LimitPreset::Largest.limits().max_fuel, LimitPreset::Largest.limits().max_memory_mib), (u64::MAX, 4096));
+    for preset in LimitPreset::ALL {
+        assert!(preset.limits().validate().is_ok());
+        assert_eq!(LimitPreset::of(&preset.limits()), Some(preset));
+    }
+    assert_eq!(LimitPreset::of(&HostLimits { max_memory_mib: 300, ..defaults }), None, "hand-set ceilings are no preset");
+    // A request over the time ceiling is refused like one over memory or work.
+    let slow = Limits { deadline_ms: 20_000, ..Limits::default() };
+    assert!(defaults.check(&slow).is_ok());
+    assert!(HostLimits { max_deadline_ms: 10_000, ..defaults }.check(&slow).unwrap_err().to_string().contains("20 s"));
+    // A limits file written before the time ceiling existed still reads, with 30 s.
+    let old: HostLimits = serde_json::from_str(r#"{"max_fuel": 5, "max_memory_mib": 64}"#).unwrap();
+    assert_eq!(old.max_deadline_ms, 30_000);
+    let request = Limits::default();
+    assert_eq!((request.fuel, request.memory_mib, request.deadline_ms), (10_000_000, 64, 5000));
+    assert!(defaults.check(&request).is_ok());
+    for limits in [
+        HostLimits { max_fuel: 0, ..defaults },
+        HostLimits { max_memory_mib: 0, ..defaults },
+        HostLimits { max_memory_mib: 4097, ..defaults },
+        HostLimits { max_deadline_ms: 0, ..defaults },
+        HostLimits { max_deadline_ms: 30_001, ..defaults },
+    ] {
+        assert!(limits.validate().is_err());
+    }
+    let mut m = manifest();
+    m["runtime"]["limits"] = json!({"fuel":u64::MAX,"memory_mib":4096,"deadline_ms":30000});
+    assert!(parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").is_ok());
+    let policy = HostLimits { max_fuel: u64::MAX, max_memory_mib: 4096, max_deadline_ms: 20_000 };
+    assert_eq!(serde_json::from_str::<HostLimits>(&serde_json::to_string(&policy).unwrap()).unwrap(), policy);
+    let mut s = Session { plugin_limits: policy, ..Default::default() };
+    assert_eq!(s.scratch().plugin_limits, policy);
+    s.execute("file.new", &json!({})).unwrap();
+    assert_eq!(s.plugin_limits, policy);
+    assert!(!s.doc.to_json().contains("max_fuel"));
+    assert!(!allowed_command("plugin.configure"));
+}
+
+fn importer_manifest(extensions: &[&str]) -> Value {
+    let formats: Vec<Value> = extensions.iter().map(|e| json!({"extension": e, "name": format!("Test {e}")})).collect();
+    json!({"id":"fixture-importer", "name":"Fixture importer", "version":"0.1.0", "runtime":{
+        "api":API,"module":"plugin.wasm","kind":"importer","formats":formats,
+        "limits":{"fuel":10_000_000,"memory_mib":4,"deadline_ms":5000}}})
+}
+
+#[test]
+fn an_importer_declares_formats_and_is_granted_no_commands() {
+    let m = parse_manifest(&serde_json::to_vec(&importer_manifest(&[".FIXD", "fixs"])).unwrap(), "fixture-importer").unwrap();
+    let runtime = m.runtime.unwrap();
+    assert_eq!(runtime.kind, Kind::Importer);
+    assert_eq!(runtime.limits.component_mib, 16, "16 MiB unless the package asks for more");
+    let mut large = importer_manifest(&["fixd"]);
+    large["runtime"]["limits"]["component_mib"] = json!(96);
+    assert!(parse_manifest(&serde_json::to_vec(&large).unwrap(), "fixture-importer").is_ok());
+    assert_eq!(runtime.formats.iter().map(|f| f.extension.as_str()).collect::<Vec<_>>(), ["fixd", "fixs"]);
+    for mutate in [
+        |m: &mut Value| m["runtime"]["commands"] = json!(["solid.box"]),
+        |m: &mut Value| m["runtime"]["entries"] = json!(["make"]),
+        |m: &mut Value| m["runtime"]["formats"] = json!([]),
+        |m: &mut Value| m["runtime"]["formats"] = json!([{"extension":"a/b","name":"Slash"}]),
+        |m: &mut Value| m["runtime"]["formats"] = json!([{"extension":"fixd","name":"A"},{"extension":"FIXD","name":"B"}]),
+        |m: &mut Value| m["runtime"]["formats"][0]["reads_folder"] = json!(true),
+        |m: &mut Value| m["runtime"]["limits"]["component_mib"] = json!(129),
+        |m: &mut Value| m["runtime"]["limits"]["component_mib"] = json!(0),
+    ] {
+        let mut m = importer_manifest(&["fixd"]);
+        mutate(&mut m);
+        assert!(parse_manifest(&serde_json::to_vec(&m).unwrap(), "fixture-importer").is_err(), "{m}");
+    }
+    // A command plugin cannot claim file formats.
+    let mut command = manifest();
+    command["runtime"]["formats"] = json!([{"extension":"fixd","name":"Test"}]);
+    assert!(parse_manifest(&serde_json::to_vec(&command).unwrap(), "sample").is_err());
+}
+
+#[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+mod importer {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    /// Hands the file's bytes back as the payload `case` (0 design, 1 STEP), with the file
+    /// name it was given as its notes.
+    fn echo(case: u8) -> String {
+        format!(
+            "i32.const 0 i32.const 0 i32.store8 i32.const 4 i32.const {case} i32.store8 \
+             i32.const 8 local.get $bytes i32.store i32.const 12 local.get $bytes_len i32.store \
+             i32.const 16 local.get $name i32.store i32.const 20 local.get $name_len i32.store i32.const 0"
+        )
+    }
+    fn component(body: &str, extra_import: &str) -> Vec<u8> {
+        let template = include_str!("importer_fixture.wat").replace("\r\n", "\n");
+        assert!(template.contains(";; BODY") && template.contains(";; EXTRA-IMPORT"));
+        wat::parse_str(template.replacen(";; BODY", body, 1).replacen(";; EXTRA-IMPORT", extra_import, 1)).unwrap()
+    }
+
+    /// A plugins folder, a package folder to install from, and files to import.
+    struct Setup {
+        root: std::path::PathBuf,
+    }
+    impl Setup {
+        fn new(body: &str, extensions: &[&str]) -> Self {
+            Self::with_import(body, extensions, "")
+        }
+        fn with_import(body: &str, extensions: &[&str], extra_import: &str) -> Self {
+            Self::with_manifest(body, importer_manifest(extensions), extra_import, &[])
+        }
+        fn with_manifest(body: &str, manifest: Value, extra_import: &str, files: &[(&str, &str)]) -> Self {
+            let root =
+                solidcraft_io::vfs::temp_dir().join(format!("solidcraft-importer-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            let package = root.join("package/fixture-importer");
+            std::fs::create_dir_all(&package).unwrap();
+            std::fs::create_dir_all(root.join("plugins")).unwrap();
+            std::fs::write(package.join("plugin.json"), serde_json::to_vec(&manifest).unwrap()).unwrap();
+            std::fs::write(package.join("plugin.wasm"), component(body, extra_import)).unwrap();
+            for (name, text) in files {
+                std::fs::write(package.join(name), text).unwrap();
+            }
+            Self { root }
+        }
+        fn file(&self, name: &str) -> String {
+            self.root.join(name).to_string_lossy().into_owned()
+        }
+        /// A session with the importer installed, and allowed when `allow`.
+        fn session(&self, allow: bool) -> Session {
+            let mut s = Session { plugins_dir: Some(self.root.join("plugins")), ..Default::default() };
+            let installed = s.execute("plugin.install", &json!({"path": self.file("package/fixture-importer"), "replace": true})).unwrap();
+            assert_eq!(installed["allowed"], false, "installing allows nothing");
+            if allow {
+                s.plugin_approvals.insert("fixture-importer".into(), installed["approval"].as_str().unwrap().to_string());
+            }
+            s
+        }
+    }
+    impl Drop for Setup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn boxed() -> Session {
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":20,"width":10,"height":3})).unwrap();
+        s
+    }
+
+    #[test]
+    fn an_allowed_importer_is_picked_by_extension_and_its_design_keeps_its_history() {
+        let f = Setup::new(&echo(0), &["fixd"]);
+        let mut source = boxed();
+        source.execute("file.save", &json!({"path": f.file("source.sc")})).unwrap();
+        std::fs::copy(f.file("source.sc"), f.file("part.fixd")).unwrap();
+
+        // Installed but not allowed: nothing runs, and the design on screen stays.
+        let mut s = f.session(false);
+        s.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+        let before = s.doc.to_json();
+        assert!(s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string().contains("Preferences > Plugins"));
+        assert_eq!(s.doc.to_json(), before);
+
+        let mut s = f.session(true);
+        for command in ["doc.open", "file.import"] {
+            let out = s.execute(command, &json!({"path": f.file("part.fixd")})).unwrap();
+            assert_eq!(out["plugin"], "fixture-importer", "{command}: {out}");
+            assert_eq!(out["payload"], "design");
+            // The importer is given the file's name, never its folders.
+            assert_eq!(out["notes"], "part.fixd");
+            assert_eq!(s.doc.features.len(), source.doc.features.len());
+            assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 600.);
+            assert!(s.path.is_none(), "an import is a new, unsaved design");
+        }
+        // Turned off in Preferences: no longer picked.
+        s.disabled_plugins.insert("fixture-importer".into());
+        assert!(s.execute("file.import", &json!({"path": f.file("part.fixd")})).is_err());
+    }
+
+    /// The files under `dir`, with their contents.
+    fn files_under(dir: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(files_under(&path));
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                out.push((path, bytes));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_compiled_importer_is_kept_beside_the_plugins_and_a_damaged_copy_compiles_again() {
+        let f = Setup::new(&echo(0), &["fixd"]);
+        boxed().execute("file.save", &json!({"path": f.file("part.fixd")})).unwrap();
+        let mut s = f.session(true);
+        let import = |s: &mut Session| s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap()["plugin"].clone();
+        assert_eq!(import(&mut s), "fixture-importer");
+        let cache = f.root.join("plugin-cache");
+        let kept = files_under(&cache.join("modules"));
+        assert!(!kept.is_empty(), "the compiled importer is kept in {}", cache.display());
+
+        // A damaged copy (cut short, as by a full disk) is compiled again and replaced.
+        for (path, bytes) in &kept {
+            std::fs::write(path, &bytes[..bytes.len() / 2]).unwrap();
+        }
+        // An import elsewhere (no cache folder) leaves nothing compiled in memory for this one.
+        let package = crate::plugin::read_package(&f.file("plugins/fixture-importer")).unwrap();
+        let mut elsewhere = Session::default();
+        let out = elsewhere
+            .execute("file.import", &json!({"path": f.file("part.fixd"), "plugin": f.file("plugins/fixture-importer"), "approval": package.approval}))
+            .unwrap();
+        assert_eq!(out["plugin"], "fixture-importer");
+        assert_eq!(import(&mut s), "fixture-importer");
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 600.);
+        let sizes = |files: Vec<(std::path::PathBuf, Vec<u8>)>| files.into_iter().map(|(p, b)| (p, b.len())).collect::<Vec<_>>();
+        assert_eq!(sizes(files_under(&cache.join("modules"))), sizes(kept), "the damaged copy was replaced by a fresh compilation");
+        // Preparing ahead of the first import runs no plugin code and fills the same cache.
+        crate::plugin::prepare_importer(&package, &f.root.join("plugins")).unwrap();
+    }
+
+    fn contributing_manifest() -> Value {
+        let mut m = importer_manifest(&["fixd"]);
+        m["publisher"] = json!("Fixture makers");
+        m["contributes"] = json!({
+            "commands": [{
+                "id": "import", "label": "Import fixture", "tooltip": "Opens a fixture file", "icon": "fixture.svg",
+                "shortcut": "Ctrl+O",
+                "params": [
+                    {"name": "preset", "label": "Preset", "type": "enum", "default": "standard",
+                     "options": [{"value": "standard", "label": "Standard"}, {"value": "fast", "label": "Fast"}]},
+                    {"name": "scale", "label": "Scale", "type": "number", "min": 0.5, "max": 2.0, "default": 1.0}
+                ]
+            }],
+            "toolbar": [{"tab": "INSERT", "panel": "FIXTURES", "commands": ["import"]}]
+        });
+        m
+    }
+    const ICON: &str = r##"<svg viewBox="0 0 64 64"><path d="M8 8L56 56" stroke="#236ead" stroke-width="4.25"/></svg>"##;
+
+    #[test]
+    fn an_allowed_plugins_commands_join_the_registry_and_leave_when_it_is_turned_off() {
+        let f = Setup::with_manifest(&echo(0), contributing_manifest(), "", &[("fixture.svg", ICON)]);
+        boxed().execute("file.save", &json!({"path": f.file("part.fixd")})).unwrap();
+        let mut s = f.session(true);
+        let dir = f.root.join("plugins");
+        let id = "plugin.fixture-importer.import";
+        // Installed but turned off, or not allowed: no command.
+        let none = std::collections::BTreeMap::new();
+        crate::plugin::contrib::sync(Some(&dir), &none, &Default::default(), &|_| true);
+        assert!(crate::find_command(id).is_none());
+        crate::plugin::contrib::sync(Some(&dir), &s.plugin_approvals, &Default::default(), &|_| true);
+        let spec = crate::find_command(id).expect("an allowed plugin's command is a command");
+        assert_eq!((spec.label, spec.tab, spec.panel), ("Import fixture", "INSERT", "FIXTURES"));
+        assert_eq!(spec.icon, "plugin:plugin.fixture-importer.import");
+        assert!(spec.shortcut.is_none(), "Ctrl+O is Open's");
+        let c = spec.plugin.unwrap();
+        assert_eq!(c.icon_svg.as_deref(), Some(ICON));
+        assert!(crate::command_specs().iter().any(|c| c.id == id));
+
+        // It runs like any command, its parameters checked against the declaration first.
+        let before = s.doc.to_json();
+        for bad in [
+            json!({"path": f.file("part.fixd"), "preset": "slow"}),
+            json!({"path": f.file("part.fixd"), "scale": 9}),
+            json!({"path": f.file("part.fixd"), "colour": 1}),
+            json!({}),
+        ] {
+            assert!(s.execute(id, &bad).is_err(), "{bad}");
+            assert_eq!(s.doc.to_json(), before);
+        }
+        let out = s.execute(id, &json!({"path": f.file("part.fixd"), "preset": "fast"})).unwrap();
+        assert_eq!(out["plugin"], "fixture-importer");
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 600.);
+        // Into the open design: its geometry joins as a component, in one undo step.
+        let mut current = f.session(true);
+        current.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+        let undo = current.undo.len();
+        let out = current.execute(id, &json!({"path": f.file("part.fixd"), "into": "current"})).unwrap();
+        assert_eq!(out["into"], "current");
+        assert_eq!(
+            current.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().map(|v| (v - 601.).abs() < 1e-6),
+            Some(true)
+        );
+        assert_eq!(current.undo.len(), undo + 1);
+        current.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(
+            current.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().map(|v| (v - 1.).abs() < 1e-6),
+            Some(true)
+        );
+
+        // Turned off: gone from the registry, and refused if called by id from before.
+        let off: std::collections::BTreeSet<String> = ["fixture-importer".to_string()].into();
+        s.disabled_plugins = off.clone();
+        assert!(s.execute(id, &json!({"path": f.file("part.fixd")})).is_err());
+        crate::plugin::contrib::sync(Some(&dir), &s.plugin_approvals, &off, &|_| true);
+        assert!(crate::find_command(id).is_none());
+    }
+
+    #[test]
+    fn contributions_are_checked_and_icons_are_part_of_the_approval() {
+        let parse = |m: &Value| parse_manifest(&serde_json::to_vec(m).unwrap(), "fixture-importer");
+        assert!(parse(&contributing_manifest()).is_ok());
+        for (path, value) in [
+            ("/contributes/commands/0/id", json!("Import")),
+            ("/contributes/commands/0/entry", json!("make")),
+            ("/contributes/commands/0/icon", json!("../x.svg")),
+            ("/contributes/commands/0/params/0/options", json!([])),
+            ("/contributes/commands/0/params/1/type", json!("selection")),
+            ("/contributes/commands/0/params/0/name", json!("path")),
+            ("/contributes/toolbar/0/tab", json!("insert")),
+            ("/contributes/toolbar/0/commands", json!(["other"])),
+        ] {
+            let mut m = contributing_manifest();
+            let mut at = &mut m;
+            for key in path.split('/').skip(1) {
+                at = match key.parse::<usize>() {
+                    Ok(i) => &mut at[i],
+                    Err(_) => &mut at[key],
+                };
+            }
+            *at = value;
+            assert!(parse(&m).is_err(), "{path}");
+        }
+        // Contributions need a runtime.
+        let mut m = contributing_manifest();
+        m.as_object_mut().unwrap().remove("runtime");
+        assert!(parse(&m).is_err());
+        // A changed icon is changed content: it must be allowed again.
+        let f = Setup::with_manifest(&echo(0), contributing_manifest(), "", &[("fixture.svg", ICON)]);
+        let package = || crate::plugin::read_package(&f.file("package/fixture-importer")).unwrap().approval;
+        let first = package();
+        std::fs::write(f.root.join("package/fixture-importer/fixture.svg"), ICON.replace("M8 8", "M9 9")).unwrap();
+        assert_ne!(package(), first);
+    }
+
+    #[test]
+    fn a_host_that_runs_importers_itself_is_asked_then_answered() {
+        let mut m = importer_manifest(&["fixd"]);
+        m["runtime"]["web"] = json!({"module": "plugin-web.wasm"});
+        let f = Setup::with_manifest(&echo(0), m, "", &[("plugin-web.wasm", "\0asm web module")]);
+        let mut source = boxed();
+        source.execute("file.save", &json!({"path": f.file("source.sc")})).unwrap();
+        std::fs::copy(f.file("source.sc"), f.file("part.fixd")).unwrap();
+        let mut s = f.session(true);
+        // The browser module is installed with the package and is part of its approval.
+        let package = crate::plugin::read_package(&f.file("plugins/fixture-importer")).unwrap();
+        assert_eq!(package.web_module.as_deref(), Some(&b"\0asm web module"[..]));
+        let before = s.doc.to_json();
+        let params = json!({"path": f.file("part.fixd")});
+        let (r, asked) = crate::plugin::ask_host(|| s.execute("file.import", &params));
+        assert!(r.is_err(), "nothing runs while the host is asked");
+        assert_eq!(s.doc.to_json(), before);
+        let asked = asked.expect("the import is handed to the host");
+        assert_eq!((asked.plugin.as_str(), asked.file_name.as_str()), ("fixture-importer", "part.fixd"));
+        assert_eq!(asked.approval, package.approval);
+        assert_eq!(asked.web_module.as_deref(), Some(&b"\0asm web module"[..]));
+        assert_eq!(asked.bytes, std::fs::read(f.file("part.fixd")).unwrap());
+        assert!(asked.options.contains("\"into\":\"new\""), "{}", asked.options);
+        // The host's answer, for that very import, finishes the command as a native run would.
+        let result = crate::plugin::web_abi::imported(0, asked.bytes.clone(), b"from the host", &[]).map_err(|e| e.to_string());
+        let out = crate::plugin::answer_host(&asked.key, result, || s.execute("file.import", &params)).unwrap();
+        assert_eq!(out["notes"], "from the host");
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"], 600.);
+        // An answer for another import is refused, and so is the error a host reports.
+        let wrong = crate::plugin::answer_host("not this one", Err("x".into()), || s.execute("file.import", &params));
+        assert!(wrong.unwrap_err().to_string().contains("changed"));
+        let failed = crate::plugin::answer_host(&asked.key, Err("time limit".into()), || s.execute("file.import", &params));
+        assert!(failed.unwrap_err().to_string().contains("time limit"));
+        // A changed web module is changed content.
+        std::fs::write(f.root.join("plugins/fixture-importer/plugin-web.wasm"), b"other").unwrap();
+        assert_ne!(crate::plugin::read_package(&f.file("plugins/fixture-importer")).unwrap().approval, package.approval);
+    }
+
+    #[test]
+    fn a_step_payload_imports_as_geometry_and_native_formats_keep_their_own_path() {
+        let f = Setup::new(&echo(1), &["fixs", "step"]);
+        let mut source = boxed();
+        source.execute("file.export", &json!({"path": f.file("source.step")})).unwrap();
+        std::fs::copy(f.file("source.step"), f.file("part.fixs")).unwrap();
+        let mut s = f.session(true);
+        let out = s.execute("file.import", &json!({"path": f.file("part.fixs")})).unwrap();
+        assert_eq!(out["payload"], "step");
+        assert_eq!(s.execute("inspect.measure", &json!({})).unwrap()["total"]["volume_mm3"].as_f64().map(|v| (v - 600.).abs() < 1e-6), Some(true));
+        // SolidCraft reads STEP itself; the plugin's claim does not take it over.
+        let native = s.execute("file.import", &json!({"path": f.file("source.step")})).unwrap();
+        assert!(native.get("plugin").is_none(), "{native}");
+        // Unless the caller names the importer.
+        let named = s.execute("file.import", &json!({"path": f.file("source.step"), "plugin": "fixture-importer"})).unwrap();
+        assert_eq!(named["plugin"], "fixture-importer");
+    }
+
+    /// Cancels the import it watches once `after` has passed, and keeps the stages it hears.
+    struct CancelAfter {
+        at: std::time::Instant,
+        stages: std::sync::Mutex<Vec<&'static str>>,
+    }
+    impl solidcraft_kernel::watch::Watch for CancelAfter {
+        fn cancelled(&self) -> bool {
+            std::time::Instant::now() >= self.at
+        }
+        fn progress(&self, stage: &'static str, _: usize, _: usize) {
+            self.stages.lock().unwrap().push(stage);
+        }
+    }
+
+    #[test]
+    fn cancel_stops_a_running_importer_and_leaves_the_design_untouched() {
+        // An importer that never finishes on its own (its deadline is 5 s).
+        let mut m = importer_manifest(&["fixd"]);
+        m["runtime"]["limits"]["fuel"] = json!(50_000_000_000u64);
+        let f = Setup::with_manifest("(loop $spin (br $spin)) i32.const 0", m, "", &[]);
+        std::fs::write(f.file("part.fixd"), &b"x"[..]).unwrap();
+        let mut s = f.session(true);
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        let (before, undo) = (s.doc.to_json(), s.undo.len());
+        let watch =
+            std::sync::Arc::new(CancelAfter { at: std::time::Instant::now() + std::time::Duration::from_millis(300), stages: Default::default() });
+        let began = std::time::Instant::now();
+        let err = solidcraft_kernel::watch::watching(watch.clone(), || s.execute("file.import", &json!({"path": f.file("part.fixd")})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cancelled"), "{err}");
+        assert!(began.elapsed() < std::time::Duration::from_secs(4), "stopped by Cancel, not by its deadline");
+        assert_eq!(watch.stages.lock().unwrap().first(), Some(&"plugin.preparing"));
+        assert_eq!(s.doc.to_json(), before);
+        assert_eq!(s.undo.len(), undo);
+    }
+
+    #[test]
+    fn a_trapping_or_over_budget_importer_leaves_the_design_untouched() {
+        for body in [
+            "unreachable",
+            "(loop $spin (br $spin)) i32.const 0",
+            "i32.const 1024 memory.grow drop i32.const 0",
+            // A result pointing outside the importer's memory.
+            "i32.const 0 i32.const 0 i32.store8 i32.const 8 i32.const -16 i32.store i32.const 12 i32.const 64 i32.store i32.const 0",
+        ] {
+            let f = Setup::new(body, &["fixd"]);
+            std::fs::write(f.file("part.fixd"), b"not a design").unwrap();
+            let mut s = f.session(true);
+            s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+            let (before, undo) = (s.doc.to_json(), s.undo.len());
+            assert!(s.execute("doc.open", &json!({"path": f.file("part.fixd")})).is_err(), "{body}");
+            assert_eq!(s.doc.to_json(), before, "{body}");
+            assert_eq!(s.undo.len(), undo);
+            // The session still works.
+            s.execute("solid.box", &json!({"length":1,"width":1,"height":1})).unwrap();
+        }
+        // An importer whose design does not read is refused the same way.
+        let f = Setup::new(&echo(0), &["fixd"]);
+        std::fs::write(f.file("part.fixd"), b"not a design").unwrap();
+        let mut s = f.session(true);
+        let before = s.doc.to_json();
+        assert!(s.execute("doc.open", &json!({"path": f.file("part.fixd")})).is_err());
+        assert_eq!(s.doc.to_json(), before);
+    }
+
+    #[test]
+    fn an_importer_cannot_reach_files_or_anything_beyond_its_world() {
+        // A component asking for engine commands (or anything else outside the importer world
+        // and its empty WASI) never starts.
+        for import in [
+            r#"(import "solidcraft:plugin/engine@0.1.0" (instance (export "run" (func (param "command" string) (result string)))))"#,
+            r#"(import "wasi:http/outgoing-handler@0.2.0" (instance))"#,
+            r#"(import "wasi:sockets/instance-network@0.2.0" (instance))"#,
+        ] {
+            let f = Setup::with_import(&echo(0), &["fixd"], import);
+            std::fs::write(f.file("part.fixd"), &b"x"[..]).unwrap();
+            let mut s = f.session(true);
+            let before = s.doc.to_json();
+            let err = s.execute("file.import", &json!({"path": f.file("part.fixd")})).unwrap_err().to_string();
+            assert!(err.contains("solidcraft:plugin/engine") || err.contains("wasi:http") || err.contains("wasi:sockets"), "{err}");
+            assert_eq!(s.doc.to_json(), before);
+        }
+        // The in-memory WASI returns no preopened directories (covered by the adapter test).
+        // Only the file's name crosses, never the folders it is in.
+        let f = Setup::new(&echo(0), &["fixd"]);
+        let mut source = boxed();
+        std::fs::create_dir_all(f.root.join("deep")).unwrap();
+        source.execute("file.save", &json!({"path": f.file("deep/part.fixd"), "format": "container"})).unwrap();
+        let mut s = f.session(true);
+        let out = s.execute("file.import", &json!({"path": f.file("deep/part.fixd")})).unwrap();
+        assert_eq!(out["notes"], "part.fixd");
+    }
+}
+
+fn zip_of(files: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, bytes) in files {
+        z.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+        z.write_all(bytes).unwrap();
+    }
+    z.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_package_file_unpacks_to_plain_files_at_its_top_or_in_one_folder() {
+    let manifest = serde_json::to_vec(&manifest()).unwrap();
+    for layout in [
+        vec![("plugin.json", &manifest[..]), ("plugin.wasm", &b"x"[..])],
+        vec![("sample/plugin.json", &manifest[..]), ("sample/plugin.wasm", &b"x"[..])],
+    ] {
+        let (id, files) = super::unpack(&zip_of(&layout)).unwrap();
+        assert_eq!(id, "sample");
+        assert_eq!(files.keys().map(String::as_str).collect::<Vec<_>>(), ["plugin.json", "plugin.wasm"]);
+    }
+    for bad in [
+        vec![("plugin.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), ("../evil.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), ("a/b/plugin.wasm", &b"x"[..])],
+        vec![("a/plugin.json", &manifest[..]), ("b/plugin.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), ("sub/plugin.wasm", &b"x"[..])],
+        vec![("plugin.json", &manifest[..]), (".hidden", &b"x"[..])],
+    ] {
+        assert!(super::unpack(&zip_of(&bad)).is_err(), "{bad:?}");
+    }
+    assert!(super::unpack(b"not a zip").is_err());
+}

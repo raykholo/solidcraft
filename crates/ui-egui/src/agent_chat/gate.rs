@@ -77,6 +77,9 @@ fn reads_only(id: &str) -> bool {
 /// Commands that read or write a file by their nature: any string they are given in a path
 /// parameter is a file, whatever it looks like.
 fn is_file_verb(id: &str) -> bool {
+    if matches!(id, "plugin.inspect" | "plugin.install" | "plugin.remove") {
+        return true;
+    }
     id.starts_with("library.") || ["export", "import", "save", "open", "insert", "load", "write", "recover"].iter().any(|v| id.contains(v))
 }
 
@@ -124,6 +127,19 @@ pub fn command(id: &str, params: &Value, undo_left: usize) -> Verdict {
     }
     if id.starts_with("app.") || id.starts_with("prefs.") {
         return Verdict::Refuse(format!("`{id}` is not available in the agent chat"));
+    }
+    // External executable code always needs a user decision; the digest is not consent by itself.
+    if id == "plugin.run" {
+        let shown =
+            |key: &str| params.get(key).and_then(Value::as_str).unwrap_or_default().chars().filter(|c| !c.is_control()).take(200).collect::<String>();
+        let path = shown("path");
+        let entry = shown("entry");
+        return Verdict::Ask(solidcraft_ui_text::format("ui.plugin_run_consent", &[("entry", &entry), ("path", &path)]));
+    }
+    // A command an allowed plugin added runs that plugin: the user decides each time.
+    if let Some(c) = solidcraft_engine::find_command(id).and_then(|spec| spec.plugin.map(|c| (spec.label, c))) {
+        let (label, c) = c;
+        return Verdict::Ask(solidcraft_ui_text::format("ui.plugin_command_consent", &[("command", label), ("plugin", &c.plugin_name)]));
     }
     // Files, and commands that replace or reload the whole design.
     let file_command = id.starts_with("file.") || id.starts_with("doc.") || matches!(id, "render.export" | "render.start");
@@ -351,6 +367,16 @@ mod tests {
         for m in ["document.export", "document.import", "document.saved"] {
             assert!(matches!(request(m, &json!({}), 0), Verdict::Refuse(_)), "{m}");
         }
+    }
+
+    #[test]
+    fn external_plugin_code_always_requires_consent() {
+        crate::i18n::install();
+        let _english = solidcraft_ui_text::scope("en");
+        let verdict = exec("plugin.run", json!({"path":"sample","approval":"from-inspect","entry":"make"}));
+        let Verdict::Ask(question) = verdict else { panic!("external plugin needs consent") };
+        assert!(question.contains("sample") && question.contains("make"), "{question}");
+        assert!(matches!(exec("plugin.inspect", json!({"path":"sample"})), Verdict::Ask(_)));
     }
 
     #[test]

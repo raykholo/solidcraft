@@ -276,7 +276,7 @@ const MAX_BATCH: usize = 10_000;
 /// Commands that load a file: through `engine.execute` they go to the app's file loader
 /// (`file_load::control`: off the window thread, with progress and Cancel), which a batch would
 /// bypass.
-const LOADS_A_FILE: [&str; 5] = ["doc.open", "file.insert_step", "file.insert_mesh", "pointcloud.insert", "pointcloud.reload"];
+const LOADS_A_FILE: [&str; 6] = ["doc.open", "file.import", "file.insert_step", "file.insert_mesh", "pointcloud.insert", "pointcloud.reload"];
 
 /// Edit in Place, Finish Edit and the next or previous tab go to another design's tab: a batch's
 /// rollback, or a script's later steps, would land in the wrong design.
@@ -295,6 +295,9 @@ fn switches_design(step: &Value) -> Option<&'static str> {
 /// Why `engine.batch` refuses these steps before running any: a step loads a file or switches
 /// to another design (send such steps one by one).
 pub(crate) fn batch_refusal(steps: &[Value]) -> Option<String> {
+    if steps.iter().any(|s| batch_step_command(s) == Some("plugin.run")) {
+        return Some(solidcraft_ui_text::tr("ui.plugin_standalone").into());
+    }
     if let Some((i, c)) = steps.iter().enumerate().find_map(|(i, step)| switches_design(step).map(|c| (i, c))) {
         return Some(format!("engine.batch unavailable: step {i} ({c}) switches to another design"));
     }
@@ -420,6 +423,9 @@ fn script(app: &mut SolveApp, p: &Value) -> Outcome {
         Ok(steps) => steps,
         Err(e) => return err(e),
     };
+    if steps.iter().any(|step| batch_step_command(step) == Some("plugin.run")) {
+        return err(solidcraft_ui_text::tr("ui.plugin_standalone"));
+    }
     if let Some(c) = steps.iter().find_map(switches_design) {
         return err(format!("engine.script unavailable: {c} switches to another design (send it on its own)"));
     }
@@ -938,6 +944,15 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
             let Some(id) = s("command") else { return err("missing `command`") };
             // `params`: what the dialog opens on. Refused: nothing starts, or the dialog closes.
             let params = p.get("params").filter(|v| !v.is_null());
+            // A plugin's command opens its dialog on the given file (an importer's `path`),
+            // without asking for one.
+            if crate::dialogs_plugin::handles(id) {
+                let path = params.and_then(|p| p.get("path")).and_then(Value::as_str).map(str::to_string);
+                if let Err(e) = crate::dialogs_plugin::open_for(app, id, path) {
+                    return err(e);
+                }
+                return ok(json!({"dialog": app.dialog.as_ref().map(|d| format!("{d:?}"))}));
+            }
             if params.is_some() && id != "joint.drive" && id != "motion.study" {
                 return err(format!("`{id}` takes no ui.start params yet (joint.drive takes joint, values; motion.study takes study)"));
             }

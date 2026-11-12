@@ -1,0 +1,12 @@
+[package]
+# Stands in for `getrandom` (see src/lib.rs); the plugin's Cargo.toml patches it in.
+name = "getrandom"
+version = "0.4.3"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[features]
+std = []
+sys_rng = []
+wasm_js = []

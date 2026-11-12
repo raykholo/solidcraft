@@ -459,6 +459,7 @@ fn file_rows(app: &SolveApp) -> Vec<app_bar::FileRow> {
     recent.push(FileRow::Separator);
     recent.push(button("clear_recent", app.tr("ui.clear_recent"), "delete", None));
     rows.push(FileRow::Sub { label: app.tr("ui.open_recent").to_string(), rows: recent });
+    rows.push(row("file.import", &format!("{}…", app.tr_label("Import")), "", "import", true));
     rows.push(row("file.insert_step", &format!("{}…", app.tr_label("Insert STEP")), "", "import", shown));
     rows.push(row("file.insert_mesh", &format!("{}…", app.tr_label("Insert Mesh")), "", "import", shown));
     rows.push(row("pointcloud.insert", &format!("{}…", app.tr_label("Insert Point Cloud")), "", "import", shown));
@@ -521,7 +522,7 @@ fn run_file_row(app: &mut SolveApp, id: &str) {
         "file.export_obj" => FileAction::Command("file.export_obj").run(app),
         "file.export_urdf" => FileAction::Command("file.export_urdf").run(app),
         "document.metadata" => FileAction::Command("document.metadata").run(app),
-        "pointcloud.insert" | "file.send_to_slicer" => app.start(id),
+        "file.import" | "pointcloud.insert" | "file.send_to_slicer" => app.start(id),
         "save" => FileAction::Save.run(app),
         "save_as" => FileAction::SaveAs.run(app),
         "save_json" => FileAction::SaveJson.run(app),

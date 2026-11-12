@@ -11,6 +11,25 @@ pub use crate::ui_kit::icons::{
 };
 use solidcraft_look::icons::SET;
 
+/// The largest plugin icon accepted.
+pub const MAX_PLUGIN_ICON_BYTES: usize = 32 * 1024;
+
+/// Register a plugin icon through the shared renderer and its SVG parser.
+pub fn register_plugin_icon(name: &str, svg: &str) -> Result<(), String> {
+    if !name.starts_with("plugin:") || svg.len() > MAX_PLUGIN_ICON_BYTES {
+        return Err("a plugin icon is at most 32 KiB".into());
+    }
+    if !svg.contains(r#"viewBox="0 0 64 64""#) {
+        return Err("a plugin icon has viewBox=\"0 0 64 64\"".into());
+    }
+    SET.register_dynamic(name, svg)
+}
+
+/// Whether `name` is one of the app's own icons (not the placeholder).
+pub fn known(name: &str) -> bool {
+    !name.starts_with("plugin:") && !SET.resolve(name).placeholder
+}
+
 /// The master and accent for an app icon id: an alias (with its accent), a master of that name,
 /// or the placeholder.
 pub fn resolve(name: &str) -> Resolved {

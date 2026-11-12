@@ -1,0 +1,467 @@
+# Experimental command plugin runtime
+
+This is the implemented one-shot native runtime. It does not implement every part of
+[issue #1221](https://github.com/tangency-labs/solidcraft/issues/1221), the broader
+[interface proposal #4980](https://github.com/tangency-labs/solidcraft/pull/4980), or
+[Utilities placement proposal #4933](https://github.com/tangency-labs/solidcraft/pull/4933).
+The engine/log/store/command interface names and command world follow #4980; the initial package
+manifest uses an optional `runtime` block so old metadata-only packages still work. Its manifest
+layout and explicit per-invocation approval flow are deliberately documented as experimental,
+not as a claim that the outstanding design proposals have been accepted.
+
+## Boundary and lifecycle
+
+1. Put an independently built component beside a static `plugin.json` in its id folder.
+2. `plugin.inspect` reads bounded bytes through the caller's existing file scope and returns
+   the manifest and content approval hash. It neither instantiates the component nor invokes
+   a manifest function. Metadata can therefore be reviewed before code runs.
+3. The user reviews the package and explicitly calls `plugin.run` with that exact hash, an
+   exported entry and JSON parameters. The package is read once for this call; the bytes whose
+   hash was checked are the bytes compiled and executed. Changing the files afterward cannot
+   substitute different code for that invocation.
+4. The host creates a fresh Wasmtime engine/store, with fuel, epoch interruption and a resource
+   limiter, and links only the published component interfaces. No WASI is linked. Instantiation
+   and the entry share the same execution budget, including component start functions.
+5. `engine.run` reaches `Session::execute` on a scratch session, under an empty file scope.
+   Explicit paths and implicit reads during feature evaluation cannot inherit the caller's broader
+   file access. Results are bounded JSON. Refused calls poison the transaction, even if guest code
+   catches the error and returns success.
+6. The result must be valid JSON, every newly changed feature must evaluate, and the call must
+   remain within its budget. Only then are the native results accepted as one undo step.
+7. The desktop control channel performs the whole computation on a worker, warms the resulting
+   display and adopts the existing computed-commands transaction exactly once. A changed design,
+   authoring context, selection, disabled-plugin policy, or Stop prevents adoption. It does not
+   re-run the plugin on the window thread. Headless CLI execution is synchronous.
+
+No discovery, preference toggle, document open or saved feature executes a component. Every
+invocation gets a fresh instance, so guest memory is not persistent state. A design is data, never
+an instruction to install, approve, download or execute a package.
+
+## Manifest
+
+The metadata fields remain `id`, `name`, `version`, and optional `description`. IDs are 1..64
+lowercase letters, digits and hyphens, without a leading/trailing hyphen, and must equal the folder
+name. Names are at most 80 characters; versions at most 32; descriptions at most 240. Control
+characters and unknown fields are refused. The manifest has a 16 KiB byte cap.
+
+`runtime` is optional for metadata-only packages. Executable packages declare:
+
+| Field | Meaning |
+|---|---|
+| `api` | Exactly `solidcraft:plugin@0.1.0`; 0.x is not a stable API promise |
+| `module` | One lowercase `.wasm` file name within the package; no directories |
+| `entries` | 1..32 distinct entry ids passed to `command.execute` |
+| `commands` | At most 128 exact existing built-in command ids, intersected with host policy |
+| `limits` | Optional object with all of `fuel`, `memory_mib`, `deadline_ms`; omitted object uses defaults |
+
+The component must be a WebAssembly **component**, not an ordinary core `.wasm` module, DLL,
+executable or script. Unsupported imports fail instantiation; the host never falls back to starting
+another process. A dependency is not installed when a component fails to load.
+
+## Command and data surface
+
+The host admits existing `solid.*` and `sketch.*` commands (except file-based `sketch.insert_*`),
+plus `parameters.add/change/delete`, `timeline.add/inspect/redefine/delete`, `document.inspect`,
+`model.faces`, `model.edges`, `model.mesh` and `inspect.measure`. Admission still requires the exact
+id in the package manifest. New families require a host policy review. Wildcards, command aliases,
+plugin-to-plugin calls, batches/scripts and `file.*`/`doc.*` commands are not guest capabilities.
+The empty file scope also applies to a feature that names an external font or linked design.
+
+`model.mesh {body, tolerance?}` is a general read-only input boundary. Tolerance is a finite positive
+number in millimetres (default 0.05). It returns `body`, its owning `component`,
+`frame: "component-local-mm"`, `positions: [[x,y,z], ...]` and `triangles: [[i,j,k], ...]`. Indices are
+zero-based. The mesh is of the evaluated body, rather than only the original import's vertices.
+The command refuses more than 8192 vertices or 16384 triangles. A plugin's host-call result must
+also fit the JSON byte limit; a smaller mesh can still exceed that limit and be refused.
+No reconstruction, fitting, sewing, mesh replacement or conversion algorithm is part of this API.
+
+A plugin computes its specialised behaviour externally, then emits ordinary native commands or
+validated native features through `timeline.add`. New algorithms do not acquire private kernel
+entry points. This initial boundary does not promise arbitrary B-rep construction, a stable binary
+kernel serialization, persistent custom feature types, or automatically replaying plugin code on
+parameter changes. A later specialised plugin must prove its own geometry, failure, lineage,
+attachment, undo and reopen contracts in its own change.
+
+## Consent and identity
+
+`plugin.inspect` returns SHA-256 of a domain tag, the manifest byte length, exact manifest bytes,
+and exact component bytes. `plugin.run` compares it before instantiation. Whitespace changes to a
+manifest also require reinspection. A matching digest is an identity check, not a signature;
+reviewing permissions does not establish whether a publisher is trustworthy.
+
+There is no persistent automatic approval list in this version. A caller supplies the reviewed
+content identity on every invocation. Agent chat separately asks before running external code;
+its model cannot turn an inspected hash into user consent. A host or MCP caller is responsible
+for its existing user-consent policy and package-folder scope. Desktop disable preferences apply
+to the running desktop session and all plugin worker copies; a separate CLI process has its own
+policy, not the GUI's preferences.
+
+## Budgets and limits
+
+| Resource | Default / limit |
+|---|---|
+| Component input | 16 MiB; a package may ask for up to 128 MiB with `limits.component_mib` |
+| Guest fuel per invocation | 10,000,000; user host ceiling defaults to 100,000,000,000 |
+| Guest memory | 64 MiB; user host ceiling defaults to 128 MiB; one memory total |
+| Entry deadline | 5 s / 30 s |
+| Core instances / tables | 8 / 2 (guest plus canonical ABI shim) |
+| Table elements / guest stack | 10,000 / 512 KiB |
+| Host engine calls | 256 |
+| Params, one host result, final result | 1 MiB each, bounded JSON parser depth |
+| Log messages | 1 KiB each, 64 KiB per call; control characters stripped |
+
+Fuel counts metered Wasm operations rather than milliseconds. A substantial separately compiled
+CAD routine can use billions of fuel units. The default invocation budgets and default host
+ceilings above are unchanged. The initial 128 MiB host ceiling is a conservative policy choice,
+not a measured minimum or a guarantee that every plugin fits.
+
+### Change the host ceilings without rebuilding
+
+The native GUI persists `plugin_max_fuel`, `plugin_max_memory_mib` and `plugin_max_seconds` in
+user preferences. **Preferences > Plugins** asks one plain question, **How much a plugin may do
+before it's stopped**, with three choices, and says what the choice allows ("Up to 128 MB of
+memory and 30 seconds per run") and why: a plugin that runs longer or uses more memory is
+stopped, so a broken plugin can't freeze SolidCraft.
+
+| Choice | Work (fuel) | Memory | Time per run |
+|---|---|---|---|
+| Normal (the default) | 100,000,000,000 | 128 MiB | 30 s |
+| Large | 1,000,000,000,000 | 2048 MiB | 30 s |
+| Largest (trusted plugins only) | 18446744073709551615 | 4096 MiB | 30 s |
+
+Thirty seconds is the most any run may take, so the choices differ in work and memory; a lower
+time limit can be set by hand. Under **Advanced** are the exact numbers: **Work limit
+(instructions)**, **Memory limit (MiB)** and **Time limit (seconds)**; numbers that match no
+choice show as Custom. Enter, Apply or OK validates and accepts the three together;
+an incomplete or invalid field cannot silently save a numeric prefix. Cancel restores the last
+Apply/open snapshot. Restore defaults resets this page to the original host ceilings. The
+`ui.prefs` control method uses the same strict validation, and takes the choice itself as
+`{"plugin_limits": "normal" | "large" | "largest"}`. Agent chat cannot change preferences;
+guests have no preference or host-policy command.
+
+A standalone CLI or `mcp --headless` process can read the same two ceiling concepts from an
+explicit startup file:
+
+```json
+{"max_fuel": 200000000000, "max_memory_mib": 512}
+```
+
+```text
+solidcraft-cli --plugin-limits plugin-limits.json run inspect-plugin.json --results
+solidcraft-cli --plugin-limits plugin-limits.json mcp --headless --allow-path /path/to/plugins
+```
+
+This UTF-8 JSON file is at most 16 KiB; a UTF-8 BOM is accepted for Windows editors. Its keys are
+`max_fuel`, `max_memory_mib` and `max_deadline_ms` (1..30000); missing keys use the original host defaults, while unknown keys,
+zero, fractional and out-of-range values are refused. The CLI reads it once before creating
+local sessions. Omit the flag to use the original ceilings. `--connect` and non-headless `mcp`
+refuse this flag because the connected desktop owns its preferences. GUI preferences and CLI
+startup files are separate user settings; a package or saved design cannot supply either.
+
+Both host and manifest accept positive integer fuel through 18446744073709551615 (`u64::MAX`),
+without conversion through floating-point controls. Memory accepts 1..4096 MiB: the remaining
+4096 MiB maximum is the technical Wasm32 address-space boundary (65536 pages of 64 KiB), not
+the old policy ceiling. Memory64 remains disabled and only one linear memory is allowed. A
+higher ceiling does not reserve memory or guarantee allocation; select a value your machine
+can sustain. The 30-second maximum deadline and the other fixed limits in the table remain.
+
+### Approve the package's actual request
+
+`runtime.limits` still determines the invocation's fuel, memory and deadline. Omitting that
+object still requests 10 million fuel, 64 MiB and 5000 ms, even under much larger host ceilings.
+`plugin.inspect` accepts a structurally valid larger request without instantiating it. Its reply
+contains the exact requested manifest limits, current `host_limits`, `within_host_limits`, and
+an optional `limits_error`. Inspect and review the code, grants and budgets first. If needed,
+explicitly raise the host ceilings, then pass the inspected content hash to `plugin.run`.
+The content hash covers the declared budgets: editing them requires fresh inspection and approval.
+Raising a host ceiling alone never approves content, increases a request, executes or retries it.
+The host rechecks the current ceilings before compilation/execution. Lowering them can refuse a
+previously approved package. Desktop results prepared under changed ceilings or disable settings
+are discarded rather than adopted into the current design. Settings survive new/open design
+operations and scratch copies, but are never serialized as design data.
+
+Fuel and epoch checks contain guest execution, not arbitrary native work. Component compilation
+happens before the guest deadline; its input size is bounded, but compiler memory/time are not
+covered by guest fuel. Each approved native command runs under its existing engine/kernel limits;
+the guest deadline prevents more commands rather than forcibly interrupting a native call.
+The desktop worker keeps this work off the window thread. Stop drops adoption; an already running
+worker finishes unseen. It does not synchronously kill a native compiler or kernel call.
+
+Execution errors report the root cause before the Wasm backtrace, the typed trap (for example
+`OutOfFuel`, `Interrupt`, `MemoryOutOfBounds` or `UnreachableCodeReached`), consumed and remaining
+fuel, and the configured fuel, memory and deadline limits. A host/linker/resource error can have
+`trap=none`; its complete cause chain is still reported, including a refused memory/table growth.
+`Interrupt` identifies epoch interruption; it is distinct from fuel exhaustion. These diagnostics
+do not automatically retry a component, raise its limits or adopt a failed transaction. Successful
+invocations also write consumed/remaining fuel to the existing debug logger. In the CLI, pass
+`--debug` to see these counters on stderr; normal command output and plugin result JSON stay the
+same. No model contents or package paths are included in that counter message.
+
+Command plugins have no on-disk compiled-code cache (importers do, see below), and there is no
+unsafe deserialization in SolidCraft's code, WASI filesystem/clock/socket/process API for command plugins, network integration, persistent store, signed index, custom panels or icons.
+The WIT store interface is present for command-world compatibility, but operations are denied;
+`previous-version` returns none. `manifest()` is not used.
+
+## Importer plugins
+
+An importer converts one file into a design. Its package declares `"kind": "importer"` and the
+formats it converts, and grants nothing else:
+
+```json
+{
+  "id": "dutchman-convert",
+  "name": "Dutchman Convert",
+  "version": "0.1.0",
+  "runtime": {
+    "api": "solidcraft:plugin@0.1.0",
+    "module": "plugin.wasm",
+    "kind": "importer",
+    "formats": [{ "extension": "f3d", "name": "Fusion design" }],
+    "limits": { "fuel": 100000000000, "memory_mib": 1024, "deadline_ms": 30000 }
+  }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | `command` (the default: entries and `plugin.run`) or `importer` |
+| `formats` | 1..32 `{extension, name}`: an extension of 1..16 letters and digits (a leading dot and case are ignored), and the name File > Import shows |
+| `entries`, `commands` | Must be empty: an importer has no entries and is granted no engine commands |
+| `limits.component_mib` | Any package: the largest component file it ships, 1..128 MiB (default 16). An importer that links several decoders and a design writer needs more than 16 MiB. The value is part of the approved manifest, and the Plugins page shows it |
+
+### The importer world
+
+```wit
+interface importer {
+    use types.{plugin-error};
+    variant payload { design(list<u8>), step(list<u8>) }
+    record imported { payload: payload, notes: string }
+    %import: func(file-name: string, bytes: list<u8>) -> result<imported, plugin-error>;
+}
+interface import-context {
+    enum stage { reading, decoding, mapping, writing }
+    options: func() -> string;
+    progress: func(stage: stage, done: u32, total: u32);
+}
+world importer-plugin {
+    import log;
+    import import-context;
+    export importer;
+}
+```
+
+`import-context.options()` returns the options the user chose, as a JSON object: the checked
+values of the parameters the package's import command declares (see Contributions), plus
+`into` (`new` or `current`). `progress` names the step the import is on; the app's progress
+card shows it, and Cancel stops the importer at its next check (epoch interruption), leaving
+the open design as it was. A component that imports neither still runs.
+
+The host reads the file the user chose, inside the caller's file scope, and passes its name
+(without folders) and its bytes, at most 512 MiB. That is all the component gets: the world has
+no engine, store or file interfaces. So that a standard `wasm32-wasip2` build links, the host
+also gives an importer a small in-memory WASI adapter: no preopened folders, arguments or
+environment, closed standard input, discarded output, a wall clock fixed at the Unix epoch,
+a monotonic clock that counts its own readings, and fixed "random" bytes. Unsupported
+operations trap. It uses no `wasmtime-wasi` dependency or operating-system WASI host.
+Only the adapter's explicit CLI, clock, filesystem, I/O and random interfaces can link.
+Socket and HTTP interfaces are absent: components importing either fail instantiation.
+There is no `fetch` import, and any manifest asking for `net` is refused before approval.
+Command plugins get no WASI at all.
+
+**The result contract.** `design` is a SolidCraft design container, the same `.sc` bytes the
+app opens and saves. This is the preferred result: a converter that maps the source's feature
+history onto SolidCraft features hands that history over as it is, so the imported design
+stays editable (sketches, parameters, the timeline). `step` is STEP text, for importers that
+carry geometry only: the host imports it exactly as it imports a STEP file, as one Import
+feature in a component named after the file. A design was chosen over a list of commands
+because the design is already the stable, versioned, validated exchange format: SolidCraft
+upgrades older format versions on open, checks every feature on rebuild, and the importer needs
+no engine access or round trips. `notes` is plain text for the user, at most 64 KiB: what did
+not come across. Log messages are appended to it.
+
+The design opens as a new, unsaved design in its own tab; the source file is never its path.
+Nothing is changed until the whole import succeeds: a trap, exhausted fuel or memory, a missed
+deadline, an error result or a design that does not read leaves the open design and its undo
+history as they were.
+
+### Importers in the browser: the web ABI
+
+Browsers run core WebAssembly modules, not components. An importer that also works in the
+SolidCraft web app ships a second build of itself, a core module (for `wasm32-wasip1`, or
+`wasm32-unknown-unknown` when it needs no standard-library clock), named in its manifest:
+
+```json
+"runtime": { "kind": "importer", "module": "plugin.wasm", "web": { "module": "plugin-web.wasm" }, … }
+```
+
+The web module is part of what the user approves: the approval hash covers it with the manifest,
+the component and the icons. It has this small C-style interface (`i32` throughout):
+
+| | Name | Meaning |
+|---|---|---|
+| import | `env.memory` | Its only memory, made by the host with the package's memory limit as its maximum (link with `--import-memory`) |
+| import | `env.sc_progress(stage, done, total)` | The step it is on: 0 reading, 1 decoding, 2 mapping, 3 writing |
+| import | `env.sc_log(ptr, len)` | A line for the notes (UTF-8, at most 1 KiB) |
+| export | `sc_alloc(len) -> ptr` | Room for `len` bytes the host writes into |
+| export | `sc_import(name_ptr, name_len, bytes_ptr, bytes_len, options_ptr, options_len) -> handle` | Convert the file (its name, its bytes, the options as JSON, as `import-context.options` gives them) |
+| export | `sc_result_kind(handle)` | 0 a SolidCraft design, 1 STEP text, 2 failed (the payload is then the error) |
+| export | `sc_result_ptr(handle)`, `sc_result_len(handle)` | The payload |
+| export | `sc_notes_ptr(handle)`, `sc_notes_len(handle)` | What did not come across |
+| export | `sc_free(handle)` | The host is done with the result |
+| import | `wasi_snapshot_preview1.*` (optional) | The calls Rust's standard library makes: arguments, environment, clocks, random bytes, output, file descriptors. They are answered with nothing real: no arguments, environment or files (every descriptor is bad), a clock that counts its own readings, fixed "random" bytes, and output that goes to the log |
+| export | `_initialize` (optional) | A WASI reactor's start-up code, called once first |
+
+The WASI functions it may import are `args_get`, `args_sizes_get`, `clock_res_get`,
+`clock_time_get`, `environ_get`, `environ_sizes_get`, `fd_close`, `fd_fdstat_get`,
+`fd_fdstat_set_flags`, `fd_filestat_get`, `fd_prestat_dir_name`, `fd_prestat_get`, `fd_read`,
+`fd_readdir`, `fd_seek`, `fd_sync`, `fd_tell`, `fd_write`, `path_create_directory`,
+`path_filestat_get`, `path_link`, `path_open`, `path_readlink`, `path_remove_directory`,
+`path_rename`, `path_unlink_file`, `poll_oneoff`, `proc_exit`, and `random_get`.
+
+A module that imports anything else (a WASI function outside that list, `wasm-bindgen`'s glue,
+a function of its own choosing) is refused before it runs. The web app runs each import in a Web Worker of its own:
+the worker gets the compiled module, the file and the options; the module gets only the imports
+above, so it has no network, page, storage or clock. The package's time limit and Cancel end
+the worker, wherever the module is; the memory's maximum is the memory limit. There is no fuel
+in the browser: the time limit bounds the work. The browser keeps the module's bytes in Cache
+Storage and compiles them with `WebAssembly.compileStreaming`, so it caches the compiled code
+as well. Progress shows in the same file-load card as on the desktop, and the result goes
+through the same `file.import` (the command runs until it reaches the importer, the worker runs
+the import, then the command finishes with its result).
+
+Installed plugins are kept in the browser's private storage (OPFS), under `plugins/<id>/`. In
+the browser **Preferences › Plugins › Install plugin…** takes a package file: a `.zip` of
+`plugin.json`, the component, the web module, and any icons, at its top or in one folder.
+`plugin.install` takes such a file on the desktop too. Allow, Revoke, Turn off, and Remove work
+as on the desktop, pinned to the same hash.
+
+### Choosing the importer
+
+`file.import {path, plugin?, approval?}` opens a file as a new design:
+
+- A format SolidCraft reads itself (designs, STEP, IGES, FreeCAD, Rhino, meshes, drawings,
+  point clouds) keeps its own path, as `doc.open`.
+- Any other extension goes to the installed importer that claims it: enabled in Preferences >
+  Plugins and allowed for its exact content. When several claim it, the first by id wins.
+- `plugin: "<id>"` names an installed, allowed importer, even for a format SolidCraft reads.
+- `plugin: "<package folder>", approval: "<hash>"` runs a package that is not installed, as
+  `plugin.run` does, with the hash `plugin.inspect` returned after review. This is the way for
+  the CLI and scripts, which have no preferences.
+- `options: {..}` is handed to the importer; `into: "current"` adds the converted geometry to
+  the open design as a component named after the file (one undo step), instead of opening a
+  new design. Into the open design only the geometry comes along, not the source's history.
+
+`doc.open` routes a file it cannot read the same way, so File > Open, dropping a file on the
+window, Open Recent and the control channel all reach an allowed importer. In the desktop app
+both commands run on the file worker, off the window thread, with its progress and Cancel.
+The reply carries `plugin`, `plugin_version`, `payload` (`design` or `step`), `features`,
+`errors`, `name` and `notes`.
+
+### Install and allow
+
+`plugin.install {path, replace?}` copies a package folder into the plugins folder. It runs and
+allows nothing. Preferences > Plugins shows each package with code: an importer's formats (or a
+command plugin's commands), the fuel, memory and time it asks for, a warning when that exceeds
+the ceilings above, in words ("Needs up to about 1 GB of memory and 30 seconds per import", and
+which choice above runs it when the current one does not), and **Allow** / **Revoke**. Allow records the approval hash of the package as
+it is now in the `plugin_approvals` preference; a changed manifest or component no longer
+matches and must be allowed again. **Install plugin…** on the same page asks for a package's
+`plugin.json` and installs its folder. The control channel's `ui.prefs` takes
+`{"plugin_allow": "<id>"}` and `{"plugin_revoke": "<id>"}`; agent chat cannot change
+preferences and asks before `plugin.install` and `file.import`.
+
+The host runs each import on a thread of its own (a 64 MiB native stack, 16 MiB of it for Wasm
+frames, since decoders recurse deeply), under the package's fuel, memory and deadline, and
+keeps up to four compiled importers in memory by approval hash: compiling a large importer can
+take longer than running it. Compiled importers are also kept on disk, in `plugin-cache` beside
+the plugins folder, through Wasmtime's own compilation cache: an entry is found by a hash of the
+component's exact bytes, the engine's settings and the Wasmtime version, so a changed component,
+setting or release compiles again, and an entry that does not decompress or load is compiled
+again and replaced. Allowing an importer compiles it in the background. Only SolidCraft writes
+that folder; a package or a design never supplies compiled code.
+
+## Contributions: commands, ribbon, dialogs and icons
+
+A package with a runtime may add commands to the app. They are ordinary commands: the ribbon,
+command palette, search, shortcuts, control channel, MCP and CLI all reach them, by the id
+`plugin.<package id>.<command id>`, while the plugin is allowed for its exact content and turned
+on. Revoking, turning off or removing it takes them away.
+
+```json
+"publisher": "Dutchman",
+"icon": "icon.svg",
+"contributes": {
+  "commands": [{
+    "id": "import", "label": "Import CAD design", "tooltip": "…", "icon": "import",
+    "shortcut": "Ctrl+Shift+I", "when": "always",
+    "params": [
+      { "name": "preset", "label": "Preset", "type": "enum", "default": "standard",
+        "options": [{ "value": "standard", "label": "Standard" }, { "value": "fast", "label": "Fast" }] },
+      { "name": "keep_history", "label": "Keep history", "type": "bool", "default": true }
+    ]
+  }],
+  "toolbar": [{ "tab": "INSERT", "panel": "DUTCHMAN", "commands": ["import"] }]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `publisher` | Who publishes it, at most 80 characters (the Plugins page shows it) |
+| `icon` | The package's icon: an SVG file in the package |
+| `commands[].id` | 1..32 lowercase letters, digits and underscores |
+| `label`, `tooltip` | 1..40 and at most 240 characters |
+| `icon` | A built-in icon's name, or an SVG file in the package; the package's icon, else a generic plugin icon, when omitted |
+| `shortcut` | A suggestion; not bound when a built-in command (or an earlier plugin) has it |
+| `when` | `always`, `no_sketch` or `sketch` |
+| `entry` | A command plugin's entry the command runs; an importer's command imports a file and names none |
+| `params` | Up to 32: `number` (`unit`, `min`, `max`), `length` (mm), `angle` (degrees), `bool`, `enum` (`options`), `string`, `selection` (`accept`: faces, edges or bodies; `many`); each with `label`, optional `default`, `required` and `help` |
+| `toolbar` | A tab (an existing one, or a tab of the plugin's own) and a panel, in upper case, and the commands on it in order |
+
+From the ribbon, a command opens the app's own dialog drawn from its `params`; an importer's
+command first asks for a file of its formats, and its dialog adds where the result goes. Through
+`engine.execute`, the CLI or MCP it runs with JSON parameters and opens no dialog; an importer's
+takes `path` and `into` as well. The parameters are checked against the declaration before the
+plugin runs. The agent chat asks before running any of them. Over the control channel,
+`ui.start {"command": "<id>", "params": {"path": "…"}}` opens an importer command's dialog on
+that file, as the ribbon does after its file picker.
+
+Icons are SVG files of at most 32 KiB with `viewBox="0 0 64 64"`, drawn through the same parser
+as SolidCraft's own icons: only `svg`, `g`, `defs`, `mask`, `clipPath`, `path` and `circle`
+elements in the palette's colours. Anything else refuses the icon, and the generic plugin icon
+is drawn. Icon files are part of the approval hash.
+
+The standalone CLI has no preferences: `solidcraft-cli --allow-plugin ID=HASH …` (repeatable,
+local sessions only) allows an installed plugin for the exact content `plugin.inspect` hashed,
+and its commands join that run's registry:
+
+```text
+solidcraft-cli --allow-plugin dutchman-convert=<hash> run import.json
+```
+
+`plugin.remove {id}` deletes an installed package's folder and its approval.
+
+The [Dutchman Convert example](../examples/plugins/dutchman-convert/README.md) is a full
+importer: Fusion, Inventor, SolidWorks and FreeCAD files through Dutchman's design writer, with
+the feature history Dutchman maps (see its known limits).
+
+## Author an original plugin
+
+See [the Rust box example](../examples/plugins/example-box/README.md). It is intentionally a small
+native-command example, not a bundled production feature. The host compiles no plugin algorithm
+into SolidCraft. Rust first builds a core module with WIT metadata; `wasm-tools component new`
+wraps it as a component without a WASI adapter. Other languages may use the same published
+[WIT](../wit/solidcraft-plugin.wit) if they produce compatible components without unsupported imports.
+
+## Platforms and validation
+
+Native execution on x86-64 or AArch64 requires the engine's `plugins` Cargo feature.
+Other native architectures retain the commands but report that no execution host is available. The browser build runs
+importers that ship a web module (see above) and refuses command plugins, which need the native host. Turning off this feature
+keeps metadata, inspection and the general mesh query available while excluding Wasmtime.
+No new design format or custom `FeatureKind::Plugin` is introduced.
+
+The runtime tests use original generated components, not mocks of a successful plugin: host calls,
+two edits grouped into one undo step, measured volume, undo/redo and cold reopen after removing
+the package; guest traps, fuel/memory exhaustion, forbidden calls, stale approval, disabled plugins,
+and caller path scopes. The desktop tests cover worker scheduling and rejection of stale results.
+The PR records actual validation results; this guide is not a claim that a particular build passed.

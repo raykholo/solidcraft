@@ -580,6 +580,7 @@ fn services(cc: &eframe::CreationContext<'_>, folder: &DialogFolder) -> Services
     let file_parent = parent.clone();
     let (open_folder, file_folder, save_folder) = (folder.clone(), folder.clone(), folder.clone());
     Services {
+        run_plugin_import: None,
         pick_open: Some(Box::new(move |first: &[&str]| {
             // The chooser that opens may not be the desktop's own (#10159).
             #[cfg(target_os = "linux")]
