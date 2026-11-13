@@ -98,6 +98,9 @@ pub struct ViewportState {
     /// The sketches' box in the world of one world state (held, as `pick_bounds` is). Every
     /// `projection` reads it, several times a frame, and each sketch's box samples its curves.
     sketch_bounds: std::sync::Mutex<Option<(std::sync::Arc<solidcraft_engine::doc::ModelState>, solidcraft_engine::geom::Aabb3)>>,
+    /// Where each construction plane made from a face is drawn, for one world state (held, as
+    /// `pick_bounds` is): [`plane_face_covers`].
+    plane_faces: std::sync::Mutex<Option<PlaneFaces>>,
     /// Membership of the active assembly placement, shared by model and feedback rendering.
     active_bodies: std::sync::Mutex<Option<ActiveBodies>>,
     /// The model scene's blocks of bodies by key, from the last scene built.
@@ -2593,7 +2596,10 @@ pub fn construction_points(app: &SolveApp) -> Vec<(String, Vec3)> {
 
 /// Construction planes as drawn and picked: (name, normal, quad). A plane is a square of a fixed
 /// share of the view round its origin, grown past the edges of every body it passes through:
-/// zoomed in, the square alone fits inside the part and the body hides it (#13318). A component's
+/// zoomed in, the square alone fits inside the part and the body hides it (#13318). A plane made
+/// from a face is drawn over that face instead, at least a quarter of the square round the face's
+/// middle: its origin, the plane's point nearest the world origin, can be far from the part
+/// (#4345). A component's
 /// origin plane drawn like the design Origin's instead: a quarter of the square, from its origin
 /// along its own axes ([`origin_quads`]), so a placement's origin reads like the design's.
 pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
@@ -2601,11 +2607,19 @@ pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
     let h = size * 1.2;
     let st = crate::open_meshing::shown_world(app);
     let bodies = body_bounds(app, &st);
+    let faces = plane_face_covers(app, &st);
     solidcraft_engine::view::construction_planes(&app.session)
         .into_iter()
         .filter(|(_, n, _)| app.session.construction_visible(n))
         .map(|(_, name, pl)| {
-            let mut r = solidcraft_engine::geom::Aabb2 { min: Vec2::new(-h, -h), max: Vec2::new(h, h) };
+            let mut r = match faces.get(&name) {
+                // The face's size, and never smaller than a quarter of the square (zoomed out).
+                Some(face) => {
+                    let (c, m) = (face.center(), Vec2::new(0.25 * h, 0.25 * h));
+                    solidcraft_engine::geom::Aabb2 { min: c - m, max: c + m }.union(face)
+                }
+                None => solidcraft_engine::geom::Aabb2 { min: Vec2::new(-h, -h), max: Vec2::new(h, h) },
+            };
             for (_, b) in bodies.iter() {
                 r = r.union(&plane_cover(&pl, b));
             }
@@ -2625,6 +2639,51 @@ pub fn construction_quads(app: &SolveApp) -> Vec<(String, Vec3, [Vec3; 4])> {
             _ => None,
         }))
         .collect()
+}
+
+type PlaneFaces =
+    (std::sync::Arc<solidcraft_engine::doc::ModelState>, std::sync::Arc<std::collections::HashMap<String, solidcraft_engine::geom::Aabb2>>);
+
+/// For each construction plane made from a face
+/// ([`solidcraft_engine::view::construction_plane_faces`]), the rectangle in the plane's own
+/// coordinates that covers the face's display triangles seen along the plane's normal, with a
+/// tenth of its size to spare round it (cached until the model changes).
+fn plane_face_covers(
+    app: &SolveApp,
+    st: &std::sync::Arc<solidcraft_engine::doc::ModelState>,
+) -> std::sync::Arc<std::collections::HashMap<String, solidcraft_engine::geom::Aabb2>> {
+    if let Ok(g) = app.viewport.plane_faces.lock()
+        && let Some((k, covers)) = g.as_ref()
+        && std::sync::Arc::ptr_eq(k, st)
+    {
+        return covers.clone();
+    }
+    let planes: std::collections::HashMap<String, Plane> =
+        solidcraft_engine::view::construction_planes(&app.session).into_iter().map(|(_, name, pl)| (name, pl)).collect();
+    let mut covers = std::collections::HashMap::new();
+    for (name, body, faces) in solidcraft_engine::view::construction_plane_faces(&app.session) {
+        let (Some(pl), Some(b)) = (planes.get(&name), st.body(&body)) else { continue };
+        let mesh = b.mesh();
+        let mut r = solidcraft_engine::geom::Aabb2::EMPTY;
+        for (t, f) in mesh.triangles.iter().zip(&mesh.tri_face) {
+            if faces.contains(&(*f as usize))
+                && let Some(tri) = mesh.tri(t)
+            {
+                for p in tri {
+                    r.add(pl.to_local(p));
+                }
+            }
+        }
+        if !r.is_empty() {
+            let size = r.size();
+            covers.insert(name, r.inflated(size.x.max(size.y) * 0.1));
+        }
+    }
+    let covers = std::sync::Arc::new(covers);
+    if let Ok(mut g) = app.viewport.plane_faces.lock() {
+        *g = Some((st.clone(), covers.clone()));
+    }
+    covers
 }
 
 /// The rectangle in `pl` that covers box `b` seen along the plane's normal, with a tenth of its
@@ -3933,13 +3992,10 @@ pub(crate) fn sketch_constraint_at(app: &SolveApp, pos: Pos2, hit: Option<&Hit>)
 pub fn candidate(app: &SolveApp, hits: &[Hit]) -> Option<(Hit, Sel)> {
     if let Some(d) = app.dialog.as_ref().filter(|d| d.wants_picks()) {
         let snap = d.face_snap(&app.session, hits);
+        let snaps = crate::dialogs_assembly::takes_snaps(d);
         return hits.iter().find_map(|h| {
-            d.candidate_on(&app.session, h, snap.as_ref()).map(|s| {
-                (
-                    h.clone(),
-                    crate::dialogs_assembly::woken_pick(app, crate::dialogs_assembly::takes_snaps(d), crate::dialogs_move::component_pick(app, h, s)),
-                )
-            })
+            d.candidate_on(&app.session, h, snap.as_ref())
+                .map(|s| (h.clone(), crate::dialogs_assembly::woken_pick(app, snaps, crate::dialogs_move::component_pick(app, h, s))))
         });
     }
     hits.iter().filter(|h| pick_allowed(app, h)).find_map(|h| hit_candidate(app, h))
@@ -3951,19 +4007,12 @@ pub fn candidates(app: &SolveApp, hits: &[Hit]) -> Vec<(Hit, Sel)> {
         // The face under the cursor is looked up once for every sketch point a face place may
         // snap to, before Select Other caps its rows.
         let snap = d.face_snap(&app.session, hits);
+        let snaps = crate::dialogs_assembly::takes_snaps(d);
         return hits
             .iter()
             .filter_map(|h| {
-                d.candidate_on(&app.session, h, snap.as_ref()).map(|s| {
-                    (
-                        h.clone(),
-                        crate::dialogs_assembly::woken_pick(
-                            app,
-                            crate::dialogs_assembly::takes_snaps(d),
-                            crate::dialogs_move::component_pick(app, h, s),
-                        ),
-                    )
-                })
+                d.candidate_on(&app.session, h, snap.as_ref())
+                    .map(|s| (h.clone(), crate::dialogs_assembly::woken_pick(app, snaps, crate::dialogs_move::component_pick(app, h, s))))
             })
             .collect();
     }
@@ -4046,7 +4095,11 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
         return;
     }
     let sel = crate::dialogs_move::from_shown(app, sel);
+    // A joint origin picked among a hovered face's points remembers the face (#11476).
+    let snaps = app.dialog.as_ref().is_some_and(crate::dialogs_assembly::takes_snaps);
+    let from_face = crate::dialogs_assembly::face_point_source(app, snaps, &sel);
     let Some(mut d) = app.dialog.take() else { return };
+    let target = d.active;
     // With several holes on a face (Preferences), a Single hole's pick adds a hole or takes one
     // out; with holes moving by clicking, a Single hole picked again on its face moves there.
     // With Placement handles on, a Cylinder held by one reference edge moves along it on a pick.
@@ -4063,10 +4116,10 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
             // window stays on the input it was on (#11700).
             let on = d.active;
             d.active = 0;
-            d.pick(&app.session, sel);
+            d.pick(&app.session, sel.clone());
             d.active = on;
         }
-        crate::hole_place::PickMove::No => d.pick(&app.session, sel),
+        crate::hole_place::PickMove::No => d.pick(&app.session, sel.clone()),
         crate::hole_place::PickMove::Moved | crate::hole_place::PickMove::Spent => {
             d.focus = true;
             d.awaiting_pick = false;
@@ -4078,6 +4131,12 @@ pub(crate) fn dialog_pick(app: &mut SolveApp, hit: &Hit, sel: Sel) {
             d.awaiting_pick = false;
             d.pick_refused = None;
             d.refuse(app, why.to_string());
+        }
+    }
+    if let Some(input) = d.inputs.get_mut(target) {
+        input.from_face.retain(|(x, ..)| x != &sel && input.items.contains(x));
+        if let Some((kind, from)) = from_face.filter(|_| input.items.contains(&sel)) {
+            input.from_face.push((sel, kind, from));
         }
     }
     if let crate::dialogs::Kind::PathPlane { sketch, .. } = &mut d.kind {
@@ -4303,6 +4362,7 @@ fn highlight_geometry_key(app: &SolveApp) -> u64 {
     (std::sync::Arc::as_ptr(&crate::open_meshing::shown_world(app)) as usize).hash(&mut h);
     serde_json::to_string(&selected).unwrap_or_default().hash(&mut h);
     hover_drawn(&app.viewport.hover).hash(&mut h);
+    hover_drawn(&crate::snap_wake::lit_face(app)).hash(&mut h);
     hovered_body(app).hash(&mut h);
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
@@ -5041,8 +5101,10 @@ pub(crate) fn build_highlight(app: &SolveApp) -> GpuScene {
             }
         }
     }
-    // Hover (pre-highlight).
-    match hover {
+    // Hover (pre-highlight). In a joint origin input, the face whose point or edge is under the
+    // pointer is lit: the face a pick there lies on (#11476).
+    let lit = crate::snap_wake::lit_face(app);
+    match lit.as_ref().or(hover) {
         Some(Hit::Face { body, index, .. })
             if body_hover.as_ref() != Some(body)
                 && !replaced(body)
@@ -14882,7 +14944,7 @@ mod grid_plane_tests {
         assert!(app.picking_sketch_plane());
         assert_eq!(origin_planes(&app).len(), 3, "every origin plane is offered");
         let sc = build_highlight(&app);
-        assert_eq!(sc.xray.len(), 3 * 6 * (6 * 4 + 4), "each plane's two triangles are drawn through the model");
+        assert_eq!(sc.xray.len(), 3 * 6 * crate::gpu::TRI_SIZE, "each plane's two triangles are drawn through the model");
         assert!(sc.guide_trans.is_empty());
         app.dialog = None;
         assert!(origin_planes(&app).is_empty());
