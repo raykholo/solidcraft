@@ -223,7 +223,9 @@ pub mod params_dialog;
 pub mod personal_sheet_rules;
 pub(crate) mod pick_index;
 pub(crate) mod place_gizmo;
+mod plugin_slots;
 pub(crate) mod plugins;
+pub use plugins::ApprovedReview;
 pub mod point_clouds;
 pub mod prefs;
 pub mod prefs_notice;
@@ -837,6 +839,7 @@ pub struct SolveApp {
     control_answering: Vec<control_job::ControlJob>,
     /// Most recent completed inspection per session and package, ordered by request.
     plugin_inspection_versions: std::collections::BTreeMap<(u64, String), usize>,
+    plugin_slots: plugin_slots::State,
     /// The agent cursor acting out control requests.
     pub agent: agent_cursor::AgentCursor,
     /// The agent chat panel (docs/design/in-app-agent-chat.md).
@@ -1044,6 +1047,7 @@ impl SolveApp {
             agent_replies: Vec::new(),
             control_answering: Vec::new(),
             plugin_inspection_versions: Default::default(),
+            plugin_slots: Default::default(),
             agent: Default::default(),
             shots: solidcraft_control_egui::screenshot::Shots::new("no frame was presented (window hidden?); use ui.render"),
             styled: false,
@@ -1389,6 +1393,9 @@ impl SolveApp {
     /// Run a command programmatically (JSON parameters, no dialogs).
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
         crate::plugins::sync_policy(self);
+        if plugins::busy(self) && matches!(id.to_ascii_lowercase().as_str(), "plugin.install" | "plugin.remove" | "plugin.review") {
+            return Err(self.tr("prefs.plugin_busy").into());
+        }
         if id.eq_ignore_ascii_case("plugin.run")
             || solidcraft_engine::plugin::resolve_call(&self.session, id, &params).map_err(|e| e.to_string())?.is_some()
         {
@@ -1501,6 +1508,10 @@ impl SolveApp {
             _ => r,
         };
         if let Ok(v) = &r {
+            if matches!(id.to_ascii_lowercase().as_str(), "plugin.install" | "plugin.remove") {
+                plugins::persist_grants(self);
+                plugin_slots::invalidate(self);
+            }
             if id.eq_ignore_ascii_case("plugin.inspect")
                 && let Some(id) = v.pointer("/manifest/id").and_then(Value::as_str)
             {
@@ -3591,6 +3602,7 @@ impl SolveApp {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        plugins::tick(self, ui.ctx(), false);
         params_dialog::install_expressions(ui.ctx());
         prefs::prepare_blur(self, ui.ctx());
         render_workspace::displayed::begin(self);
@@ -3954,6 +3966,10 @@ impl SolveApp {
         let reply = req.reply.clone();
         match control::handle(self, ctx, &req) {
             control::Outcome::Done(v) => {
+                if self.preferences.plugin_grants != self.session.plugin_state.grants {
+                    plugins::persist_grants(self);
+                    plugin_slots::invalidate(self);
+                }
                 let _ = reply.send(v);
             }
             control::Outcome::Screenshot { path } => self.shots.request(ctx, path, reply, req.chat_turn, now_ms()),

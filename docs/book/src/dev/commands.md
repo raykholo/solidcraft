@@ -28,6 +28,46 @@ Only the registry's own dotted ids name commands (matched ignoring case); any ot
 with `unknown command`, which names up to three close ids: a typo's (`solid.extrud`), or one
 ending in the same word (`file.open`: did you mean `doc.open`?).
 
+## Plugin package commands
+
+Permission review, discovery and removal use the command surface. Programmatic calls never open
+file pickers or permission dialogs. The commands expose input and output schemas through
+`engine.describe`:
+
+| Command | Input | Output |
+|---|---|---|
+| `plugin.review` | `{path}` | `{manifest, requested: {command_groups, folders}, approval}` |
+| `plugin.list` | `{}` | `{plugins: [{manifest, commands, disabled}]}` |
+| `plugin.remove` | `{id}` | `{id, removed: true}` |
+
+A review path names a bounded zip or folder package. Review validates the package without
+installation or execution. Requested folders have names and read/write flags with empty paths.
+The host chooses absolute paths; each grant is `{name, folder, read, write}`. Grants may only
+narrow the manifest's requests. Removal validates the id, confines deletion to the host's plugin
+directory and removes the id's stored grants. These operations do not edit the design.
+
+On desktop, `plugin.review` and `plugin.remove` require separate `engine.execute` requests.
+`engine.batch` and `engine.script` reject them during preflight, before any earlier step runs.
+Direct calls use the package worker. The installer's future command must join the same preflight
+guard in `crates/ui-egui/src/control.rs` when it performs external file operations.
+
+The installer owns `plugin.install` and atomic package publication. Its integration uses
+`plugin::read_package_contents` for validated bytes and content identity, `plugin::validate_grants`
+for approval validation and `plugin::store_grants` after successful installation. The desktop
+permission screen returns `ApprovedReview` through `SolveApp::take_approved_plugin_review()`;
+opening it uses `SolveApp::review_plugin_package(path)`. After publication and `store_grants`,
+the installer calls `SolveApp::persist_plugin_grants()` to save the grants in desktop preferences.
+
+Named menu and ribbon clicks queue a namespaced entry through
+`SolveApp::take_plugin_entry_request()`. The generic plugin entry dialog must consume the request,
+draw its `input_schema`, request execution consent and submit through the existing worker path.
+Unknown menu names are exposed as host rows by `SolveApp::plugin_fallback_menu_items()` for the
+generic Plugins menu. These integration seams do not execute an entry by themselves.
+`plugin.inspect` and `plugin.run` retain separate execution approval.
+
+See [Plugins](../../../plugins.md) for placement, package limits and integration contracts, and
+[the runtime reference](../../../plugin-runtime.md) for execution and file scope.
+
 ## Adding a command
 
 1. Add a `CommandSpec` to the right file in `crates/engine/src/cmd/` and implement `run`.

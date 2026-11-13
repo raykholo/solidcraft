@@ -1707,6 +1707,8 @@ preference_settings! {
     move_drag_highlights: bool = false, PAGE_TOOLS => check_id("prefs.move_drag_highlights");
     /// Plugin ids turned off (Preferences › Plugins). An installed plugin whose id is absent is on.
     disabled_plugins: std::collections::BTreeSet<String> = std::collections::BTreeSet::new(), PAGE_PLUGINS;
+    /// Approved install permissions survive page resets and Cancel, like installed files.
+    plugin_grants: std::collections::BTreeMap<String, solidcraft_engine::plugin::Grants> = std::collections::BTreeMap::new();
     /// User ceilings, not automatic increases to a package's approved execution budget.
     plugin_max_fuel: u64 = solidcraft_engine::plugin::HostLimits::default().max_fuel, PAGE_PLUGINS;
     plugin_max_memory_mib: usize = solidcraft_engine::plugin::HostLimits::default().max_memory_mib, PAGE_PLUGINS;
@@ -1766,6 +1768,10 @@ pub struct PrefsWindow {
     /// Search text on the Plugins page.
     pub(crate) plugin_query: String,
     pub(crate) plugin_limit_inputs: Option<crate::plugins::LimitInputs>,
+    pub(crate) plugin_review: Option<crate::plugins::Review>,
+    pub(crate) plugin_approved: Option<crate::plugins::ApprovedReview>,
+    pub(crate) plugin_job: Option<crate::plugins::PackageJob>,
+    pub(crate) plugin_remove: Option<(String, String)>,
     panel_restore_details: bool,
     panel_restore_retry: bool,
     panel_popup_reset: bool,
@@ -1927,7 +1933,9 @@ impl Snapshot {
         let units_changed = app.preferences.default_units != self.prefs.default_units;
         // Update bookkeeping isn't a setting: a check that finished while the dialog was open stays.
         let update = std::mem::take(&mut app.preferences.update);
+        let plugin_grants = std::mem::take(&mut app.preferences.plugin_grants);
         app.preferences = self.prefs;
+        app.preferences.plugin_grants = plugin_grants;
         crate::plugins::sync_policy(app);
         sync_surface_analysis(app);
         crate::render_workspace::apply_memory_policy(app);
@@ -1989,6 +1997,7 @@ impl Snapshot {
         let same_prefs = {
             let mut held = prefs.clone();
             held.update.clone_from(&app.preferences.update);
+            held.plugin_grants.clone_from(&app.preferences.plugin_grants);
             held == app.preferences
         };
         same_prefs
@@ -2023,6 +2032,7 @@ pub(crate) fn held_overlay(app: &SolveApp) -> Option<serde_json::Map<String, ser
     let mut prefs = s.prefs.clone();
     // Same bookkeeping rule as `restore`: a check that finished while the dialog was open stays.
     prefs.update.clone_from(&app.preferences.update);
+    prefs.plugin_grants.clone_from(&app.preferences.plugin_grants);
     let mut shortcut_box = app.sbox.prefs();
     if let Some(o) = shortcut_box.as_object_mut() {
         o.insert("pinned".into(), serde_json::json!(s.favourites));
@@ -2910,6 +2920,8 @@ impl prefs_window::Host for SolveApp {
     }
     fn closed(&mut self) {
         self.prefs_window.plugin_limit_inputs = None;
+        self.prefs_window.plugin_review = None;
+        self.prefs_window.plugin_remove = None;
         self.prefs_window.panel_restore_details = false;
         self.prefs_window.panel_popup_reset = true;
         self.keymap.read_only = false;
@@ -4097,6 +4109,11 @@ fn limit_disabled_plugins(mut p: Prefs) -> Prefs {
     if !accepted::max_sketch_points(&p) {
         p.max_sketch_points = Prefs::default().max_sketch_points;
     }
+    p.plugin_grants.retain(|id, grants| crate::plugins::valid_id(id) && crate::plugins::valid_grants(grants));
+    p.plugin_grants = p.plugin_grants.into_iter().take(crate::plugins::MAX_DISABLED).collect();
+    for grants in p.plugin_grants.values_mut() {
+        grants.folders.sort_by(|a, b| a.name.cmp(&b.name));
+    }
     p.disabled_plugins.retain(|id| crate::plugins::valid_id(id));
     if p.disabled_plugins.len() > crate::plugins::MAX_DISABLED {
         p.disabled_plugins = p.disabled_plugins.into_iter().take(crate::plugins::MAX_DISABLED).collect();
@@ -4272,6 +4289,11 @@ fn prepare_preferences(
     if new.ui_font != app.preferences.ui_font && !new.ui_font.trim().is_empty() && crate::fonts::ui_font(&new.ui_font).is_none() {
         return Err(format!("`ui_font`: `{}` is not an installed font family or a readable font file", new.ui_font.trim()));
     }
+    if new.plugin_grants.len() > crate::plugins::MAX_DISABLED
+        || new.plugin_grants.iter().any(|(id, grants)| !crate::plugins::valid_id(id) || !crate::plugins::valid_grants(grants))
+    {
+        return Err("`plugin_grants` must contain at most 256 valid plugin ids and bounded approved groups and folders".into());
+    }
     if new.disabled_plugins.len() > crate::plugins::MAX_DISABLED || new.disabled_plugins.iter().any(|id| !crate::plugins::valid_id(id)) {
         return Err(format!("`disabled_plugins` must be at most {} ids of lowercase letters, digits and hyphens", crate::plugins::MAX_DISABLED));
     }
@@ -4325,6 +4347,10 @@ fn prepare_preferences(
     }
     if MiddleDoubleClick::parse(&new.middle_double_click).is_none() {
         return Err("`middle_double_click` must be home, fit or off".into());
+    }
+    let mut new = new;
+    for grants in new.plugin_grants.values_mut() {
+        grants.folders.sort_by(|a, b| a.name.cmp(&b.name));
     }
     Ok(new)
 }

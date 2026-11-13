@@ -1,0 +1,34 @@
+{
+  "ar": {
+    "cmd.plugin.remove": "إزالة الإضافة",
+    "cmd.plugin.review": "مراجعة الإضافة"
+  },
+  "de": {
+    "cmd.plugin.remove": "Plugin entfernen",
+    "cmd.plugin.review": "Plugin überprüfen"
+  },
+  "en": {
+    "cmd.plugin.remove": "Remove Plugin",
+    "cmd.plugin.review": "Review Plugin"
+  },
+  "he": {
+    "cmd.plugin.remove": "הסרת תוסף",
+    "cmd.plugin.review": "סקירת תוסף"
+  },
+  "ja": {
+    "cmd.plugin.remove": "プラグインを削除",
+    "cmd.plugin.review": "プラグインを確認"
+  },
+  "ko": {
+    "cmd.plugin.remove": "플러그인 제거",
+    "cmd.plugin.review": "플러그인 검토"
+  },
+  "vi": {
+    "cmd.plugin.remove": "Gỡ plugin",
+    "cmd.plugin.review": "Xem xét plugin"
+  },
+  "zh": {
+    "cmd.plugin.remove": "移除插件",
+    "cmd.plugin.review": "审查插件"
+  }
+}

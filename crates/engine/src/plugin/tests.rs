@@ -41,6 +41,16 @@ fn manifest_is_inert_bounded_and_refuses_unknown_capabilities() {
     assert!(parse_manifest(&vec![b' '; MAX_MANIFEST_BYTES + 1], "sample").is_err());
 }
 #[test]
+fn plugin_entries_cannot_shadow_host_commands() {
+    let mut m = manifest();
+    m["id"] = json!("solid");
+    m["runtime"]["entries"] = json!(["box"]);
+    let error = parse_manifest(&serde_json::to_vec(&m).unwrap(), "solid").unwrap_err();
+    assert!(matches!(&error, EngineError::Plugin(HostError::InvalidManifest { field, .. }) if field == "runtime.entries"), "{error}");
+    assert!(error.to_string().contains("solid.box"));
+}
+
+#[test]
 fn capability_refusals_are_plain_and_name_solidcraft() {
     let refusal = |capabilities: Value| {
         let mut m = manifest();
@@ -587,6 +597,9 @@ mod native {
                 std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
                 let mut s = Session::default();
                 s.plugin_state.file_grants.push(FileGrant { name: "project".into(), folder: f.0.join("sample"), read: true, write: true });
+                s.plugin_state
+                    .grants
+                    .insert("sample".into(), Grants { command_groups: BTreeSet::new(), folders: s.plugin_state.file_grants.clone() });
                 let scope = solidcraft_io::vfs::PathScope::default().with_design_folder(&f.0);
                 assert!(scope.check(&f.path()).is_ok());
                 for scope in [None, Some(scope)] {
@@ -603,6 +616,55 @@ mod native {
                 });
             }
         }
+    }
+
+    #[test]
+    fn hand_installed_plugins_get_no_legacy_or_other_plugins_folder_grants() {
+        let f = Fixture::new("call $box");
+        std::fs::write(f.0.join("sample/plugin.wasm"), file_component(false)).unwrap();
+        std::fs::write(f.0.join("sample/secret.txt"), "test data").unwrap();
+        let mut m = manifest();
+        m["runtime"]["permissions"] = json!({"files":[{"name":"project","read":true,"write":false}]});
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let mut s = Session::default();
+        let grant = FileGrant { name: "project".into(), folder: f.0.join("sample"), read: true, write: false };
+        s.plugin_state.file_grants.push(grant.clone());
+        s.plugin_state.grants.insert("another-plugin".into(), Grants { folders: vec![grant], ..Default::default() });
+        let error = f.run(&mut s).unwrap_err();
+        assert!(matches!(error, EngineError::Plugin(HostError::PermissionDenied { .. })), "{error}");
+        assert!(s.doc.features.is_empty());
+    }
+
+    #[test]
+    fn only_the_running_plugins_stored_command_groups_authorize_sensitive_calls() {
+        let f = Fixture::new("call $box");
+        let command = "settings.profile.list";
+        let source = component_template();
+        let arguments = r#"{\22length\22:2,\22width\22:3,\22height\22:4}"#;
+        assert!(source.contains(arguments));
+        let source = source
+            .replace("\"solid.box\"", &format!("\"{command}\""))
+            .replace(
+                "i32.const 9\n      i32.const 1024\n      i32.const 33",
+                &format!("i32.const {}\n      i32.const 1024\n      i32.const 2", command.len()),
+            )
+            .replace(arguments, "{}");
+        std::fs::write(f.0.join("sample/plugin.wasm"), wat::parse_str(source).unwrap()).unwrap();
+        let mut m = manifest();
+        m["runtime"]["commands"] = json!([command]);
+        m["runtime"]["permissions"] = json!({"command_groups":["app"]});
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let mut s = Session::default();
+        s.plugin_state.command_groups.insert("app".into());
+        s.plugin_state.grants.insert("another-plugin".into(), Grants { command_groups: BTreeSet::from(["app".into()]), ..Default::default() });
+        let error = f.run(&mut s).unwrap_err();
+        assert!(matches!(&error, EngineError::Plugin(HostError::PermissionDenied { permission }) if permission.contains("app")), "{error}");
+        let parsed = parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").unwrap();
+        store_grants(&mut s, &parsed, Grants { command_groups: BTreeSet::from(["app".into()]), ..Default::default() }).unwrap();
+        assert_eq!(f.run(&mut s).unwrap()["result"], json!({}));
+        s.plugin_state.grants.remove("sample");
+        assert!(matches!(f.run(&mut s), Err(EngineError::Plugin(HostError::PermissionDenied { .. }))));
+        assert!(s.doc.features.is_empty());
     }
 
     #[test]
@@ -756,4 +818,186 @@ fn granted_roots_allow_hidden_ancestors_but_exclude_hidden_descendants() {
         assert!(host.authorize_file_path(&root.join(".hidden/public.txt"), false).is_ok());
         assert!(host.authorize_file_path(&root.join(".hidden/public.txt"), true).is_err());
     });
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn plugin_review_zip_grants_and_remove() {
+    use std::io::Write;
+    let root = solidcraft_io::vfs::temp_dir().join(format!("solidcraft-plugin-review-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let zip_path = root.join("package.zip");
+    let make_zip = |extra: Option<&str>| {
+        let mut m = manifest();
+        m["description"] = json!("Reviewed package");
+        m["runtime"]["permissions"] = json!({"command_groups":["file"],"files":[{"name":"project","read":true,"write":false}]});
+        m["runtime"]["entries"] = json!([{"name":"make","effect":"edit","input_schema":{"type":"object"},"slots":[{"kind":"menu","name":"File"},{"kind":"ribbon","name":"Solid"}]}]);
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (name, bytes) in [("plugin.json", serde_json::to_vec(&m).unwrap()), ("plugin.wasm", b"inert test bytes".to_vec())] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(&bytes).unwrap();
+        }
+        if let Some(extra) = extra {
+            zip.start_file(extra, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(b"escape").unwrap();
+        }
+        std::fs::write(&zip_path, zip.finish().unwrap().into_inner()).unwrap();
+    };
+    let mut s = Session::default();
+    s.plugin_state.install_root = Some(root.join("installed"));
+    make_zip(None);
+    let review = s.execute("plugin.review", &json!({"path":zip_path})).unwrap();
+    assert_eq!(review["manifest"]["id"], "sample");
+    assert_eq!(review["manifest"]["description"], "Reviewed package");
+    assert_eq!(review["manifest"]["runtime"]["entries"][0]["slots"].as_array().unwrap().len(), 2);
+    assert_eq!(review["requested"]["command_groups"], json!(["file"]));
+    assert_eq!(review["requested"]["folders"][0]["name"], "project");
+    assert!(!root.join("installed").exists(), "review must leave nothing installed");
+    assert!(s.plugin_state.grants.is_empty());
+    let contents = read_package_contents(&zip_path.to_string_lossy()).unwrap();
+    assert_eq!(review["approval"], contents.approval);
+    assert_eq!(contents.files[Path::new("plugin.wasm")].as_slice(), b"inert test bytes");
+    for unasked in [json!({"command_groups":["app"]}), json!({"folders":[{"name":"project","folder":root,"read":true,"write":true}]})] {
+        let grants: Grants = serde_json::from_value(unasked).unwrap();
+        let error = store_grants(&mut s, &contents.manifest, grants).unwrap_err();
+        assert!(matches!(error, EngineError::Plugin(HostError::PermissionDenied { .. })), "{error}");
+        assert!(s.plugin_state.grants.is_empty());
+    }
+    let grants = Grants {
+        command_groups: BTreeSet::from(["file".into()]),
+        folders: vec![FileGrant { name: "project".into(), folder: root.clone(), read: true, write: false }],
+    };
+    validate_grants(&contents.manifest, &grants).unwrap();
+    // An installer owns publication. Simulate an existing package before storing approved grants.
+    let installed = root.join("installed/sample");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(installed.join("plugin.json"), &contents.files[Path::new("plugin.json")]).unwrap();
+    store_grants(&mut s, &contents.manifest, grants.clone()).unwrap();
+    s.plugin_state.packages.insert("sample".into(), installed.to_string_lossy().into_owned());
+    assert_eq!(s.plugin_state.grants["sample"], grants);
+    let removed = s.execute("plugin.remove", &json!({"id":"sample"})).unwrap();
+    assert_eq!(removed["removed"], true);
+    assert!(!installed.exists());
+    assert!(!s.plugin_state.grants.contains_key("sample"));
+    assert!(!s.plugin_state.packages.contains_key("sample"));
+    for escape in [
+        "../escaped",
+        "/escaped",
+        "sample/../../escaped",
+        "sample\\escaped",
+        "sample:escaped",
+        "plugin.json.",
+        "plugin.json ",
+        "NUL",
+        "assets/CON.txt",
+        "assets/PLUGIN~1.JSO",
+        "PLUGIN.JSON",
+        "plugin.json/data",
+        "PLUGIN.JSON/data",
+    ] {
+        make_zip(Some(escape));
+        assert!(s.execute("plugin.review", &json!({"path":zip_path})).is_err(), "{escape}");
+        assert!(!root.join("installed/sample").exists());
+    }
+    for (names, reason) in [
+        (["pkg", "pkg/plugin.json", "pkg/data"], "empty relative"),
+        (["Assets", "assets/a", "plugin.json"], "ancestor directory"),
+        (["assets", "assets/a", "plugin.json"], "ancestor directory"),
+    ] {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for name in names {
+            zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(br#"{"id":"sample","name":"Sample","version":"1"}"#).unwrap();
+        }
+        std::fs::write(&zip_path, zip.finish().unwrap().into_inner()).unwrap();
+        let error = s.execute("plugin.review", &json!({"path":zip_path})).unwrap_err();
+        assert!(error.to_string().contains(reason), "{names:?}: {error}");
+    }
+    assert!(s.execute("plugin.remove", &json!({"id":"../outside"})).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn plugin_review_from_nested_folder_preserves_native_paths() {
+    let root = solidcraft_io::vfs::temp_dir().join(format!("solidcraft-plugin-folder-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("assets/deep")).unwrap();
+    std::fs::write(root.join("plugin.json"), br#"{"id":"sample","name":"Sample","version":"1"}"#).unwrap();
+    std::fs::write(root.join("assets/deep/data.bin"), "nested data").unwrap();
+    solidcraft_io::vfs::scoped(Some(solidcraft_io::vfs::PathScope::new([root.clone()])), || {
+        let contents = read_package_contents(&root.to_string_lossy()).unwrap();
+        assert_eq!(contents.files[Path::new("assets/deep/data.bin")].as_slice(), b"nested data");
+        assert_eq!(review(&root.to_string_lossy()).unwrap().approval, contents.approval);
+    });
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+#[test]
+fn plugin_review_refuses_symlinks_oversize_and_caller_scope_escape() {
+    use std::io::Write;
+    let root = solidcraft_io::vfs::temp_dir().join(format!("solidcraft-plugin-review-hostile-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let source = root.join("source");
+    std::fs::create_dir_all(&source).unwrap();
+    let metadata = br#"{"id":"sample","name":"Sample","version":"1"}"#;
+    std::fs::write(source.join("plugin.json"), metadata).unwrap();
+    let mut s = Session::default();
+    s.plugin_state.install_root = Some(root.join("installed"));
+    solidcraft_io::vfs::scoped(Some(Default::default()), || {
+        assert!(s.execute("plugin.review", &json!({"path":source})).is_err(), "review retains the caller's source scope");
+    });
+    solidcraft_io::vfs::scoped(Some(solidcraft_io::vfs::PathScope::new([source.clone()])), || {
+        assert!(s.execute("plugin.review", &json!({"path":source})).is_ok());
+    });
+    std::os::unix::fs::symlink(source.join("plugin.json"), source.join("linked")).unwrap();
+    assert!(s.execute("plugin.review", &json!({"path":source})).is_err());
+    std::fs::remove_file(source.join("linked")).unwrap();
+    let non_utf8 = source.join(<std::ffi::OsString as std::os::unix::ffi::OsStringExt>::from_vec(vec![0xff]));
+    std::fs::write(&non_utf8, "invalid name").unwrap();
+    assert!(s.execute("plugin.review", &json!({"path":source})).unwrap_err().to_string().contains("UTF-8"));
+    std::fs::remove_file(non_utf8).unwrap();
+    let long_root = source.join("a".repeat(200));
+    let long_dir = long_root.join("b".repeat(200));
+    std::fs::create_dir_all(&long_dir).unwrap();
+    std::fs::write(long_dir.join("c".repeat(120)), "long path").unwrap();
+    assert!(s.execute("plugin.review", &json!({"path":source})).unwrap_err().to_string().contains("512 bytes"));
+    std::fs::remove_dir_all(long_root).unwrap();
+    let zip_path = root.join("links.zip");
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.add_symlink("linked", "../outside", zip::write::SimpleFileOptions::default()).unwrap();
+    std::fs::write(&zip_path, zip.finish().unwrap().into_inner()).unwrap();
+    assert!(s.execute("plugin.review", &json!({"path":zip_path})).is_err());
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("plugin.json", zip::write::SimpleFileOptions::default()).unwrap();
+    zip.write_all(metadata).unwrap();
+    for i in 0..65 {
+        zip.start_file(format!("{i}/a/b/c/d/e/f/g/h/i/j/k/l/m/n/file"), zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"x").unwrap();
+    }
+    std::fs::write(&zip_path, zip.finish().unwrap().into_inner()).unwrap();
+    assert!(s.execute("plugin.review", &json!({"path":zip_path})).unwrap_err().to_string().contains("implicit directories"));
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("huge", zip::write::SimpleFileOptions::default()).unwrap();
+    zip.write_all(&vec![0; (64 << 20) + 1]).unwrap();
+    std::fs::write(&zip_path, zip.finish().unwrap().into_inner()).unwrap();
+    assert!(s.execute("plugin.review", &json!({"path":zip_path})).is_err());
+    let installed = root.join("installed/sample");
+    std::fs::create_dir_all(&installed).unwrap();
+    std::fs::write(installed.join("plugin.json"), metadata).unwrap();
+    let manifest = read_package_contents(&source.to_string_lossy()).unwrap().manifest;
+    store_grants(&mut s, &manifest, Grants::default()).unwrap();
+    let hidden = installed.join(".private");
+    std::fs::write(&hidden, "private").unwrap();
+    solidcraft_io::vfs::scoped(Some(solidcraft_io::vfs::PathScope::default().with_design_folder(&root)), || {
+        assert!(s.execute("plugin.remove", &json!({"id":"sample"})).is_err(), "removal must check hidden descendants too");
+    });
+    assert!(hidden.is_file());
+    assert!(s.plugin_state.grants.contains_key("sample"));
+    solidcraft_io::vfs::scoped(Some(solidcraft_io::vfs::PathScope::new([root.join("installed")])), || {
+        s.execute("plugin.remove", &json!({"id":"sample"})).unwrap();
+    });
+    std::fs::remove_dir_all(root).unwrap();
 }

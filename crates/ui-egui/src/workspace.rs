@@ -784,6 +784,9 @@ pub fn visible_tabs(app: &crate::SolveApp) -> Vec<&'static str> {
         tabs.push("SKETCH");
     }
     tabs.extend(SPECIALTY_TABS.iter().map(|o| o.tab).filter(|tab| tab_turned_on(app, tab)));
+    if crate::plugin_slots::has_fallback_tab(app) {
+        tabs.push("PLUGINS");
+    }
     tabs
 }
 

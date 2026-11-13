@@ -83,3 +83,32 @@ pub struct ListResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewParams {
+    /// Native .zip package or package folder. No code runs.
+    pub path: String,
+}
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReviewResult {
+    pub manifest: crate::plugin::Manifest,
+    /// Requested names/access; folder paths are empty until the host user selects them.
+    pub requested: crate::plugin::Grants,
+    /// Identity of every package file, for detecting changes between review and installation.
+    pub approval: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveParams {
+    pub id: String,
+}
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RemoveResult {
+    pub id: String,
+    pub removed: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

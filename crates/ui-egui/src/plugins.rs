@@ -48,12 +48,13 @@ pub const MAX_DISABLED: usize = 256;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024;
 
 /// One installed plugin, as its manifest describes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Plugin {
     pub id: String,
     pub name: String,
     pub version: String,
     pub description: String,
+    pub entries: Vec<solidcraft_engine::plugin::Entry>,
 }
 
 /// A folder under the plugins directory that is not a plugin.
@@ -76,7 +77,7 @@ struct Manifest {
 /// The plugins directory: `$XDG_DATA_HOME/solidcraft/plugins` (and the platform equivalents of
 /// [`solidcraft_engine::recovery::data_dir`]). `None` when that folder cannot be named.
 pub fn plugins_dir() -> Option<PathBuf> {
-    solidcraft_engine::recovery::data_dir().map(|d| d.join("plugins"))
+    solidcraft_engine::plugin::plugins_dir()
 }
 
 /// An id a folder and a manifest may share: 1–64 characters, lowercase letters, digits and
@@ -112,18 +113,21 @@ fn check(m: Manifest, folder: &str) -> Result<Plugin, String> {
     if description.chars().count() > 240 || description.chars().any(|c| c.is_control()) {
         return Err("the description must be at most 240 characters with no line breaks".into());
     }
-    Ok(Plugin { id: m.id, name: name.to_string(), version: version.to_string(), description: description.to_string() })
+    Ok(Plugin { id: m.id, name: name.to_string(), version: version.to_string(), description: description.to_string(), entries: Vec::new() })
 }
 
 fn read_plugin(dir: &Path, folder: &str) -> Result<Plugin, String> {
     let path = dir.join("plugin.json");
-    let meta = std::fs::metadata(&path).map_err(|_| "no plugin.json".to_string())?;
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| "no plugin.json".to_string())?;
     if !meta.is_file() || meta.len() > MAX_MANIFEST_BYTES {
         return Err("plugin.json is missing or larger than 16 KiB".into());
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("plugin.json could not be read ({e})"))?;
+    let text = solidcraft_engine::io::vfs::read_to_string(&path.to_string_lossy(), MAX_MANIFEST_BYTES as usize)
+        .map_err(|e| format!("plugin.json could not be read ({e})"))?;
     let parsed = solidcraft_engine::plugin::parse_manifest(text.as_bytes(), folder).map_err(|e| e.to_string())?;
-    check(Manifest { id: parsed.id, name: parsed.name, version: parsed.version, description: parsed.description }, folder)
+    let mut plugin = check(Manifest { id: parsed.id, name: parsed.name, version: parsed.version, description: parsed.description }, folder)?;
+    plugin.entries = parsed.runtime.map_or_else(Vec::new, |runtime| runtime.entries);
+    Ok(plugin)
 }
 
 /// The plugins in `dir`, and the folders that were not. A missing directory is an empty list.
@@ -133,7 +137,7 @@ pub fn scan(dir: &Path) -> (Vec<Plugin>, Vec<Skipped>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return (plugins, skipped);
     };
-    for entry in entries.flatten() {
+    for entry in entries.take(1024).flatten() {
         let Ok(kind) = entry.file_type() else { continue };
         if !kind.is_dir() {
             continue;
@@ -172,7 +176,373 @@ pub(crate) fn host_limits(p: &crate::prefs::Prefs) -> solidcraft_engine::plugin:
 pub(crate) fn sync_policy(app: &mut SolveApp) {
     app.session.disabled_plugins.clone_from(&app.preferences.disabled_plugins);
     app.session.plugin_limits = host_limits(&app.preferences);
+    app.session.plugin_state.grants.clone_from(&app.preferences.plugin_grants);
 }
+/// Mirror successful install/remove command security state into persisted user preferences.
+/// This also covers commands from the control channel, without opening Preferences.
+pub(crate) fn persist_grants(app: &mut SolveApp) {
+    for grants in app.session.plugin_state.grants.values_mut() {
+        grants.folders.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+    app.preferences.plugin_grants.clone_from(&app.session.plugin_state.grants);
+}
+
+/// Bound persisted grants as strictly as manifest permissions, including host folder paths.
+pub(crate) fn valid_grants(grants: &solidcraft_engine::plugin::Grants) -> bool {
+    let mut names = std::collections::BTreeSet::new();
+    grants.command_groups.len() <= solidcraft_engine::plugin::COMMAND_GROUPS.len()
+        && grants.command_groups.iter().all(|group| solidcraft_engine::plugin::COMMAND_GROUPS.contains(&group.as_str()))
+        && grants.folders.len() <= 32
+        && grants.folders.iter().all(|grant| {
+            let path = grant.folder.to_string_lossy();
+            valid_id(&grant.name)
+                && names.insert(&grant.name)
+                && (grant.read || grant.write)
+                && grant.folder.is_absolute()
+                && path.len() <= 4096
+                && !path.chars().any(char::is_control)
+        })
+}
+
+/// A permission decision for the installer's own command. Producing this value does not install
+/// files or store grants. The installer must verify `approval` against its package bytes.
+#[derive(Clone)]
+pub struct ApprovedReview {
+    pub path: String,
+    pub manifest: solidcraft_engine::plugin::Manifest,
+    pub approval: String,
+    pub grants: solidcraft_engine::plugin::Grants,
+}
+
+/// Inert command output and the host-selected paths reviewed before installation.
+#[derive(Clone)]
+pub(crate) struct Review {
+    path: String,
+    manifest: solidcraft_engine::plugin::Manifest,
+    grants: solidcraft_engine::plugin::Grants,
+    approval: serde_json::Value,
+    error: Option<String>,
+}
+
+enum PackageAction {
+    Review { path: String },
+    Remove,
+    Control { request: crate::control::ControlRequest, level: Option<solidcraft_engine::schema::ParamCheck> },
+}
+
+type PackageReply = Result<(serde_json::Value, solidcraft_engine::plugin::AppState), String>;
+
+/// Package I/O keeps running when Preferences closes; only its application policy is adopted.
+pub(crate) struct PackageJob {
+    command: &'static str,
+    action: PackageAction,
+    done: std::sync::mpsc::Receiver<PackageReply>,
+}
+
+pub(crate) fn busy(app: &SolveApp) -> bool {
+    app.prefs_window.plugin_job.is_some()
+}
+
+fn start_package(app: &mut SolveApp, command: &'static str, params: serde_json::Value, action: PackageAction) -> Result<(), String> {
+    spawn_package(app, command, params, solidcraft_engine::io::vfs::current_scope(), None, action)
+}
+
+fn spawn_package(
+    app: &mut SolveApp,
+    command: &'static str,
+    params: serde_json::Value,
+    scope: Option<solidcraft_engine::io::vfs::PathScope>,
+    level: Option<solidcraft_engine::schema::ParamCheck>,
+    action: PackageAction,
+) -> Result<(), String> {
+    if busy(app) {
+        return Err(app.tr("prefs.plugin_busy").to_owned());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        sync_policy(app);
+        let mut copy = app.session.scratch();
+        if let Some(level) = level {
+            copy.param_check = level;
+        }
+        let (send, done) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("plugin-package".into())
+            .spawn(move || {
+                let reply = solidcraft_engine::io::vfs::scoped(scope, || {
+                    copy.execute(command, &params).map(|reply| (reply, copy.plugin_state)).map_err(|e| e.to_string())
+                });
+                let _ = send.send(reply);
+            })
+            .map_err(|e| e.to_string())?;
+        app.prefs_window.plugin_job = Some(PackageJob { command, action, done });
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (command, params, scope, level, action);
+        Err(app.tr("ui.plugins_desktop").to_owned())
+    }
+}
+
+/// Poll package I/O on every frame, including after Preferences closes. Tests drain deterministically.
+pub(crate) fn tick(app: &mut SolveApp, ctx: &egui::Context, wait: bool) {
+    let Some(job) = app.prefs_window.plugin_job.take() else { return };
+    let result = if wait {
+        job.done.recv().unwrap_or_else(|e| Err(e.to_string()))
+    } else {
+        match job.done.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                app.prefs_window.plugin_job = Some(job);
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                return;
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    };
+    let result = result.and_then(|(reply, state)| {
+        if job.command == "plugin.remove" {
+            let id = reply["id"].as_str().ok_or_else(|| app.tr("prefs.plugin_reply_invalid").to_owned())?;
+            if let Some(path) = state.packages.get(id) {
+                app.session.plugin_state.packages.insert(id.into(), path.clone());
+            } else {
+                app.session.plugin_state.packages.remove(id);
+            }
+            if let Some(grants) = state.grants.get(id) {
+                app.session.plugin_state.grants.insert(id.into(), grants.clone());
+            } else {
+                app.session.plugin_state.grants.remove(id);
+            }
+            persist_grants(app);
+            if !matches!(&job.action, PackageAction::Control { .. }) {
+                app.prefs_window.plugin_review = None;
+            }
+        }
+        if let PackageAction::Review { path } = &job.action {
+            let manifest = serde_json::from_value(reply["manifest"].clone()).map_err(|e| e.to_string())?;
+            let grants = serde_json::from_value(reply["requested"].clone()).map_err(|e| e.to_string())?;
+            if app.prefs_window.shell.open {
+                app.prefs_window.plugin_review =
+                    Some(Review { path: path.clone(), manifest, grants, approval: reply["approval"].clone(), error: None });
+            }
+        }
+        Ok(reply)
+    });
+    let result = app.command_completed(job.command, result);
+    if let PackageAction::Control { request, level } = job.action {
+        let mut reply = match result {
+            Ok(value) => serde_json::json!({"ok":true,"result":value}),
+            Err(error) => serde_json::json!({"ok":false,"error":error}),
+        };
+        if let Some(level) = level {
+            reply["param_check"] = serde_json::json!(level.name());
+        }
+        let _ = request.reply.send(reply);
+    } else if let Err(error) = result {
+        if let Some(review) = &mut app.prefs_window.plugin_review {
+            review.error = Some(error.clone());
+        }
+        app.set_status(error, true);
+    }
+    ctx.request_repaint();
+}
+
+/// Native control calls use the same command worker and retain their exact path confinement.
+/// A filesystem mutation remains running until its final reply; it is never offered as cancellable.
+pub(crate) fn offload_control(
+    app: &mut SolveApp,
+    ctx: &egui::Context,
+    request: crate::control::ControlRequest,
+) -> Option<crate::control::ControlRequest> {
+    if cfg!(target_arch = "wasm32") || !matches!(request.method.as_str(), "engine.execute" | "command") {
+        return Some(request);
+    }
+    let Ok(execute) = crate::control_params::parse::<crate::control_params::Execute>(&request.params) else { return Some(request) };
+    let Some(command) =
+        solidcraft_engine::find_command(&execute.command).map(|spec| spec.id).filter(|id| matches!(*id, "plugin.remove" | "plugin.review"))
+    else {
+        return Some(request);
+    };
+    if request.refuse_cancelled_chat() {
+        return None;
+    }
+    let scope = match crate::control::request_scope(app, &request.params) {
+        Ok(scope) => scope,
+        Err(error) => {
+            let _ = request.reply.send(serde_json::json!({"ok":false,"error":error}));
+            return None;
+        }
+    };
+    let level = match crate::control::request_param_check(&request.method, &request.params) {
+        Ok(level) => level,
+        Err(error) => {
+            let _ = request.reply.send(serde_json::json!({"ok":false,"error":error}));
+            return None;
+        }
+    };
+    let reply = request.reply.clone();
+    if let Err(error) = spawn_package(app, command, execute.params(), scope, level, PackageAction::Control { request, level }) {
+        let _ = reply.send(serde_json::json!({"ok":false,"error":error}));
+    }
+    ctx.request_repaint();
+    None
+}
+
+impl SolveApp {
+    /// Open the host permission review for a package chosen by the installer's picker.
+    /// This is an explicit UI entry point; the `plugin.review` command itself opens no UI.
+    pub fn review_plugin_package(&mut self, path: String) -> Result<(), String> {
+        start_package(self, "plugin.review", serde_json::json!({"path":path}), PackageAction::Review { path })?;
+        self.prefs_window.plugin_approved = None;
+        self.prefs_window.plugin_review = None;
+        crate::prefs::open_at(self, crate::prefs::PAGE_PLUGINS);
+        Ok(())
+    }
+
+    /// Persist grants after the install command has verified/published the reviewed package and
+    /// called `solidcraft_engine::plugin::store_grants`. This opens no UI and runs no plugin.
+    pub fn persist_plugin_grants(&mut self) {
+        persist_grants(self);
+    }
+
+    /// Take the user's decision, then pass its path, identity and grants to the install command.
+    /// Store grants only after installation succeeds, using the engine's `store_grants` helper.
+    pub fn take_approved_plugin_review(&mut self) -> Option<ApprovedReview> {
+        take_approved_review(self)
+    }
+}
+
+pub(crate) fn take_approved_review(app: &mut SolveApp) -> Option<ApprovedReview> {
+    app.prefs_window.plugin_approved.take()
+}
+
+fn review_controls(app: &mut SolveApp, ui: &mut egui::Ui) {
+    if busy(app) {
+        ui.label(app.tr("prefs.plugin_busy"));
+    }
+    let Some(mut review) = app.prefs_window.plugin_review.take() else { return };
+    ui.separator();
+    crate::ui_kit::settings_heading(ui, app.tr("prefs.plugin_review"), &review.manifest.name);
+    ui.label(solidcraft_ui_text::format("prefs.plugin_version", &[("version", &review.manifest.version)]));
+    if !review.manifest.description.is_empty() {
+        ui.label(&review.manifest.description);
+    }
+    ui.label(app.tr("prefs.plugin_capabilities"));
+    for capability in &review.manifest.capabilities {
+        ui.label(capability);
+    }
+    ui.label(app.tr("prefs.plugin_permissions"));
+    for group in &review.grants.command_groups {
+        let message = match group.as_str() {
+            "file" => "prefs.plugin_group_file",
+            "doc" => "prefs.plugin_group_doc",
+            "app" => "prefs.plugin_group_app",
+            "plugin" => "prefs.plugin_group_plugin",
+            _ => continue,
+        };
+        ui.label(app.tr(message));
+    }
+    if review.manifest.runtime.as_ref().is_some_and(|runtime| runtime.permissions.clock) {
+        ui.label(app.tr("prefs.plugin_clock"));
+    }
+    for grant in &mut review.grants.folders {
+        let access = app.tr(match (grant.read, grant.write) {
+            (true, true) => "prefs.plugin_folder_read_write",
+            (false, true) => "prefs.plugin_folder_write",
+            _ => "prefs.plugin_folder_read",
+        });
+        let label = solidcraft_ui_text::format("prefs.plugin_folder", &[("name", &grant.name), ("access", access)]);
+        let mut path = grant.folder.display().to_string();
+        crate::ui_kit::text_row(ui, &label, &mut path, app.tr("prefs.plugin_folder_path"));
+        grant.folder = PathBuf::from(path);
+    }
+    if !review.grants.folders.is_empty() {
+        crate::ui_kit::text(ui, app.tr("prefs.plugin_folder_note"), crate::ui_kit::Text::Hint("plugin_folder"));
+    }
+    ui.label(app.tr("prefs.plugin_entries"));
+    if let Some(runtime) = &review.manifest.runtime {
+        for entry in &runtime.entries {
+            ui.label(&entry.name);
+            for slot in &entry.slots {
+                let (key, name) = match slot {
+                    solidcraft_engine::plugin::UiSlot::Menu { name } => {
+                        let mapped = match crate::plugin_slots::menu_name(name) {
+                            "File" => app.tr("ui.file"),
+                            "Help" => app.tr("ui.help"),
+                            _ => app.tr("ui.plugins"),
+                        };
+                        ("prefs.plugin_slot_menu", mapped.to_owned())
+                    }
+                    solidcraft_engine::plugin::UiSlot::Ribbon { name } => {
+                        ("prefs.plugin_slot_ribbon", crate::toolbar::ribbon_label(app, crate::plugin_slots::ribbon_name(name)))
+                    }
+                };
+                ui.label(solidcraft_ui_text::format(key, &[("name", &name)]));
+            }
+            if entry.slots.is_empty() {
+                ui.label(app.tr("prefs.plugin_slot_command"));
+            }
+        }
+    }
+    if let Some(error) = &review.error {
+        crate::ui_kit::text(ui, error, crate::ui_kit::Text::Error("plugin_review"));
+    }
+    let mut keep = true;
+    ui.horizontal_wrapped(|ui| {
+        let approve =
+            crate::ui_kit::icon_label_button(ui, app.tr("prefs.plugin_approve"), "prefs_plugins", valid_grants(&review.grants) && !busy(app), false);
+        crate::scenario::publish_target("prefs:plugins:approve", approve.rect);
+        if approve.clicked() {
+            if let Some(approval) = review.approval.as_str() {
+                app.prefs_window.plugin_approved = Some(ApprovedReview {
+                    path: review.path.clone(),
+                    manifest: review.manifest.clone(),
+                    approval: approval.to_owned(),
+                    grants: review.grants.clone(),
+                });
+                keep = false;
+            } else {
+                review.error = Some(app.tr("prefs.plugin_reply_invalid").to_owned());
+            }
+        }
+        let cancel = crate::ui_kit::icon_label_button(ui, app.tr("prefs.plugin_cancel"), "close", !busy(app), false);
+        crate::scenario::publish_target("prefs:plugins:cancel", cancel.rect);
+        if cancel.clicked() {
+            keep = false;
+        }
+    });
+    if keep {
+        app.prefs_window.plugin_review = Some(review);
+    }
+    if busy(app) {
+        ui.ctx().request_repaint();
+    }
+    ui.separator();
+}
+
+fn remove_confirmation(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some((id, name)) = app.prefs_window.plugin_remove.clone() else { return };
+    let title = solidcraft_ui_text::format("prefs.plugin_remove_title", &[("name", &name)]);
+    let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::unique("plugin_remove"), "delete", &title)
+        .tone(crate::ui_kit::Tone::Danger)
+        .actions(app.tr("prefs.plugin_remove"), app.tr("prefs.plugin_cancel"), None)
+        .selected(crate::ui_kit::Action::Cancel)
+        .show(ctx, true, |ui| {
+            ui.add(egui::Label::new(app.tr("prefs.plugin_remove_note")).wrap());
+        });
+    if closed || action == crate::ui_kit::Action::Cancel {
+        app.prefs_window.plugin_remove = None;
+    }
+    if action == crate::ui_kit::Action::Ok {
+        app.prefs_window.plugin_remove = None;
+        if let Err(error) = start_package(app, "plugin.remove", serde_json::json!({"id":id}), PackageAction::Remove) {
+            app.set_status(error, true);
+        }
+        ctx.request_repaint();
+    }
+}
+
 fn parsed_limits(input: &LimitInputs) -> Option<solidcraft_engine::plugin::HostLimits> {
     let limits =
         solidcraft_engine::plugin::HostLimits { max_fuel: input.fuel.trim().parse().ok()?, max_memory_mib: input.memory.trim().parse().ok()? };
@@ -238,7 +608,7 @@ fn matches_query(plugin: &Plugin, query: &str) -> bool {
 
 /// The Plugins page. Desktop only: the browser build has no per-user plugin folder.
 pub fn page(app: &mut SolveApp, ui: &mut egui::Ui) {
-    let dir = if cfg!(target_arch = "wasm32") { None } else { plugins_dir() };
+    let dir = if cfg!(target_arch = "wasm32") { None } else { app.session.plugin_state.install_root.clone().or_else(plugins_dir) };
     page_in_dir(app, ui, dir.as_deref());
 }
 
@@ -250,6 +620,9 @@ fn page_in_dir(app: &mut SolveApp, ui: &mut egui::Ui, dir: Option<&Path>) {
             return;
         };
         resource_controls(app, ui);
+        if !crate::ui_kit::settings_search::querying(ui) {
+            review_controls(app, ui);
+        }
         let t = solidcraft_theme::Tokens::get();
         let path = dir.display().to_string();
         let searching = crate::ui_kit::settings_search::querying(ui);
@@ -326,6 +699,7 @@ fn page_in_dir(app: &mut SolveApp, ui: &mut egui::Ui, dir: Option<&Path>) {
             });
         }
     });
+    remove_confirmation(app, ui.ctx());
 }
 
 fn plugin_card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugin) {
@@ -336,11 +710,24 @@ fn plugin_card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugi
         show_in_folder: solidcraft_ui_text::tr_label("Show in folder"),
         enabled: solidcraft_ui_text::tr("prefs.plugins_enabled"),
     };
+    let remove_label = app.tr("prefs.plugin_remove").to_owned();
+    let can_remove = !busy(app);
     let card = ui
-        .push_id(&plugin.id, |ui| ui_kit::settings_plugin_card(ui, &plugin.id, &plugin.name, &plugin.version, &plugin.description, &mut on, &labels))
+        .push_id(&plugin.id, |ui| {
+            ui_kit::settings_plugin_card_with_actions(
+                ui,
+                ui_kit::PluginCardContent { key: &plugin.id, name: &plugin.name, version: &plugin.version, description: &plugin.description },
+                &mut on,
+                &labels,
+                |ui| {
+                    ui.add_space(solidcraft_theme::Tokens::get().space_8);
+                    ui_kit::icon_label_button(ui, &remove_label, "delete", can_remove, false)
+                },
+            )
+        })
         .inner;
     let response = card.response;
-    let (folder, check) = card.inner;
+    let ((folder, check), remove) = card.inner;
     crate::scenario::publish_target(&format!("prefs:plugin:{}:folder", plugin.id), folder.rect);
     crate::scenario::publish_target(&format!("prefs:plugin:{}", plugin.id), check.rect);
     if folder.clicked()
@@ -355,6 +742,10 @@ fn plugin_card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugi
             app.preferences.disabled_plugins.insert(plugin.id.clone());
         }
     }
+    crate::scenario::publish_target(&format!("prefs:plugin:{}:remove", plugin.id), remove.rect);
+    if remove.clicked() {
+        app.prefs_window.plugin_remove = Some((plugin.id.clone(), plugin.name.clone()));
+    }
     crate::scenario::publish_rect(&format!("prefs:plugin:{}:card", plugin.id), response.rect);
     let texts = [&plugin.name, &plugin.id, &plugin.description, &plugin.version];
     if let Some(text) = texts.iter().find(|text| crate::ui_kit::settings_search::texts_hit(ui, &[*text])) {
@@ -368,6 +759,228 @@ fn plugin_card(app: &mut SolveApp, ui: &mut egui::Ui, dir: &Path, plugin: &Plugi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn package(h: &crate::scenario::Harness, id: &str) -> PathBuf {
+        let dir = h.dir.join("packages").join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("plugin.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "id":id,"name":"Workshop helper","version":"1.2.3","description":"Original plugin fixture for reviewing host permissions.",
+                "capabilities":["commands@0.1"],
+                "runtime":{"module":"plugin.wasm","entries":[{"name":"inspect","effect":"read","slots":[
+                    {"kind":"menu","name":"Manufacturing"},{"kind":"ribbon","name":"Manufacturing"}
+                ]}],"commands":[],"permissions":{"command_groups":["file"],"files":[{"name":"parts","read":true}],"clock":true}}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.join("plugin.wasm"), b"\0asm\x0d\0\x01\0").unwrap();
+        dir
+    }
+
+    fn capture_page(app: &mut SolveApp, dir: &Path, name: &str) {
+        let Ok(output_dir) = std::env::var("SOLIDCRAFT_PLUGINS_EVIDENCE") else { return };
+        let ctx = crate::fonts::test_context();
+        let mut textures = std::collections::HashMap::new();
+        for frame in 0..6 {
+            let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 1200.0));
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(bounds), time: Some(frame as f64 / 60.0), ..Default::default() }, |ui| {
+                crate::ui_kit::scope(ui, |ui| page_in_dir(app, ui, Some(dir)))
+            });
+            crate::ui_kit::test_textures_update(&mut textures, &output.textures_delta);
+            output.textures_delta.clear();
+            if frame == 5 {
+                let image = crate::ui_kit::test_raster(&ctx, output.shapes, output.pixels_per_point, bounds, &textures);
+                std::fs::create_dir_all(&output_dir).unwrap();
+                image.save(Path::new(&output_dir).join(name)).unwrap();
+            }
+        }
+    }
+
+    fn hand_install(path: &Path, root: &Path, id: &str) {
+        let target = root.join(id);
+        std::fs::create_dir_all(&target).unwrap();
+        for name in ["plugin.json", "plugin.wasm"] {
+            std::fs::copy(path.join(name), target.join(name)).unwrap();
+        }
+    }
+
+    #[test]
+    fn plugins_review_returns_approval_without_installing_and_remove_keeps_grants_revoked() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        let root = h.dir.join("installed");
+        h.app.session.plugin_state.install_root = Some(root.clone());
+        let path = package(&h, "workshop-helper");
+        h.app.review_plugin_package(path.display().to_string()).unwrap();
+        crate::prefs::control(&mut h.app, &json!({"open":"Plugins"})).unwrap();
+        tick(&mut h.app, &h.ctx, true);
+        let review = h.app.prefs_window.plugin_review.as_ref().unwrap();
+        assert_eq!(review.manifest.id, "workshop-helper");
+        assert!(review.grants.command_groups.contains("file"));
+        assert!(!valid_grants(&review.grants), "named requests have no host folder until the user supplies one");
+        let folder = h.dir.join("approved-parts");
+        std::fs::create_dir_all(&folder).unwrap();
+        h.app.prefs_window.plugin_review.as_mut().unwrap().grants.folders[0].folder = folder.clone();
+        capture_page(&mut h.app, &root, "plugin-permission-review.png");
+        let ctx = crate::fonts::test_context();
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        let shown = crate::test_support::frame(
+            &ctx,
+            egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 800.0))), ..Default::default() },
+            |ui| crate::ui_kit::scope(ui, |ui| page_in_dir(&mut h.app, ui, Some(&root))),
+        );
+        let text = crate::test_support::text_shapes(&shown).map(|shape| shape.galley.text().to_owned()).collect::<Vec<_>>().join("\n");
+        assert!(
+            text.contains("Menu: Plugins") && text.contains("Ribbon: Plugins"),
+            "the review shows the host fallback, not the unknown declared slot: {text}"
+        );
+        click_page(&mut h.app, &ctx, &root, "prefs:plugins:cancel");
+        assert!(h.app.prefs_window.plugin_review.is_none() && h.app.take_approved_plugin_review().is_none());
+        assert!(!root.exists() && h.app.preferences.plugin_grants.is_empty());
+        h.app.review_plugin_package(path.display().to_string()).unwrap();
+        tick(&mut h.app, &h.ctx, true);
+        h.app.prefs_window.plugin_review.as_mut().unwrap().grants.folders[0].folder = folder;
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        click_page(&mut h.app, &ctx, &root, "prefs:plugins:approve");
+        let approved = h.app.take_approved_plugin_review().unwrap();
+        assert_eq!(approved.path, path.display().to_string());
+        assert!(!approved.approval.is_empty());
+        assert!(h.app.take_approved_plugin_review().is_none());
+        assert!(!root.exists() && h.app.preferences.plugin_grants.is_empty(), "Approve returns data; the installer owns files and grant storage");
+        // The independent installer integrates only after its own file publication succeeds.
+        hand_install(&path, &root, "workshop-helper");
+        solidcraft_engine::plugin::store_grants(&mut h.app.session, &approved.manifest, approved.grants.clone()).unwrap();
+        h.app.persist_plugin_grants();
+        let persisted: serde_json::Value = serde_json::from_str(&h.app.prefs()).unwrap();
+        assert_eq!(persisted["preferences"]["plugin_grants"]["workshop-helper"]["command_groups"], json!(["file"]));
+        crate::prefs::control(&mut h.app, &json!({"button":"defaults"})).unwrap();
+        assert_eq!(h.app.session.plugin_state.grants["workshop-helper"], approved.grants);
+        crate::prefs::control(&mut h.app, &json!({"button":"cancel"})).unwrap();
+        assert_eq!(h.app.preferences.plugin_grants["workshop-helper"], approved.grants);
+        capture_page(&mut h.app, &root, "plugin-list-remove.png");
+        let mut restored = SolveApp::new(solidcraft_engine::Session::default(), Default::default());
+        restored.load_prefs(&h.app.prefs());
+        assert_eq!(restored.session.plugin_state.grants["workshop-helper"], approved.grants);
+        crate::prefs::control(&mut h.app, &json!({"open":"Plugins"})).unwrap();
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        click_page(&mut h.app, &ctx, &root, "prefs:plugin:workshop-helper:remove");
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        capture_page(&mut h.app, &root, "plugin-remove-confirm.png");
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        click_page(&mut h.app, &ctx, &root, "dialog:cancel");
+        assert!(root.join("workshop-helper").exists() && h.app.prefs_window.plugin_remove.is_none());
+        // The modal's previous-frame input shield must retire before clicking the card again.
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        click_page(&mut h.app, &ctx, &root, "prefs:plugin:workshop-helper:remove");
+        for _ in 0..3 {
+            page_frame(&mut h.app, &ctx, &root, vec![]);
+        }
+        click_page(&mut h.app, &ctx, &root, "dialog:ok");
+        // Closing Preferences cannot cancel an already confirmed filesystem mutation.
+        crate::prefs::control(&mut h.app, &json!({"button":"cancel"})).unwrap();
+        tick(&mut h.app, &ctx, true);
+        assert!(!root.join("workshop-helper").exists() && h.app.preferences.plugin_grants.is_empty());
+    }
+
+    #[test]
+    fn plugins_programmatic_review_and_remove_preserve_scope_without_opening_ui() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        let root = h.dir.join("controlled-packages");
+        h.app.session.plugin_state.install_root = Some(root.clone());
+        let path = package(&h, "controlled-plugin");
+        let (request, reply) = crate::control::ControlRequest::new(
+            "engine.execute",
+            json!({
+                "command":"plugin.review","params":{"path":path},"allow_paths":[h.dir],"param_check":"strict"
+            }),
+        );
+        assert!(request.ticket.take());
+        assert!(offload_control(&mut h.app, &h.ctx, request).is_none());
+        assert!(reply.try_recv().is_err());
+        tick(&mut h.app, &h.ctx, true);
+        let reviewed = reply.recv().unwrap();
+        assert_eq!(reviewed["ok"], true, "{reviewed}");
+        assert_eq!(reviewed["param_check"], "strict");
+        assert!(h.app.prefs_window.plugin_review.is_none() && !h.app.prefs_window.shell.open);
+        hand_install(&path, &root, "controlled-plugin");
+        let manifest = serde_json::from_value(reviewed["result"]["manifest"].clone()).unwrap();
+        solidcraft_engine::plugin::store_grants(
+            &mut h.app.session,
+            &manifest,
+            solidcraft_engine::plugin::Grants { command_groups: ["file".to_owned()].into(), folders: vec![] },
+        )
+        .unwrap();
+        h.app.persist_plugin_grants();
+        let (request, denied) = crate::control::ControlRequest::new(
+            "engine.execute",
+            json!({
+                "command":"plugin.remove","params":{"id":"controlled-plugin"},"allow_paths":[]
+            }),
+        );
+        assert!(offload_control(&mut h.app, &h.ctx, request).is_none());
+        tick(&mut h.app, &h.ctx, true);
+        assert_eq!(denied.recv().unwrap()["ok"], false);
+        assert!(root.join("controlled-plugin").exists(), "empty scope cannot widen on the worker");
+        let (request, removed) = crate::control::ControlRequest::new(
+            "command",
+            json!({
+                "command":"plugin.remove","params":{"id":"controlled-plugin"},"allow_paths":[h.dir]
+            }),
+        );
+        assert!(request.ticket.take());
+        let ticket = request.ticket.clone();
+        assert!(offload_control(&mut h.app, &h.ctx, request).is_none());
+        assert!(matches!(ticket.cancel(), solidcraft_control::Cancel::Running));
+        let (concurrent, refused) =
+            crate::control::ControlRequest::new("engine.execute", json!({"command":"plugin.remove","params":{"id":"controlled-plugin"}}));
+        assert!(offload_control(&mut h.app, &h.ctx, concurrent).is_none());
+        assert_eq!(refused.recv().unwrap()["ok"], false);
+        let revision = h.app.session.revision + 1;
+        h.app.session.revision = revision;
+        tick(&mut h.app, &h.ctx, true);
+        assert_eq!(removed.recv().unwrap()["ok"], true);
+        assert_eq!(h.app.session.revision, revision);
+        assert!(!root.join("controlled-plugin").exists() && h.app.preferences.plugin_grants.is_empty());
+        assert!(h.app.prefs_window.plugin_review.is_none());
+    }
+
+    #[test]
+    fn plugins_stored_grants_are_bounded_sorted_and_reject_unusable_paths() {
+        use serde_json::json;
+        let mut h = crate::scenario::Harness::new();
+        let folder = h.dir.display().to_string();
+        let grants = json!({"command_groups":["file"],"folders":[
+            {"name":"zeta","folder":folder,"read":true,"write":false},
+            {"name":"alpha","folder":folder,"read":true,"write":true}
+        ]});
+        crate::prefs::set(&mut h.app, &json!({"plugin_grants":{"test":grants}})).unwrap();
+        assert_eq!(h.app.preferences.plugin_grants["test"].folders[0].name, "alpha");
+        for bad in [
+            json!({"command_groups":["net"],"folders":[]}),
+            json!({"command_groups":[],"folders":[{"name":"parts","folder":"relative","read":true,"write":false}]}),
+        ] {
+            assert!(crate::prefs::set(&mut h.app, &json!({"plugin_grants":{"test":bad}})).is_err());
+            assert!(crate::prefs::lenient(&json!({"plugin_grants":{"test":bad}})).plugin_grants.is_empty());
+        }
+        let many: serde_json::Map<String, serde_json::Value> = (0..257).map(|i| (format!("plugin-{i}"), grants.clone())).collect();
+        assert!(crate::prefs::set(&mut h.app, &json!({"plugin_grants":many})).is_err());
+        assert_eq!(crate::prefs::lenient(&json!({"plugin_grants":many})).plugin_grants.len(), MAX_DISABLED);
+    }
 
     fn page_frame(app: &mut SolveApp, ctx: &egui::Context, dir: &Path, events: Vec<egui::Event>) {
         crate::scenario::clear_handles();
@@ -385,7 +998,15 @@ mod tests {
     }
 
     fn click_page(app: &mut SolveApp, ctx: &egui::Context, dir: &Path, handle: &str) {
-        let at = crate::scenario::handle_at(handle).unwrap();
+        let at = crate::scenario::handle_at(handle).unwrap_or_else(|| {
+            panic!(
+                "missing {handle}; review={}, remove={:?}, busy={}, available={:?}",
+                app.prefs_window.plugin_review.is_some(),
+                app.prefs_window.plugin_remove,
+                busy(app),
+                crate::scenario::handles("")
+            )
+        });
         page_frame(app, ctx, dir, crate::test_support::pointer(at, true));
         page_frame(app, ctx, dir, crate::test_support::pointer(at, false));
     }
@@ -450,15 +1071,16 @@ mod tests {
                     let card = crate::scenario::rect_of("prefs:plugin:public-one:card").unwrap();
                     let folder = crate::scenario::rect_of("prefs:plugin:public-one:folder").unwrap();
                     let checkbox = crate::scenario::rect_of("prefs:plugin:public-one").unwrap();
+                    let remove = crate::scenario::rect_of("prefs:plugin:public-one:remove").unwrap();
                     assert!(card.width() <= width + 1.0, "{language}, {width}: card stays within the page");
-                    for action in [folder, checkbox] {
+                    for action in [folder, checkbox, remove] {
                         assert!(card.expand(1.0).contains_rect(action), "{language}, {width}: action stays inside its card");
                         assert!(clip.contains_rect(action), "{language}, {width}: action is not clipped");
                     }
                     if width == 646.0 {
                         assert!((folder.center().y - checkbox.center().y).abs() <= 1.0, "{language}: normal-width actions share one row");
                         assert!(folder.right() <= checkbox.left(), "actions do not overlap");
-                        assert!((card.height() - 62.0).abs() <= 1.0, "36 pt content plus 12 pt padding and 1 pt border on each side");
+                        assert!(card.height() > 62.0 && remove.top() > folder.bottom(), "host removal action stays in its own row inside the card");
                         assert_eq!(folder.height(), 24.0);
                         assert_eq!(checkbox.size(), egui::vec2(16.0, 16.0));
                         let t = solidcraft_theme::Tokens::get();
@@ -466,7 +1088,7 @@ mod tests {
                         assert_eq!(icon.size(), egui::vec2(36.0, 36.0));
                         assert!((icon.left() - card.left() - 13.0).abs() <= 1.0, "12 pt padding inside the border");
                         for control in [icon, folder, checkbox] {
-                            assert!((control.center().y - card.center().y).abs() <= 1.0, "all card content is vertically centred");
+                            assert!((control.center().y - icon.center().y).abs() <= 1.0, "original card row remains vertically centred");
                         }
                         assert!((checkbox.right() - card.right() + 13.0).abs() <= 1.0, "right padding matches left");
                         let mut quiet = true;
@@ -726,6 +1348,7 @@ mod tests {
     #[test]
     fn search_matches_the_name_the_id_and_the_description() {
         let plugin = Plugin {
+            entries: Vec::new(),
             id: "ftc-frc-parts".into(),
             name: "FTC and FRC parts".into(),
             version: "0.1.0".into(),

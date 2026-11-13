@@ -21,6 +21,10 @@ This satisfies Wasmtime's requirement for store data without borrowed references
 supplies an owned scratch session and adopts its edits only after a successful call.
 
 1. Put an independently built component beside a static `plugin.json` in its id folder.
+   A manually installed plugin receives no stored grants. `plugin.review` validates a zip or
+   folder and lists static requests without running code. The desktop permission screen returns
+   approved grants to the installer through an explicit integration API; package publication and
+   `plugin.install` belong to that installer. See [integration APIs](plugins.md#integration-apis).
 2. `plugin.inspect` reads bounded bytes through the caller's existing file scope and returns
    the manifest and content approval hash. It neither instantiates the component nor invokes
    a manifest function. Metadata can therefore be reviewed before code runs.
@@ -76,7 +80,13 @@ another version of the `craft:plugin` interfaces is refused the same way before 
 
 Entry inputs are object schemas; selection and target fields are arrays. Named slots use
 `{"kind":"menu","name":"…"}` or `{"kind":"ribbon","name":"…"}`; the app decides which
-slots exist. Declaring a slot never supplies UI code. `plugin.list` and `engine.describe`
+slots exist. SolidCraft matches File and Help menu names ignoring case; other names become rows
+for the shared Plugins menu integration. Ribbon names match the existing Design tabs ignoring
+case; other names use the Plugins tab. Each enabled plugin receives a group labelled with its name, and every entry has
+a plugin badge. Slot clicks queue namespaced commands for the shared input-schema/consent dialog;
+the slots do not run entries themselves. The shared dialog is separate integration work.
+See [menu and ribbon placement](plugins.md#menu-and-ribbon-entries).
+Declaring a slot never supplies UI code. `plugin.list` and `engine.describe`
 expose the entry declarations. A read entry can call only commands marked read in the app catalog.
 
 `files.read-file` and `files.write-file` resolve paths only within matching app-approved folder
@@ -113,8 +123,13 @@ A manifest that lists a grouped command without its group is refused when it is 
 call is a typed `permission_denied` error naming the group, and it poisons the transaction like
 any other refusal. Ungrouped commands run under an empty file scope, so even a feature that names
 an external font or linked design gets no file access. A granted `file` or `doc` command runs with
-a scope of exactly the approved folders that the manifest requests for both read and write. This
-version has no user interface for granting groups; `PluginState::command_groups` holds the grants.
+a scope of exactly the approved folders that the manifest requests for both read and write.
+The installer's `plugin::store_grants` integration validates requested grants and stores them
+by plugin id. `SolveApp::persist_plugin_grants()` saves them in desktop preferences. Those preferences
+persist those grants and pass them to the session and its worker copies. `plugin.run` intersects
+that id's stored grants with the manifest's requests; another plugin's grants never apply.
+A hand-installed package with no grant record receives no groups or folders. Removing a package
+through `plugin.remove` deletes its grant record. These are host preferences, never design data.
 
 ## Versions and capabilities
 
@@ -154,8 +169,12 @@ and exact component bytes. `plugin.run` compares it before instantiation. Whites
 manifest also require reinspection. A matching digest is an identity check, not a signature;
 reviewing permissions does not establish whether a publisher is trustworthy.
 
-There is no persistent automatic approval list in this version. A caller supplies the reviewed
-content identity on every invocation. Agent chat separately asks before running external code;
+Stored installation grants authorize only the listed groups and folders; they do not approve
+running external code. `plugin.review` returns a separate identity covering all files in an
+installation package. The installer must compare this identity against the validated bytes it
+publishes so changes after review are refused. Each execution still requires the reviewed
+manifest-and-component identity
+from `plugin.inspect`. Agent chat separately asks before running external code;
 its model cannot turn an inspected hash into user consent. A host or MCP caller is responsible
 for its existing user-consent policy and package-folder scope. Desktop disable preferences apply
 to the running desktop session and all plugin worker copies; a separate CLI process has its own
@@ -227,7 +246,7 @@ explicitly raise the host ceilings, then pass the inspected content hash to `plu
 The content hash covers the declared budgets: editing them requires fresh inspection and approval.
 Raising a host ceiling alone never approves content, increases a request, executes or retries it.
 The host rechecks the current ceilings before compilation/execution. Lowering them can refuse a
-previously approved package. Desktop results prepared under changed ceilings or disable settings
+previously approved package. Desktop results prepared under changed ceilings, grants or disable settings
 are discarded rather than adopted into the current design. Settings survive new/open design
 operations and scratch copies, but are never serialized as design data.
 
@@ -250,7 +269,7 @@ Normal command output and plugin result JSON are unchanged. The counter message 
 model data or package paths.
 
 There is no compiled-code cache, unsafe deserialization, WASI filesystem/clock/socket/process API,
-network integration, persistent store, plugin installer, signed index, custom panels or icons.
+network integration, persistent guest store, signed index, custom panels or plugin-supplied icons.
 The WIT has no persistent store interface yet (`storage` arrives later; designs already keep
 `plugins/<plugin-id>/` data untouched). `manifest()` is not used.
 

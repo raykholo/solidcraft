@@ -1,6 +1,9 @@
 //! One-shot plugins share the engine's command surface, file scope and undo history.
 use super::CommandSpec;
-use crate::schema::plugin::{InspectParams, InspectResult, ListParams, ListResult, ListedPlugin, MeshParams, MeshResult, RunParams, RunResult};
+use crate::schema::plugin::{
+    InspectParams, InspectResult, ListParams, ListResult, ListedPlugin, MeshParams, MeshResult, RemoveParams, RemoveResult, ReviewParams,
+    ReviewResult, RunParams, RunResult,
+};
 use crate::{
     Result, Session, checked,
     params::bad,
@@ -19,6 +22,12 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("plugin.list", "List Plugins", checked!("plugin.list", list)).icon("inspect").noundo().doc_only()
         .contract(&TypedContract::<ListParams>::new()).output(output_schema_for::<ListResult>)
         .params("List inspected and installed plugin manifests, namespaced entries, declared effects and input schemas; no plugin code runs"),
+    CommandSpec::new("plugin.remove", "Remove Plugin", checked!("plugin.remove", remove)).icon("delete").noundo().doc_only()
+        .contract(&TypedContract::<RemoveParams>::new()).output(output_schema_for::<RemoveResult>)
+        .params("id: installed plugin id; removes its folder and stored grants without executing code"),
+    CommandSpec::new("plugin.review", "Review Plugin", checked!("plugin.review", review)).icon("inspect").noundo().doc_only().read_only()
+        .contract(&TypedContract::<ReviewParams>::new()).output(output_schema_for::<ReviewResult>)
+        .params("path: native zip or folder; returns manifest, requested grants and package identity without installing or executing code"),
     CommandSpec::new("plugin.run", "Run Plugin", checked!("plugin.run", run)).icon("play")
         .contract(&TypedContract::<RunParams>::new()).output(output_schema_for::<RunResult>)
         .params("path, approval: exact hash from plugin.inspect after reviewing permissions, entry, params?: JSON; explicit native Wasm component execution, one undo step; errors discard all edits"),
@@ -74,7 +83,7 @@ fn mesh(s: &mut Session, p: &Value) -> Result<Value> {
 fn list(s: &mut Session, _p: &Value) -> Result<Value> {
     // Discovery is inert, and uses the caller's file scope when reading each package.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(root) = crate::recovery::data_dir().map(|p| p.join("plugins"))
+    if let Some(root) = s.plugin_state.install_root.clone().or_else(plugin::plugins_dir)
         && let Ok(folders) = std::fs::read_dir(root)
     {
         for folder in folders.flatten().take(1024) {
@@ -97,4 +106,29 @@ fn list(s: &mut Session, _p: &Value) -> Result<Value> {
         }
     }
     serde_json::to_value(ListResult { plugins, param_warnings: vec![] }).map_err(|e| bad("plugin.list", e.to_string()))
+}
+
+fn review(_s: &mut Session, p: &Value) -> Result<Value> {
+    let p: ReviewParams = serde_json::from_value(p.clone()).map_err(|e| bad("plugin.review", e.to_string()))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        serde_json::to_value(plugin::review(&p.path)?).map_err(|e| bad("plugin.review", e.to_string()))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = p;
+        Err(bad("plugin.review", "plugin management is desktop only"))
+    }
+}
+fn remove(_s: &mut Session, p: &Value) -> Result<Value> {
+    let p: RemoveParams = serde_json::from_value(p.clone()).map_err(|e| bad("plugin.remove", e.to_string()))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        serde_json::to_value(plugin::remove(_s, &p.id)?).map_err(|e| bad("plugin.remove", e.to_string()))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = p;
+        Err(bad("plugin.remove", "plugin management is desktop only"))
+    }
 }
