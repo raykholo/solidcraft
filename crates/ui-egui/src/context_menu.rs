@@ -393,13 +393,20 @@ pub fn items(app: &SolveApp, target: &Target) -> Vec<Item> {
             }
             v
         }
-        Target::Units => crate::prefs::UNITS
-            .iter()
-            .map(|u| {
-                let item = cmd(app, "document.units", u).with(json!({ "units": u }));
-                if app.session.doc.units == *u { item.key("current") } else { item }
-            })
-            .collect(),
+        Target::Units => {
+            #[allow(unused_mut)]
+            let mut v: Vec<Item> = crate::prefs::UNITS
+                .iter()
+                .map(|u| {
+                    let item = cmd(app, "document.units", u).with(json!({ "units": u }));
+                    if app.session.doc.units == *u { item.key("current") } else { item }
+                })
+                .collect();
+            // The parody's extra unit: it changes nothing in the design.
+            #[cfg(feature = "sc3000")]
+            v.push(act("sc3000.parsecs", &solidcraft_ui_text::tr("sc3000.parsecs"), ""));
+            v
+        }
         Target::Navigation => crate::prefs::NAV_PRESETS
             .iter()
             .map(|preset| {
@@ -1554,6 +1561,10 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         }
         "ui.repeat" => {
             app.repeat_last();
+        }
+        #[cfg(feature = "sc3000")]
+        "sc3000.parsecs" => {
+            app.sc3000_parsecs = app.sc3000_parsecs.saturating_add(1);
         }
         "ui.selectOther" => {
             // The list picks instead of the right-click.

@@ -747,13 +747,19 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         },
         rail: rail(app),
         title: match app.home.section {
-            Section::Start => app.tr_label("Start").into(),
+            Section::Start => if cfg!(feature = "sc3000") { app.tr("sc3000.title") } else { app.tr_label("Start") }.into(),
             Section::Recovery => app.tr_label("Recover").into(),
             Section::Export => app.tr("home.export").into(),
         },
         hint: app
             .tr(match app.home.section {
-                Section::Start => "home.start_hint",
+                Section::Start => {
+                    if cfg!(feature = "sc3000") {
+                        "sc3000.tagline"
+                    } else {
+                        "home.start_hint"
+                    }
+                }
                 Section::Recovery => "home.recovery_hint",
                 Section::Export => "home.export_hint",
             })

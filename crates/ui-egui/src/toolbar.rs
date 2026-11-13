@@ -231,7 +231,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             // Narrow windows retain Save; Undo and Redo remain available from their shortcuts and menus.
             let bar = app_bar::AppBar {
                 mark: &|painter, at| solidcraft_look::glyphs::brand_mark(painter, at),
-                name: "SolidCraft",
+                name: if cfg!(feature = "sc3000") { app.tr("sc3000.title") } else { "SolidCraft" },
                 home: app_bar::BarButton { id: "home", icon: "home", tip: app.tr("ui.start_page"), enabled: idle, narrow: false, wide_only: false },
                 file: app.tr("ui.file"),
                 file_open,
@@ -321,6 +321,21 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
             crate::titlebar::run(app, ui.ctx(), action);
         }
     });
+    #[cfg(feature = "sc3000")]
+    {
+        let panel = Container::new(ui.ctx(), Surface::ApplicationBar).edge("sc3000_maintenance", Edge::Top);
+        let frame = Container::new(ui.ctx(), Surface::ApplicationBar).edge_frame(t.app_bar);
+        Container::new(ui.ctx(), Surface::ApplicationBar).show_edge(ui, panel.show_separator_line(false), frame, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new(app.tr("sc3000.maintenance")).size(t.font_small).color(t.text_dim));
+                let (rect, _) = ui.allocate_exact_size(vec2(t.space_16, t.space_16), egui::Sense::hover());
+                let angle = ui.input(|i| i.time) as f32 * 0.5;
+                let centre = rect.center() + vec2(angle.cos(), angle.sin()) * t.space_4;
+                ui.painter().circle_filled(centre, t.space_2, t.accent);
+            });
+        });
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+    }
     file_menu(app, ui.ctx());
     crate::plugin_menu::menu(app, &ui.ctx().clone());
     let help_x = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::unique("sc_help_anchor")).unwrap_or(300.0));

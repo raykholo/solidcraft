@@ -5299,6 +5299,7 @@ dependencies = [
  "solidcraft-control",
  "solidcraft-engine",
  "solidcraft-look",
+ "solidcraft-theme",
  "solidcraft-ui-egui",
  "solidcraft-ui-text",
  "url",

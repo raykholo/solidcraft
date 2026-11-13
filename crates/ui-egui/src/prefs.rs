@@ -365,8 +365,22 @@ pub fn choose_nav_preset(prefs: &mut Prefs, preset: &NavPreset) {
     }
 }
 /// Stable control-channel names; presentation labels may be shorter.
-pub const PAGES: &[&str] =
-    &["General", "Appearance", "Layout", "Graphics", "Design", "Sketch", "Tools", "Navigation", "3D mouse", "Shortcuts", "Assistant", "Plugins"];
+pub const PAGES: &[&str] = &[
+    "General",
+    "Appearance",
+    "Layout",
+    "Graphics",
+    "Design",
+    "Sketch",
+    "Tools",
+    "Navigation",
+    "3D mouse",
+    "Shortcuts",
+    "Assistant",
+    "Plugins",
+    #[cfg(feature = "sc3000")]
+    "SolidCraft 3000 Cloud",
+];
 pub const PAGE_GENERAL: usize = 0;
 pub const PAGE_APPEARANCE: usize = 1;
 pub const PAGE_LAYOUT: usize = 2;
@@ -379,6 +393,8 @@ pub const PAGE_MOUSE3D: usize = 8;
 pub const PAGE_SHORTCUTS: usize = 9;
 pub const PAGE_ASSISTANT: usize = 10;
 pub const PAGE_PLUGINS: usize = 11;
+#[cfg(feature = "sc3000")]
+pub const PAGE_SC3000: usize = 12;
 /// What Preferences accepts for `parameter_list_rows`: `parameters.complete` answers at most 200.
 pub const PARAMETER_LIST_ROWS: std::ops::RangeInclusive<u16> = 5..=200;
 const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
@@ -489,6 +505,16 @@ const WINDOW_PAGES: &[prefs_window::Page<SolveApp>] = &[
         scroll: true,
         draw: page_draw::<PAGE_PLUGINS>,
         defaults: page_defaults::<PAGE_PLUGINS>,
+    }),
+    #[cfg(feature = "sc3000")]
+    prefs_window::Page::Host(prefs_window::HostPage {
+        icon: ui_kit::Icon::Kit("prefs_general"),
+        label: "sc3000.cloud",
+        group: None,
+        handle: "prefs:page:SolidCraft 3000 Cloud",
+        scroll: true,
+        draw: page_draw::<PAGE_SC3000>,
+        defaults: |_| {},
     }),
 ];
 
@@ -3074,6 +3100,16 @@ fn draw_page(app: &mut SolveApp, ui: &mut egui::Ui, index: usize, t: &Tokens) {
         }
         PAGE_ASSISTANT => crate::agent_chat::settings::page(app, ui),
         PAGE_PLUGINS => crate::plugins::page(app, ui),
+        #[cfg(feature = "sc3000")]
+        PAGE_SC3000 => {
+            ui.label(app.tr("sc3000.preferences_hint"));
+            for key in ["sc3000.offline", "sc3000.extra_cloud", "sc3000.predictive_sync"] {
+                let id = egui::Id::unique(key);
+                let mut checked = ui.ctx().data(|d| d.get_temp::<bool>(id).unwrap_or(false));
+                ui_kit::checkbox(ui, app.tr(key), &mut checked);
+                ui.ctx().data_mut(|d| d.insert_temp(id, checked));
+            }
+        }
         PAGE_GENERAL => general::show(app, ui),
         PAGE_APPEARANCE => interface::appearance(app, ui, t),
         PAGE_LAYOUT => interface::layout(app, ui),
@@ -6844,7 +6880,9 @@ mod tests {
                 "3D mouse",
                 "Shortcuts",
                 "Assistant",
-                "Plugins"
+                "Plugins",
+                #[cfg(feature = "sc3000")]
+                "SolidCraft 3000 Cloud"
             ]
         );
         assert_eq!(WINDOW_PAGES.len(), PAGES.len());

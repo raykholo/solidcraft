@@ -25,6 +25,8 @@ mod keep;
 mod linked;
 #[cfg(any(target_arch = "wasm32", test))]
 mod mouse_buttons;
+#[cfg(all(feature = "sc3000", any(target_arch = "wasm32", test)))]
+mod sc3000;
 #[cfg(any(target_arch = "wasm32", test))]
 mod space_mouse;
 
@@ -348,6 +350,8 @@ mod web {
     type FontLoadResult = Rc<std::cell::RefCell<Option<Result<(String, Vec<u8>), String>>>>;
 
     struct Shell {
+        #[cfg(feature = "sc3000")]
+        cloud: crate::sc3000::Cloud,
         app: SolveApp,
         launch: crate::Launch,
         linked: crate::linked::Download,
@@ -1179,7 +1183,15 @@ mod web {
                     }
                 });
             }
+            #[cfg(feature = "sc3000")]
+            {
+                self.cloud.banner(ui);
+                self.cloud.strip(ui);
+                self.app.sc3000_odd_version = self.cloud.odd_version;
+            }
             self.app.ui(ui);
+            #[cfg(feature = "sc3000")]
+            self.cloud.show(ui.ctx(), self.app.sc3000_saves, self.app.sc3000_fillets, self.app.sc3000_parsecs, &self.app.sbox.text);
             let ctx = ui.ctx().clone();
             if self.launch.persists() {
                 self.file_panel(&ctx);
@@ -1280,6 +1292,8 @@ mod web {
             leave_tab_switching_to_browser(&window);
             keep_ctrl_w_for_the_design(&window);
             let Some(document) = window.document() else { return };
+            #[cfg(feature = "sc3000")]
+            crate::sc3000::brand(&document);
             let Some(canvas) = document.get_element_by_id(CANVAS_ID).and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok()) else {
                 log::error!("missing <canvas id=\"{CANVAS_ID}\">");
                 return;
@@ -1383,6 +1397,8 @@ mod web {
                         let linked = crate::linked::Download::start(launch.open.as_deref(), &cc.egui_ctx);
                         let full_url = window.location().href().ok().and_then(|value| url::Url::parse(&value).ok()).map(|url| launch.full_app_url(url));
                         Ok(Box::new(Shell {
+                            #[cfg(feature = "sc3000")]
+                            cloud: crate::sc3000::Cloud::browser(),
                             app,
                             launch,
                             linked,
@@ -1446,6 +1462,78 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn cloud_timers_preserve_cad_and_finish_their_waits() {
+        use crate::sc3000::{Cloud, Scene, update_progress};
+        assert_eq!(update_progress(2.0), 0.99);
+        assert_eq!(update_progress(9.99), 0.99);
+        let mut cloud = Cloud::new(true, "2026-11-13".into(), "3000.317.1".into());
+        cloud.tick(0.0, true, false);
+        for second in 1..=10 {
+            cloud.tick(f64::from(second), true, false);
+        }
+        assert_eq!(cloud.scene, Some(Scene::Update(10.0)));
+        cloud.scene = Some(Scene::Sync(0.0));
+        for second in 11..=13 {
+            cloud.tick(f64::from(second), true, false);
+        }
+        assert_eq!(cloud.scene, Some(Scene::Conflict));
+        cloud.scene = Some(Scene::Outage(0.0));
+        for second in 14..=18 {
+            cloud.tick(f64::from(second), true, false);
+        }
+        assert_eq!(cloud.scene, None);
+        for second in 19..=600 {
+            cloud.tick(f64::from(second), true, false);
+        }
+        assert_eq!(cloud.scene, Some(Scene::Expired));
+        let mut same_day = Cloud::new(false, String::new(), String::new());
+        for second in 0..=1000 {
+            same_day.tick(f64::from(second), false, false);
+        }
+        assert_eq!(same_day.scene, None, "background time does not expire a session");
+    }
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn fourth_fillet_notice_is_soft_and_limited_to_once_per_rolling_hour() {
+        let mut cloud = crate::sc3000::Cloud::new(false, String::new(), String::new());
+        for count in 1..=3 {
+            assert!(!cloud.record_fillets(count as f64, count));
+        }
+        assert!(cloud.record_fillets(4.0, 4));
+        assert!(!cloud.record_fillets(4.0, 4), "repainting does not repeat the notice");
+        assert!(!cloud.record_fillets(5.0, 5), "later fillets remain allowed without another notice");
+        assert!(!cloud.record_fillets(3605.0, 6), "old fillets leave the rolling hour");
+        assert!(!cloud.record_fillets(3606.0, 7));
+        assert!(!cloud.record_fillets(3607.0, 8));
+        assert!(cloud.record_fillets(3608.0, 9));
+        assert_eq!(cloud.scene, None, "observing fillets never changes or blocks CAD");
+    }
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn hidden_cloud_eggs_trigger_only_on_their_exact_input() {
+        use crate::sc3000::{konami_step, salmon_query, upload_percent};
+        let code = [
+            egui::Key::ArrowUp,
+            egui::Key::ArrowUp,
+            egui::Key::ArrowDown,
+            egui::Key::ArrowDown,
+            egui::Key::ArrowLeft,
+            egui::Key::ArrowRight,
+            egui::Key::ArrowLeft,
+            egui::Key::ArrowRight,
+            egui::Key::B,
+            egui::Key::A,
+        ];
+        assert_eq!(code.iter().fold(0, |progress, key| konami_step(progress, *key)), code.len());
+        assert_eq!([egui::Key::ArrowUp, egui::Key::B].iter().fold(0, |progress, key| konami_step(progress, *key)), 0);
+        assert!(salmon_query(" Salmon ") && salmon_query("FISH") && !salmon_query("fillet"));
+        assert_eq!([0.0, 1.0, 1.9].map(upload_percent), [100, 99, 100]);
+    }
 
     #[test]
     fn link_query_decodes_once_and_embed_disables_persistence() {

@@ -186,15 +186,20 @@ fn about(app: &mut SolveApp, ctx: &egui::Context) {
     if !app.help.about {
         return;
     }
+    let version = VERSION;
+    #[cfg(feature = "sc3000")]
+    let version = if app.sc3000_odd_version { solidcraft_ui_text::tr("sc3000.web.version") } else { VERSION };
     let (closed, action) = ui_kit::Window::new(egui::Id::unique("sc_about"), "help", solidcraft_ui_text::tr_label("About SolidCraft"))
         .cards(2.0)
         .actions("", "Close", None)
         .show(ctx, true, |ui| {
             ui_kit::text(
                 ui,
-                &solidcraft_ui_text::format("help.build", &[("version", VERSION), ("commit", COMMIT), ("date", BUILD_DATE)]),
+                &solidcraft_ui_text::format("help.build", &[("version", version), ("commit", COMMIT), ("date", BUILD_DATE)]),
                 ui_kit::Text::Report("version", false),
             );
+            #[cfg(feature = "sc3000")]
+            ui_kit::text(ui, solidcraft_ui_text::tr("sc3000.web.uptime"), ui_kit::Text::Note("sc3000_uptime"));
             ui_kit::text(
                 ui,
                 solidcraft_ui_text::tr_label("Open-source parametric 3D CAD in Rust. Licensed MIT OR Apache-2.0."),

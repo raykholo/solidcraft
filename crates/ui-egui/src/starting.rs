@@ -126,7 +126,16 @@ impl<T> Starting<T> {
             }
             let painter = ui.painter();
             let c = rect.center();
-            painter.text(c - vec2(0.0, 28.0), Align2::CENTER_BOTTOM, "SolidCraft", FontId::proportional(t.font_display), t.text);
+            let title = if cfg!(feature = "sc3000") { solidcraft_ui_text::tr("sc3000.title") } else { "SolidCraft" };
+            painter.text(c - vec2(0.0, 28.0), Align2::CENTER_BOTTOM, title, FontId::proportional(t.font_display), t.text);
+            #[cfg(feature = "sc3000")]
+            painter.text(
+                c - vec2(0.0, 12.0),
+                Align2::CENTER_BOTTOM,
+                solidcraft_ui_text::tr("sc3000.tagline"),
+                FontId::proportional(t.font_small),
+                t.text_dim,
+            );
             // Steps done of all of them; a step that runs long holds the bar where it is.
             let bar = egui::Rect::from_center_size(c, vec2(240.0, 4.0));
             painter.rect_filled(bar, 2.0, t.border);
@@ -256,7 +265,7 @@ mod tests {
         let (still, painted) = frame(&ctx, &mut starting, &mut log);
         assert!(still);
         assert!(log.is_empty(), "no step ran before the first frame: {log:?}");
-        assert!(painted.iter().any(|t| t == "SolidCraft"), "{painted:?}");
+        assert!(painted.iter().any(|t| t == if cfg!(feature = "sc3000") { "SolidCraft 3000" } else { "SolidCraft" }), "{painted:?}");
         assert!(ctx.has_requested_repaint(), "the next frame comes without input");
 
         let (still, painted) = frame(&ctx, &mut starting, &mut log);
