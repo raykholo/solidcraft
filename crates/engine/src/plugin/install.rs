@@ -110,6 +110,14 @@ pub fn install(plugin: &Unpacked, plugins: &Path, replace: bool) -> Result<PathB
     if !replace && let Some((name, version)) = installed(plugins, id) {
         return Err(InstallError::AlreadyInstalled { id: id.clone(), name, version });
     }
+    // Preflight logical destinations before the staging folder writes or a replacement deletes.
+    // Checking only the plugin folder would bypass a scoped caller's hidden-file restrictions.
+    for path in std::iter::once(target.clone()).chain(plugin.files.iter().map(|file| target.join(&file.path))) {
+        solidcraft_io::vfs::check_new(&path.to_string_lossy()).map_err(|e| InstallError::Io(e.to_string()))?;
+    }
+    if target.exists() {
+        super::package::check_remove_tree(&target).map_err(|e| InstallError::Io(e.to_string()))?;
+    }
     std::fs::create_dir_all(plugins).map_err(io)?;
     // A hidden name: the plugins list skips it while it is written.
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();

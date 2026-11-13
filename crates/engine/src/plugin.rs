@@ -3,7 +3,7 @@
 use crate::{EngineError, Result, Session};
 pub use craft_plugin::{
     API, Effect, Entry, FileGrant, HostLimits, Limits, MAX_COMPONENT_BYTES, MAX_JSON_BYTES, MAX_MANIFEST_BYTES, MAX_MEMORY_MIB, Manifest,
-    RuntimeManifest, valid_id,
+    RuntimeManifest, UiSlot, valid_id,
 };
 use craft_plugin::{CommandSchema, HostError, PluginHost};
 use serde_json::{Value, json};
@@ -23,13 +23,24 @@ fn error(s: impl Into<String>) -> EngineError {
     EngineError::Other(format!("plugin: {}", s.into()))
 }
 
+/// Approved permissions, stored by plugin id outside the design.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Grants {
+    #[serde(default)]
+    pub command_groups: BTreeSet<String>,
+    #[serde(default)]
+    pub folders: Vec<FileGrant>,
+}
+
 /// Trusted host state, never loaded from a design or supplied by guest code.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AppState {
     pub packages: BTreeMap<String, String>,
+    pub grants: BTreeMap<String, Grants>,
+    /// Adapter folder grants for the active call; runtime calls replace these with that id's grants.
     pub file_grants: Vec<FileGrant>,
-    /// Sensitive command groups ([`COMMAND_GROUPS`]) the user granted. A plugin calls a grouped
-    /// command only when its manifest asks for the group too.
+    /// Legacy embedding state. Runtime permissions come exclusively from `grants`, by plugin id.
     pub command_groups: BTreeSet<String>,
     /// Where `plugin.install` writes and `plugin.list` looks; `None`: the per-user
     /// `plugins` folder ([`crate::recovery::data_dir`]).
@@ -56,6 +67,12 @@ pub fn parse_manifest(text: &[u8], folder: &str) -> Result<Manifest> {
     let manifest = craft_plugin::parse_manifest_for(text, folder, "SolidCraft")?;
     let refuse = |field: &str, reason: String| -> EngineError { HostError::InvalidManifest { field: field.into(), reason }.into() };
     if let Some(runtime) = &manifest.runtime {
+        for entry in &runtime.entries {
+            let id = format!("{}.{}", manifest.id, entry.name);
+            if crate::find_command(&id).is_some() {
+                return Err(refuse("runtime.entries", format!("entry `{id}` conflicts with a SolidCraft command")));
+            }
+        }
         if let Some(group) = runtime.permissions.command_groups.iter().find(|g| !COMMAND_GROUPS.contains(&g.as_str())) {
             return Err(refuse(
                 "runtime.permissions.command_groups",
@@ -84,7 +101,7 @@ pub fn parse_manifest(text: &[u8], folder: &str) -> Result<Manifest> {
 /// - `file`: reads or writes files (save, export, import, insert from a file, libraries);
 /// - `doc`: opens, creates, recovers or switches designs;
 /// - `app`: app settings, the window and diagnostics, outside any design;
-/// - `plugin`: inspects or runs plugins.
+/// - `plugin`: reviews, installs, removes, inspects or runs plugins.
 pub const COMMAND_GROUPS: &[&str] = &["app", "doc", "file", "plugin"];
 
 /// Commands outside the `file.` family that read or write files.
@@ -163,8 +180,11 @@ pub fn run(session: &mut Session, package: Package, entry: &str, params: &serde_
     {
         // What this call may reach: the groups both the manifest asks for and the user granted,
         // and for `file` commands the granted folders the manifest may both read and write.
-        let groups: BTreeSet<String> = rt.permissions.command_groups.intersection(&session.plugin_state.command_groups).cloned().collect();
-        let host = SolidCraftHost { session: session.scratch(), transaction: None, sketch_exits: Vec::new(), groups, file_folders: Vec::new() };
+        let grants = session.plugin_state.grants.get(&package.manifest.id).cloned().unwrap_or_default();
+        let groups: BTreeSet<String> = rt.permissions.command_groups.intersection(&grants.command_groups).cloned().collect();
+        let mut scratch = session.scratch();
+        scratch.plugin_state.file_grants = grants.folders;
+        let host = SolidCraftHost { session: scratch, transaction: None, sketch_exits: Vec::new(), groups, file_folders: Vec::new() };
         let file_folders = host
             .granted_folders()
             .into_iter()
@@ -193,6 +213,11 @@ pub fn run(session: &mut Session, package: Package, entry: &str, params: &serde_
 }
 
 pub mod install;
+#[cfg(not(target_arch = "wasm32"))]
+mod package;
+#[cfg(not(target_arch = "wasm32"))]
+pub use package::{remove, store_grants, validate_grants};
+
 #[cfg(test)]
 mod tests;
 
