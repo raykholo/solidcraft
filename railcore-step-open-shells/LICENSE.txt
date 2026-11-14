@@ -1,0 +1,1 @@
+Bodies from the RailCore II 300ZL assembly (github.com/railcore/parts), "RailCore® II 300ZL by J. Steve White and Tony Akens (RailCore Labs)", CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/). Written as STEP by Dutchman/cadmpeg; geometry unchanged. Shared under the same licence.
