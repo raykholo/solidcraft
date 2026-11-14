@@ -12,7 +12,6 @@ use solidcore::mass::integrator::properties::{
     brep_area_about, brep_mass_properties_estimated, edge_length, face_area, face_centroid,
     region_material, AreaAbout, MassPropertyRequest, PropertyAttributes,
 };
-use solidcore::nurbs::math::MODEL_TOL;
 use solidcore::query::api_queries::{
     self as q, brep_bounding_box, brep_is_manifold_solid, brep_material_census,
     edge_face_gap_samples, face_normal_at_edge,
@@ -796,7 +795,7 @@ impl Body {
     ///
     /// # Errors
     /// [`Error::Argument`] for an index past the faces or a `direction` or `origin` that is not
-    /// finite, or a `direction` of no length; the errors of [`Body::face_plane_normal`] and
+    /// finite; [`Error::Refused`] for a `direction` of no length; the errors of [`Body::face_plane_normal`] and
     /// [`Body::face_centroid`].
     pub fn face_square_level(
         &self,
@@ -806,27 +805,18 @@ impl Body {
         origin: [f64; 3],
     ) -> Result<Option<SquareFaceLevel>> {
         let f = order::face(order, face)?;
-        point(direction)?;
-        point(origin)?;
-        let len = direction.iter().map(|x| x * x).sum::<f64>().sqrt();
-        if !(len.is_finite() && len > 0.0) {
-            return Err(Error::Argument);
-        }
-        let d = direction.map(|x| x / len);
+        let direction = point(direction)?;
+        let origin = point(origin)?;
         let Some(n) = self.face_plane_normal(order, face)? else {
             return Ok(None);
         };
-        let cross = [
-            n.value[1] * d[2] - n.value[2] * d[1],
-            n.value[2] * d[0] - n.value[0] * d[2],
-            n.value[0] * d[1] - n.value[1] * d[0],
-        ];
-        let tilt = cross.iter().map(|x| x * x).sum::<f64>().sqrt();
-        if tilt > n.bound + MODEL_TOL {
+        let on_face = point(self.face_centroid(order, face, 1e-8)?.centroid)?;
+        let Some(level) =
+            q::face_square_level(point(n.value)?, n.bound, on_face, direction, origin)
+                .map_err(status)?
+        else {
             return Ok(None);
-        }
-        let c = self.face_centroid(order, face, 1e-8)?.centroid;
-        let level = (0..3).map(|i| (c[i] - origin[i]) * d[i]).sum();
+        };
         let tolerance = with_body("face_tolerance", self, |_k, b| {
             Ok(Ok::<f64, Error>(face::tolerance(b, f)?))
         })??;
