@@ -1980,19 +1980,15 @@ fn recomputed_seam_curve(
         };
         along.push(p);
     }
-    // the largest distance found at the curve's own points (the bound is never below it)
-    let mut sampled = 0.0_f64;
     for (surface, domain) in &surfaces {
         let mut uvs = Vec::new();
         let mut guess = None;
         for point in &along {
-            let Some((_, uv, away, _)) = nearest_on_surface(k, surface, domain, *point, guess)?
-            else {
+            let Some((_, uv, _, _)) = nearest_on_surface(k, surface, domain, *point, guess)? else {
                 return Ok(None);
             };
             guess = Some(uv);
             uvs.push(uv);
-            sampled = sampled.max(away);
         }
         let Some(net) = super::seam_bound::NetSurface::of(k, surface, &uvs)? else {
             return Ok(None);
@@ -2016,12 +2012,6 @@ fn recomputed_seam_curve(
     // The tolerance the edge will store is this very value (stored as it is, with no margin),
     // so it is held to the stitch tolerance as it is.
     if !(gap.is_finite() && gap <= limit) {
-        return Ok(None);
-    }
-    // A tolerance is stored as the proved gap, so the proof must be tight: a bound beyond twice
-    // the distances found along the curve (plus the enclosure's own floor) says the enclosure
-    // could not follow the surface, and certifies no gap worth storing.
-    if gap > 2.0 * sampled + 1e-2 * widest.min(limit) {
         return Ok(None);
     }
     Ok(Some(RecomputedSeam {
