@@ -265,3 +265,33 @@ fn an_edit_turns_a_loop_into_a_network_and_back() {
     assert!(matches!(kind(&s), Some(solidcraft_doc::FeatureKind::SurfaceBoundary { .. })), "{:?}", kind(&s));
     assert!((areas(&mut s, &body).0 - 100.0).abs() < 1e-6);
 }
+
+/// #16508: a boundary surface and a loft surface built on one spline stitch into one sheet. Each is
+/// fitted to the spline on its own, so the two surfaces sit a little off it, each in its own
+/// way; the seam the stitch sews is checked against both surfaces. Before the fix main refused
+/// this, because the seam curve was fitted separately on each surface and the check found the
+/// seam farther from one of them than its tolerance. The sheet has the seven edges of the two
+/// four-sided surfaces with the spline shared.
+#[test]
+fn a_boundary_surface_and_a_loft_surface_on_one_spline_stitch() {
+    let mut s = Session::default();
+    let mut spline = |name: &str, offset: f64, y: f64, bulge: f64| {
+        run(&mut s, "sketch.create", json!({"plane": "XY", "offset": offset, "name": name}));
+        run(&mut s, "sketch.spline.fit_point", json!({"points": [[0.0, y], [3.0, y + bulge], [7.0, y - bulge], [10.0, y]]}));
+        run(&mut s, "sketch.finish", json!({}));
+    };
+    spline("Shared", 0.0, 0.0, 1.5);
+    spline("Far", 5.0, 10.0, 2.0);
+    spline("Other", 5.0, -10.0, 2.5);
+    let curve = |sketch: &str| json!({"sketch": sketch, "curves": ["s1"]});
+    let boundary = run(&mut s, "surface.boundary", json!({"u": [curve("Shared"), curve("Far")]}));
+    let loft = run(&mut s, "surface.loft", json!({"sections": [curve("Shared"), curve("Other")]}));
+    let (a, b) = (first(&boundary["created_bodies"]), first(&loft["created_bodies"]));
+    assert!(!a.is_empty() && !b.is_empty() && a != b, "{boundary} / {loft}");
+    let stitched = run(&mut s, "surface.stitch", json!({"bodies": [a, b]}));
+    let bodies: Vec<&Value> = ["created_bodies", "changed_bodies"].iter().filter_map(|k| stitched[*k].as_array()).flatten().collect();
+    assert_eq!(bodies.len(), 1, "one sheet: {stitched}");
+    let body = bodies[0].as_str().unwrap_or_default();
+    let edges = run(&mut s, "model.edges", json!({"body": body}));
+    assert_eq!(edges["edges"].as_array().map(Vec::len), Some(7), "{edges}");
+}

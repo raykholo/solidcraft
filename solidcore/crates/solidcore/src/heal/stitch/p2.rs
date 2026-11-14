@@ -1260,7 +1260,9 @@ impl Stitch<'_> {
                             done_with_vertex = false;
                             // (not upstream) the sewn edge now serves both faces: where a
                             // face's surface is off its curve by more than its tolerance, the
-                            // curve is recomputed from the surfaces, never the tolerance grown
+                            // curve is first recomputed from the surfaces; only a gap that
+                            // recomputing cannot close grows the edge's tolerance, to the
+                            // enclosed gap and no further
                             // the edge's tolerance as the glue left it: the edge closure's
                             let glued = edge::tolerance(b, e)?;
                             let mut seam_report = None;
