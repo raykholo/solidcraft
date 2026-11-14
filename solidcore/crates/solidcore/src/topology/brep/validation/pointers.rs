@@ -1269,7 +1269,10 @@ fn surface_clears(
     Ok(true)
 }
 
-/// [`surface_clears`] for a curve over `interval`, split in two.
+/// [`surface_clears`] for a curve over `interval`, split in two. Each cell's box is the curve's
+/// [`Curve::certified_bounding_box`] (a curve on a surface: its approximation's box grown by the
+/// approximation's measured gap); a curve with no such box, whose only box would be sampled,
+/// proves nothing, so it counts as reaching.
 fn curve_clears(
     k: &Kernel,
     curve: &Curve,
@@ -1287,18 +1290,9 @@ fn curve_clears(
             return Ok(false);
         }
         asked += 1;
-        let Some(mut cell_box) = exclusion_probe(curve.calculate_bounding_box(
-            k,
-            &cell,
-            BoundingBoxRequest {
-                normal: true,
-                pseudo: false,
-                polar: false,
-            },
-            true,
-        ))?
-        .and_then(|boxes| boxes.normal)
-        .filter(Extent3d::is_defined) else {
+        // only a box that bounds the curve proves anything: a sampled one counts as reaching
+        let Some(mut cell_box) = exclusion_probe(curve.certified_bounding_box(k, &cell))?.flatten()
+        else {
             return Ok(false);
         };
         cell_box.expand_absolute(zone);
@@ -1542,28 +1536,19 @@ fn check_vertex_clearance(
         }
     }
     for e in b.edge_list().to_vec() {
-        if b.edge(e)?.curve.is_none() {
-            continue;
-        }
-        let bbox = exclusion_probe(crate::query::edge::calculate_bounding_box(
-            k,
-            b,
-            e,
-            BoundingBoxRequest {
-                normal: true,
-                pseudo: false,
-                polar: false,
-            },
-            false,
-        ))?
-        .and_then(|bounds| bounds.normal)
-        .filter(Extent3d::is_defined);
         let first = edge::vertex(b, e)?;
         let last = edge::other_vertex(b, e, first)?;
         let data = b.edge(e)?;
         let Some(curve) = data.curve.as_ref() else {
             continue;
         };
+        // a box that bounds the edge's curve and its zone; none proves nothing here
+        let bbox = exclusion_probe(curve.certified_bounding_box(k, &data.interval))?
+            .flatten()
+            .map(|mut bbox| {
+                bbox.expand_absolute(tol::zone_tol3d(k, data.tolerance));
+                bbox
+            });
         for &v in vertices {
             k.check_cancelled("topology::brep::validation::vertex_exclusion")?;
             if Some(v) == first || Some(v) == last || excluded.contains(&v) {
@@ -2403,6 +2388,84 @@ mod issue_891_tests {
         assert_eq!(before.len(), 2);
         assert_eq!(after, before);
         assert_eq!(after[0], middle_control_point(&mut trim()));
+    }
+
+    /// A curve-on-surface edge's clearance box is its approximation's box grown by the
+    /// approximation's measured gap. A helix-like line in (u, v) on a cylinder is
+    /// approximated by a non-rational spline with a gap above zero: a point that far outside
+    /// the approximation's box is inside the grown one, so the plain box would have called a
+    /// ball of 0.9 of the gap clear and the certified one does not.
+    #[test]
+    fn a_curve_on_surface_box_grows_by_its_approximation_gap() {
+        use crate::curve::crv_on_surf::CrvOnSurf;
+        use crate::nurbs::nurbs_crv::allocate_nurb_curve;
+        use crate::primitive::api_primitives::create_cylinder_surface;
+
+        let k = Kernel::default();
+        let mut uv = allocate_nurb_curve(2, 1, 4).unwrap();
+        for (p, (x, y)) in uv.cpts_mut().iter_mut().zip([(10.0, 0.2), (190.0, 0.8)]) {
+            p.x = x;
+            p.y = y;
+            p.z = f64::MAX;
+            p.w = -f64::MAX;
+        }
+        uv.knots_mut().copy_from_slice(&[0.0, 0.0, 1.0, 1.0]);
+        let uv = Curve::from(BSplineCurve::from_nurb(uv, 1, false));
+        let cylinder = create_cylinder_surface(&k, Vec3::ZERO, 1.0, 1.0).unwrap();
+        let on = CrvOnSurf::new(&k, uv, Surface::from(cylinder), None, 3).unwrap();
+        let curve = Curve::from(on);
+        let interval = curve.natural_interval();
+        let certified = curve
+            .certified_bounding_box(&k, &interval)
+            .unwrap()
+            .unwrap();
+        let CurveKind::CrvOnSurf(on) = curve.kind() else {
+            panic!("expected a curve on a surface");
+        };
+        let gap = on.bs_approx_max_gap_3d();
+        assert!(gap > 0.0 && gap.is_finite(), "approximation gap {gap}");
+        let plain = curve
+            .calculate_bounding_box(
+                &k,
+                &interval,
+                BoundingBoxRequest {
+                    normal: true,
+                    pseudo: false,
+                    polar: false,
+                },
+                true,
+            )
+            .unwrap()
+            .normal
+            .unwrap();
+        let mut grown = plain;
+        grown.expand_absolute(gap);
+        assert_eq!(certified, grown);
+        let outside = Vec3::new(plain.max().x + gap, 0.0, 0.5);
+        assert!(box_distance(&plain, outside) >= 0.9 * gap);
+        assert!(box_distance(&certified, outside) < 0.9 * gap);
+    }
+
+    /// A curve whose only box is the base class's sampled one (here an iso curve) proves no
+    /// clearance, so even a ball far from it counts as reaching.
+    #[test]
+    fn a_curve_with_only_a_sampled_box_counts_as_reaching() {
+        use crate::curve::iso_curve::IsoCurve;
+        use crate::nurbs::b_spline_surface::p1::SurfParamType;
+
+        let k = Kernel::default();
+        let patch = BSplineSurface::create_bilinear_surface(
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 1.0),
+        )
+        .unwrap();
+        let curve = Curve::from(IsoCurve::new(patch, SurfParamType::U, 0.5, false, true));
+        let interval = curve.natural_interval();
+        assert_eq!(curve.certified_bounding_box(&k, &interval).unwrap(), None);
+        let far = Vec3::new(100.0, 100.0, 100.0);
+        assert!(!curve_clears(&k, &curve, &interval, 1e-5, far, 0.1).unwrap());
     }
 
     /// WR-446 (`plan/upstream-issues/WR-446--brepconstructor-endshell-validatepointers-makes-uv-trim-curves.md`):

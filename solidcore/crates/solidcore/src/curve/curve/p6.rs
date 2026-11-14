@@ -9,6 +9,7 @@
 //! | Rust                                                    | Upstream                              |
 //! |---------------------------------------------------------|---------------------------------------|
 //! | [`Curve::calculate_bounding_box`], [`calculate_bounding_box_base`] | `SmCurve::CalculateBoundingBox` (and its dispatch, with the `SmCrvOnSurf` override) |
+//! | [`Curve::certified_bounding_box`] | not upstream: a box that bounds the curve, never a sampled one |
 //! | [`Curve::is_planar`]                                    | `SmCurve::IsPlanar`                   |
 //! | [`Curve::drop_point`], [`Curve::drop_point_base`], [`DroppedPoint`] | `DropPoint` (virtual: the `SmCrvOnSurf` override), `SmCurve::DropPoint` |
 //! | [`Curve::global_point_solve_step`]                      | `SmCurve::GlobalPointSolveSTEP` (and its dispatch) |
@@ -582,6 +583,50 @@ impl Curve {
             CurveKind::Composite(c) => c.calculate_bounding_box(k, interval, req, expand),
             _ => calculate_bounding_box_base(k, self, interval, req, expand),
         }
+    }
+
+    /// A box that provably holds every point of the curve over `interval`, or `None` when
+    /// none is known (not upstream; for clearance proofs, where a sampled box proves
+    /// nothing). The B-spline and conic boxes come from the control points of the spans
+    /// covered, a line's from its ends, a Hermite curve's from its Bezier polygon (over
+    /// the whole curve), a composite's from its segments' certified boxes. A curve on a
+    /// surface takes its cached approximation's box grown by the approximation's measured
+    /// gap, and has none when the approximation cannot be made. Every other kind would
+    /// fall back to [`calculate_bounding_box_base`], which samples, so it has none.
+    ///
+    /// # Errors
+    ///
+    /// Those of the boxes and of the curve-on-surface approximation.
+    pub fn certified_bounding_box(
+        &self,
+        k: &Kernel,
+        interval: &Extent1d,
+    ) -> Result<Option<Extent3d>> {
+        let req = BoundingBoxRequest {
+            normal: true,
+            pseudo: false,
+            polar: false,
+        };
+        Ok(match self.kind() {
+            CurveKind::BSpline(c) => c.calculate_bounding_box(interval, req)?.normal,
+            CurveKind::Hyperbola(c) => c.base().calculate_bounding_box(interval, req)?.normal,
+            CurveKind::Ellipse(c) => c.base().calculate_bounding_box(interval, req)?.normal,
+            CurveKind::Parabola(c) => c.base().calculate_bounding_box(interval, req)?.normal,
+            CurveKind::Line(c) => c.calculate_bounding_box(interval, req).normal,
+            CurveKind::Hermite(c) => {
+                let mut normal = Extent3d::new();
+                c.calculate_bounding_box(Some(&mut normal), None, None)?;
+                Some(normal)
+            }
+            CurveKind::CrvOnSurf(c) => c.certified_bounding_box_ref_as(k, interval, None)?,
+            CurveKind::TangentField(c) => {
+                c.base()
+                    .certified_bounding_box_ref_as(k, interval, Some(c.members()))?
+            }
+            CurveKind::Composite(c) => c.certified_bounding_box(k, interval)?,
+            _ => None,
+        }
+        .filter(Extent3d::is_defined))
     }
 
     /// `IsPlanar`: [`PseudoBox::is_planar`] of the pseudo box of the curve over its
