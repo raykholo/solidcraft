@@ -981,8 +981,13 @@ fn nearest_face_points(k: &Kernel, brep: &mut Brep, v: VertexId, x: Point3) -> R
     Ok(points)
 }
 
-/// The most steps [`minimax_centre`] takes: each step at least halves the distance to the
-/// optimum along the directions the faces constrain.
+/// The most steps [`minimax_centre`] takes. The map has no proved rate: for two faces meeting at
+/// a shallow angle each step keeps nearly all of the distance to the optimum (about 99.97 % at
+/// 1 degree), so the result after this many steps is an approximation of the optimum, never a
+/// certified one. That is safe because the point is only a candidate: `face_corner_to_move_to`
+/// moves the vertex only when `corner_cures_gaps` measures every face and edge gap at it
+/// within bounds, and otherwise leaves the vertex alone. A start on the corner of faces that
+/// all hold it is already the optimum, so the common case never iterates.
 const MINIMAX_STEPS: usize = 64;
 
 /// The point minimising the largest distance to a set of faces, from `start`: with
@@ -1020,13 +1025,16 @@ fn minimax_centre(
 /// three points that is the circumcentre of an acute triangle and the midpoint of the longest
 /// side otherwise.
 fn enclosing_ball_centre(points: &[Point3]) -> Option<Point3> {
+    if points.len() > MAX_EXHAUSTIVE_BALL {
+        return welzl_ball_centre(points);
+    }
     let mut best: Option<(f64, Point3)> = None;
     let mut consider = |c: Point3| {
         if !(c.x.is_finite() && c.y.is_finite() && c.z.is_finite()) {
             return;
         }
         let radius = points.iter().map(|p| p.distance(c)).fold(0.0_f64, f64::max);
-        if best.map_or(true, |(r, _)| radius < r) {
+        if best.is_none_or(|(r, _)| radius < r) {
             best = Some((radius, c));
         }
     };
@@ -1047,6 +1055,57 @@ fn enclosing_ball_centre(points: &[Point3]) -> Option<Point3> {
         }
     }
     best.map(|(_, c)| c)
+}
+
+/// The most points [`enclosing_ball_centre`] searches exhaustively (every ball through one to four
+/// of them is tried, O(n^4)); more go to [`welzl_ball_centre`], expected linear. A vertex with
+/// many faces (a cone's apex) reaches it.
+const MAX_EXHAUSTIVE_BALL: usize = 8;
+
+/// The most points [`welzl_ball_centre`] takes: its recursion is one level per point.
+const MAX_WELZL_POINTS: usize = 4096;
+
+/// The centre of the smallest ball holding `points` by Welzl's algorithm (`None` for none, for
+/// more than [`MAX_WELZL_POINTS`], or when a support set has no ball through it).
+fn welzl_ball_centre(points: &[Point3]) -> Option<Point3> {
+    if points.len() > MAX_WELZL_POINTS {
+        return None;
+    }
+    let mut support = Vec::with_capacity(4);
+    welzl(points, points.len(), &mut support).map(|(_, c)| c)
+}
+
+/// The smallest ball (radius, centre) holding `points[..n]` with `support` on its surface.
+/// Recursion depth is at most `n`, bounded by [`MAX_WELZL_POINTS`] at the entry.
+fn welzl(points: &[Point3], n: usize, support: &mut Vec<Point3>) -> Option<(f64, Point3)> {
+    let Some(last) = n.checked_sub(1).and_then(|i| points.get(i)).copied() else {
+        return ball_on(support);
+    };
+    if support.len() == 4 {
+        return ball_on(support);
+    }
+    let ball = welzl(points, n - 1, support)?;
+    if last.distance(ball.1) <= ball.0 * (1.0 + 1e-12) {
+        return Some(ball);
+    }
+    support.push(last);
+    let with = welzl(points, n - 1, support);
+    support.pop();
+    with
+}
+
+/// The smallest ball with all of `support` (at most four points) on its surface.
+fn ball_on(support: &[Point3]) -> Option<(f64, Point3)> {
+    let centre = match support {
+        [] => return Some((0.0, Point3::new(0.0, 0.0, 0.0))),
+        [a] => *a,
+        [a, b] => 0.5 * (*a + *b),
+        [a, b, c] => circumcentre3(*a, *b, *c)?,
+        [a, b, c, d] => circumcentre4(*a, *b, *c, *d)?,
+        _ => return None,
+    };
+    let radius = support.first().map_or(0.0, |p| p.distance(centre));
+    Some((radius, centre))
 }
 
 /// The centre of the circle through three points (`None` when they are on a line).
@@ -1445,6 +1504,25 @@ mod tests {
         ];
         let at = minimax_centre(Vec3::ZERO, |_| Ok(flat.to_vec())).unwrap();
         assert!(at.distance(Vec3::new(0.5 * s, 0.0, 0.0)) < 1e-12, "{at:?}");
+    }
+
+    // A vertex with many faces (a cone apex): more points than the exhaustive search takes go to
+    // Welzl's algorithm, which gives the same ball. Twenty points on a circle of radius 2 about
+    // (1, 2, 3), with interior points among them: the centre of the circle.
+    #[test]
+    fn the_smallest_ball_of_many_points_is_found_without_the_exhaustive_search() {
+        let centre = Vec3::new(1.0, 2.0, 3.0);
+        let mut points: Vec<Point3> = (0..20)
+            .map(|i| {
+                let a = f64::from(i) * std::f64::consts::TAU / 20.0;
+                centre + Vec3::new(2.0 * a.cos(), 2.0 * a.sin(), 0.0)
+            })
+            .collect();
+        points.push(centre + Vec3::new(0.3, -0.2, 0.0));
+        points.push(centre + Vec3::new(-1.0, 0.5, 0.0));
+        assert!(points.len() > MAX_EXHAUSTIVE_BALL);
+        let at = enclosing_ball_centre(&points).unwrap();
+        assert!(at.distance(centre) < 1e-9, "{at:?}");
     }
 
     #[test]
