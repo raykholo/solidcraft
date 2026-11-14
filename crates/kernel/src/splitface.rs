@@ -568,35 +568,45 @@ pub fn split_body(body: &Body, tool: &SplitTool) -> Result<Vec<Body>> {
 /// `plane`'s normal at that height along it. Whether the start lies in air or inside the
 /// target's material does not matter, and a piece never passes the face. `Ok(None)` when a kept
 /// piece reaches past the face where the profile is not over it: its own end cap at `far` is still
-/// there, or an edge of the cut section lies off the target's boundary. No piece: empty.
+/// there, or an edge of the cut section does not lie on the picked face (its curve on the face's
+/// surface and inside its trim, [`solidcore_ops::cap::edges_lie_on_face`]). No piece: empty.
 ///
 /// The two heights are told apart by a tolerance of the body's own, never more than a quarter of
 /// the distance between them.
 pub fn split_prism_to_face(tool: &Body, target: &Body, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Option<Vec<Body>>> {
+    let (ops_target, order) = target.ops_body().ok_or_else(|| invalid("the To object is not a solid body"))?;
     let n = plane.normal();
     let mut out = Vec::new();
     for part in split_body(tool, &SplitTool::Face { body: target, face })? {
-        let tol = part.record().tolerance.min(0.25 * (far - start).abs());
-        let cap_at = |height: f64| {
-            (0..part.face_count())
-                .filter_map(|i| part.planar_face(i))
-                .any(|p| solidcore_ops::cap::is_square_plane_at_height(a3(p.origin), a3(p.normal()), a3(plane.origin), a3(n), height, tol))
+        let own = part.record().tolerance;
+        let cut = solidcore_ops::cap::PrismCut {
+            origin: a3(plane.origin),
+            normal: a3(n),
+            start,
+            far,
+            cap_tolerance: own.min(0.25 * (far - start).abs()),
+            section_tolerance: own.max(target.record().tolerance),
         };
-        if !cap_at(start) {
-            continue;
+        let planar: Vec<_> = (0..part.face_count())
+            .filter_map(|i| part.planar_face(i))
+            .map(|p| solidcore_ops::cap::PlanarFace { origin: a3(p.origin), normal: a3(p.normal()) })
+            .collect();
+        let (ops_part, part_order) = part.ops_body().ok_or_else(|| invalid("a piece of the prism is not a solid body"))?;
+        match solidcore_ops::cap::prism_part(ops_target, order, face, ops_part, part_order, &planar, &section_edges(&part), &cut)
+            .map_err(|e| KernelError::Failed(format!("split prism: {e}")))?
+        {
+            solidcore_ops::cap::PrismPart::Dropped => {}
+            solidcore_ops::cap::PrismPart::ReachesPast => return Ok(None),
+            solidcore_ops::cap::PrismPart::Kept => out.push(part),
         }
-        if cap_at(far) || section_off_boundary(&part, target)? {
-            return Ok(None);
-        }
-        out.push(part);
     }
     Ok(Some(out))
 }
 
-/// Whether an edge of the section a split made (the face with no origin) has a point that is not
-/// on `target`'s boundary, by the exact classification of those points.
-fn section_off_boundary(part: &Body, target: &Body) -> Result<bool> {
-    let Some(history) = part.history() else { return Ok(false) };
+/// The record edges of the section a split made (the faces with no origin in the body it
+/// split).
+fn section_edges(part: &Body) -> Vec<usize> {
+    let Some(history) = part.history() else { return Vec::new() };
     let record = part.record();
     let mut edges = std::collections::BTreeSet::new();
     for (face, prov) in history.faces.iter().enumerate() {
@@ -609,12 +619,7 @@ fn section_off_boundary(part: &Body, target: &Body) -> Result<bool> {
             }
         }
     }
-    if edges.is_empty() {
-        return Ok(false);
-    }
-    let all = part.edges((part.size() * 1e-3).max(1e-3))?;
-    let points: Vec<Vec3> = all.iter().filter(|e| edges.contains(&e.index)).flat_map(|e| e.points.iter().copied()).collect();
-    Ok(target.classify_points(&points)?.iter().any(|c| *c != crate::PointClass::OnBoundary))
+    edges.into_iter().collect()
 }
 
 const SPLIT_BODY: &str = "split body";
