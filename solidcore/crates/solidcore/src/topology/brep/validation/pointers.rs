@@ -1236,11 +1236,11 @@ fn surface_clears(
         }
         let (lo, hi) = (cell.min(), cell.max());
         let mid = Point2::new(0.5 * (lo.x + hi.x), 0.5 * (lo.y + hi.y));
-        if ![lo.x, lo.y, hi.x, hi.y, mid.x, mid.y]
+        let finite = [lo.x, lo.y, hi.x, hi.y, mid.x, mid.y]
             .iter()
-            .all(|c| c.is_finite())
-            || !(lo.x < mid.x && mid.x < hi.x && lo.y < mid.y && mid.y < hi.y)
-        {
+            .all(|c| c.is_finite());
+        let splits = lo.x < mid.x && mid.x < hi.x && lo.y < mid.y && mid.y < hi.y;
+        if !(finite && splits) {
             return Ok(false);
         }
         for (u0, u1) in [(lo.x, mid.x), (mid.x, hi.x)] {
