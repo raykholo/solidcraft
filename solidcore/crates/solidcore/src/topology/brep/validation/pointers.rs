@@ -791,11 +791,10 @@ pub(crate) fn validate_pointers_excluding(
     // #82 refuses it as on main.
     let topology_intact = !r.failed;
     r.failed = false;
-    let wide = vertices_to_clear(b, &mut r)?;
     if topology_intact {
-        check_vertex_exclusion(k, b, &mut r, &wide)?;
+        check_vertex_exclusion(k, b, &mut r)?;
     } else {
-        for &v in &wide {
+        for v in vertices_to_clear(b, &mut r)? {
             let tolerance = b.vertex(v)?.tolerance;
             r.value(
                 b,
@@ -1392,7 +1391,7 @@ fn face_contact(
 }
 
 /// Test #82 past `GROWTH_PAST_RATIO` times the limit (reported here), and the vertices from the
-/// limit up to that, which [`check_vertex_exclusion`] decides by clearance. Vertices under the
+/// limit up to that, which [`check_vertex_clearance`] decides by clearance. Vertices under the
 /// limit pass Test #82 as before.
 fn vertices_to_clear(b: &Brep, r: &mut Reports<'_>) -> Result<Vec<VertexId>> {
     let limit = wide_vertex_limit(b);
@@ -1417,7 +1416,14 @@ fn vertices_to_clear(b: &Brep, r: &mut Reports<'_>) -> Result<Vec<VertexId>> {
 /// solve looks for contact, and a miss counts only once cell-by-cell boxes over the whole face or
 /// edge ([`surface_clears`], [`curve_clears`]) put every part of it at least that far away. Use the same bounded-curve drop and trimmed-surface drop/classification as the
 /// coincidence validator, with each vertex's radius rather than a body-wide ratio.
-fn check_vertex_exclusion(
+fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Result<()> {
+    let vertices = vertices_to_clear(b, r)?;
+    check_vertex_clearance(k, b, r, &vertices)
+}
+
+/// The clearance half of [`check_vertex_exclusion`], for `vertices` from the limit up to
+/// twice it.
+fn check_vertex_clearance(
     k: &Kernel,
     b: &mut Brep,
     r: &mut Reports<'_>,
