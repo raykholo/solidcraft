@@ -60,12 +60,32 @@ pub(crate) fn package(app: &mut SolveApp) -> Result<(String, Vec<u8>), String> {
     Ok((format!("{stem}-report.zip"), zip))
 }
 
+/// Write `bytes` to a new file in `dir`: `name`, or `name` with `-2`, `-3`, … before the extension
+/// when that file exists, so an earlier report's zip is never replaced. A request's folders
+/// (`allow_paths`) are honoured: a folder outside them is refused before anything is written.
 #[cfg(not(target_arch = "wasm32"))]
 fn write_to(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    use std::io::Write;
+    solidcraft_engine::io::vfs::check(&dir.to_string_lossy()).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let path = dir.join(name);
-    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-    Ok(path)
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    for n in 1..=1000u32 {
+        let file = match (n, ext.is_empty()) {
+            (1, _) => name.to_string(),
+            (_, true) => format!("{stem}-{n}"),
+            (_, false) => format!("{stem}-{n}.{ext}"),
+        };
+        let path = dir.join(file);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut f) => {
+                f.write_all(bytes).map_err(|e| e.to_string())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("too many report archives with the same name".into())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -92,6 +112,7 @@ pub(crate) fn attach(app: &mut SolveApp, show: bool) -> Result<Attached, String>
     }
     let dir = folder(app).ok_or_else(|| solidcraft_ui_text::tr("ui.report_design_nowhere").to_string())?;
     let path = write_to(&dir, &name, &bytes)?;
+    let name = path.file_name().map_or(name, |n| n.to_string_lossy().into_owned());
     if show && let Some(show_in_folder) = app.services.show_in_folder.as_ref() {
         show_in_folder(&path.to_string_lossy());
     }

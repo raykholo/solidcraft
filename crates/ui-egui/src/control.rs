@@ -1402,7 +1402,8 @@ fn ui_help(app: &mut SolveApp, ctx: &egui::Context, q: params::Help) -> Outcome 
             return err(solidcraft_ui_text::tr(reason));
         }
     }
-    if let Some(i) = q.item.as_deref() {
+    // A programmatic attachment only saves the zip: the report dialog stays closed.
+    if let Some(i) = q.item.as_deref().filter(|_| !q.include_design) {
         crate::help::run(app, ctx, i);
     }
     let mut reply = json!({"diagnostics": crate::help::diagnostics(app), "version": crate::help::VERSION, "commit": crate::help::COMMIT, "built": crate::help::BUILD_DATE});

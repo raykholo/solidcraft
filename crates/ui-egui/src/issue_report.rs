@@ -2412,11 +2412,26 @@ mod tests {
         let path = reply["result"]["design_zip"].as_str().unwrap().to_string();
         assert!(std::path::Path::new(&path).starts_with(&dir) && std::path::Path::new(&path).is_file());
         assert!(shown.borrow().is_empty(), "no file browser opens");
+        h.frames(2);
+        assert!(h.app.issue_report.draft.is_none(), "a programmatic attachment opens no report dialog");
         let off = h.call("ui.help", json!({"item": "report"}));
         assert!(off["result"].get("design_zip").is_none(), "off unless asked");
         let wrong = h.call("ui.help", json!({"item": "about", "include_design": true}));
         assert_eq!(wrong["ok"], false);
+        let second = h.call("ui.help", json!({"item": "report", "include_design": true}));
+        assert_ne!(second["result"]["design_zip"].as_str(), Some(path.as_str()), "a second zip never replaces the first");
+        assert!(std::path::Path::new(&path).is_file());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn issue_report_include_design_stays_inside_the_requests_folders() {
+        let (mut h, dir, _shown) = design_report("scope");
+        let other = report_folder("scope-other");
+        let reply = h.call("ui.help", json!({"item": "report", "include_design": true, "allow_paths": [other.to_string_lossy()]}));
+        assert_eq!(reply["ok"], false, "{reply}");
+        assert!(reply.to_string().contains("outside the folders this agent may use"), "{reply}");
+        assert!(!dir.exists(), "nothing is written outside the request's folders");
     }
 
     #[test]
