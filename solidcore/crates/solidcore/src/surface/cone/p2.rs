@@ -1173,6 +1173,15 @@ impl Cone {
             return Ok(None);
         };
 
+        {
+            let zo = (center_top - center_bot).unitize_or_z();
+            let zo = if flip { -zo } else { zo };
+            let (oo, xo) = if flip { (center_top, top.frame.x_axis()) } else { (center_bot, bot.frame.x_axis()) };
+            eprintln!(
+                "DBG16488 R r={} h={height} sweep={} dz={:e} dorigin={:e} dx={:e} flip={flip} swap={swap_uv}",
+                bot.radius, top.end_ang, (z_axis - zo).length(), (origin - oo).length(), (x_axis - xo).length()
+            );
+        }
         let y_axis = z_axis.cross(x_axis);
         // Try to eliminate some numerical inaccurracies (the top radius is not used
         // further)
