@@ -314,8 +314,10 @@ fn a_boss_leaning_past_the_angular_tolerance_is_refused_as_the_fork() {
 /// top rim rounded r 1.5, a boss 4 tall on the top about (8, 0), 12 in from the band: the round is
 /// the closed form's, the boss stays whole.
 fn rounded_rim_with_boss(boss: fn(&mut Kernel) -> Result<Brep>) -> (f64, f64) {
-    let mut k = Kernel::default();
-    k.fixes = UpstreamFixes::all();
+    let mut k = Kernel {
+        fixes: UpstreamFixes::all(),
+        ..Kernel::default()
+    };
     k.fixes.fillet_refuse_rounds_breaking_through = false;
     let block = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 10.0).unwrap();
     let feature = boss(&mut k).unwrap();
@@ -367,14 +369,21 @@ fn an_upright_boss_clear_of_a_rim_round_is_left_alone() {
 /// open body with the boss's walls left unsewn.
 #[test]
 fn a_leaning_boss_on_a_rim_round_is_refused() {
-    let mut k = Kernel::default();
-    k.fixes = UpstreamFixes::all();
+    let mut k = Kernel {
+        fixes: UpstreamFixes::all(),
+        ..Kernel::default()
+    };
     k.fixes.fillet_refuse_rounds_breaking_through = false;
     let block = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 10.0).unwrap();
     let boss = create_cone(&mut k, Point3::new(17.0, 0.0, 10.0), 2.0, 1.0, 4.0).unwrap();
     let mut b = boolean_union(&mut k, block, boss).unwrap();
     let e = pick(&k, &b, Point3::new(0.0, 20.0, 10.0));
-    assert!(fillet_edges(&mut k, &mut b, &[e], 1.5, 1, 1, 1.0).is_err());
+    let refusal = fillet_edges(&mut k, &mut b, &[e], 1.5, 1, 1, 1.0)
+        .expect_err("a leaning boss over the band is refused");
+    assert!(
+        format!("{refusal:?}").contains("not upright"),
+        "refused for another cause: {refusal:?}"
+    );
 }
 
 /// A boss astride the round's contact line: refused, as the fork.
