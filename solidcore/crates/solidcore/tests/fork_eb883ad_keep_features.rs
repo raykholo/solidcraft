@@ -362,6 +362,21 @@ fn an_upright_boss_clear_of_a_rim_round_is_left_alone() {
     assert!((v - want).abs() <= 1e-6 * want, "volume {v}, want {want}");
 }
 
+/// The same round over a leaning boss standing partly on the band (the rim round takes the ring
+/// r 18.5 to 20 off the top; the boss's base is r 2 about (17, 0), out to 19): refused, never an
+/// open body with the boss's walls left unsewn.
+#[test]
+fn a_leaning_boss_on_a_rim_round_is_refused() {
+    let mut k = Kernel::default();
+    k.fixes = UpstreamFixes::all();
+    k.fixes.fillet_refuse_rounds_breaking_through = false;
+    let block = create_cylinder(&mut k, Point3::new(0.0, 0.0, 0.0), 20.0, 10.0).unwrap();
+    let boss = create_cone(&mut k, Point3::new(17.0, 0.0, 10.0), 2.0, 1.0, 4.0).unwrap();
+    let mut b = boolean_union(&mut k, block, boss).unwrap();
+    let e = pick(&k, &b, Point3::new(0.0, 20.0, 10.0));
+    assert!(fillet_edges(&mut k, &mut b, &[e], 1.5, 1, 1, 1.0).is_err());
+}
+
 /// A boss astride the round's contact line: refused, as the fork.
 #[test]
 fn a_boss_astride_the_contact_line_is_refused_as_the_fork() {
