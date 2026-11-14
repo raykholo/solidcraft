@@ -577,15 +577,23 @@ fn a_to_object_extrude_to_another_component_moves_rigidly_with_its_slider() {
     }
 }
 
+/// The design as the last release saved it, before the pending changes: its format number one
+/// back and no list of the changes it has, so each pending step runs as it opens.
+fn as_last_release_saved(file: &mut Value) {
+    let number = file["format"].as_str().and_then(|f| f.rsplit('/').next()).and_then(|n| n.parse::<u32>().ok()).unwrap_or(1);
+    file["format"] = json!(format!("solidcraft/{}", number.saturating_sub(1)));
+    if let Some(o) = file.as_object_mut() {
+        o.remove("format_pending");
+    }
+}
+
 /// A design saved before the pick kept the placements it was made against opens with the post
 /// where it was and moving rigidly: the file's own placements are taken as the pick's.
 #[test]
 fn an_older_design_with_a_to_object_extrude_opens_pinned_to_its_saved_placements() {
     let mut s = post_to_the_roof();
     let mut file: Value = serde_json::from_str(&s.doc.to_json()).unwrap_or_default();
-    if let Some(o) = file.as_object_mut() {
-        o.remove("format_pending");
-    }
+    as_last_release_saved(&mut file);
     let mut stripped = 0;
     for feature in file["features"].as_array_mut().into_iter().flatten() {
         if feature["extent"].as_object_mut().is_some_and(|e| e.remove("picked_placements").is_some()) {
@@ -611,10 +619,11 @@ fn an_older_design_with_a_to_object_extrude_opens_pinned_to_its_saved_placements
 fn an_older_design_with_unplaced_components_opens_with_its_to_object_extrude_pinned() {
     let s = post_to_the_roof();
     let mut file: Value = serde_json::from_str(&s.doc.to_json()).unwrap_or_default();
+    as_last_release_saved(&mut file);
     if let Some(o) = file.as_object_mut() {
-        o.remove("format_pending");
         o.remove("occurrences");
     }
+    file["assembly"]["joints"] = json!([]);
     for feature in file["features"].as_array_mut().into_iter().flatten() {
         if let Some(e) = feature["extent"].as_object_mut() {
             e.remove("picked_placements");
