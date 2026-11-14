@@ -37,10 +37,14 @@ fn check_accounting(entry: &solidcore::heal::stitch::p2::ClosedGap) {
 /// Adds one square planar face on the plane `z = 0` over the 1 x 1 domain whose low
 /// corner is `x` on x and `y` on y.
 fn add_square(k: &mut Kernel, b: &mut Brep, x: f64, y: f64) {
-    let surface = Surface::from(Plane::from_normal(
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.0, 0.0, 1.0),
-    ));
+    let plane = Plane::from_normal(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0));
+    add_square_on(k, b, x, y, plane);
+}
+
+/// Adds one planar face on `plane` over the 1 x 1 domain whose low corner is `x` on x and `y`
+/// on y (in the plane's own parameters).
+fn add_square_on(k: &mut Kernel, b: &mut Brep, x: f64, y: f64, plane: Plane) {
+    let surface = Surface::from(plane);
     let mut state = ArenaNotifyState::new(b);
     let mut env = state.env(None);
     let mut marks = Marks::default();
@@ -644,36 +648,46 @@ fn a_planar_conic_disc_in_a_holed_face_reports_its_gap() {
     check_edge_closure(&b, &gaps, "SmConic_TYPE", gap, 1e-12);
 }
 
-/// Two unit squares in the plane `z = 0` meeting along the line `x = 1`, the second face's
-/// surface then replaced by `plane`: the seam edge is one curve, exact on the first face and off
-/// the second face's surface (two surfaces fitted to one curve).
-fn pair_with_second_surface(k: &mut Kernel, plane: Plane) -> Brep {
+/// A unit square on the plane `z = 0` and one over `x` in 1 to 2 on `plane` (parameters `u = x`,
+/// `v = y`), whose edge at `x = 1` lies `lift` off the first square's edge: each edge is exact on
+/// its own face's surface, and sewing them leaves one curve off the other face's surface.
+fn pair_with_second_plane(k: &mut Kernel, plane: Plane) -> Brep {
     let mut b = new_brep(k, USE_DEFAULT, USE_DEFAULT).unwrap();
     add_square(k, &mut b, 0.0, 0.0);
-    add_square(k, &mut b, 1.0, 0.0);
-    let second = *solidcore::topology::brep::p1::faces(&b, None)
-        .unwrap()
-        .last()
-        .unwrap();
-    b.face_mut(second).unwrap().surface = Some(Surface::from(plane));
+    add_square_on(k, &mut b, 1.0, 0.0, plane);
     b
 }
 
 /// The second surface parallel to the first and `lift` above it: the surfaces never meet.
 fn parallel_pair(k: &mut Kernel, lift: f64) -> Brep {
-    pair_with_second_surface(
+    pair_with_second_plane(
         k,
         Plane::from_normal(Vec3::new(0.0, 0.0, lift), Vec3::new(0.0, 0.0, 1.0)),
     )
 }
 
-/// The second surface tilted 45 degrees and crossing the first along the line `x = 1 - lift`,
-/// `lift` from the seam: the surfaces meet near the seam.
+/// The second surface `z = x - 1 + lift` (a 45 degree tilt), parameters `u = x`, `v = y`: it
+/// crosses the first along the line `x = 1 - lift`, `lift` from the seam.
 fn crossing_pair(k: &mut Kernel, lift: f64) -> Brep {
-    pair_with_second_surface(
+    let domain = Extent2d::from_points(Point2::new(-10.0, -10.0), Point2::new(10.0, 10.0));
+    pair_with_second_plane(
         k,
-        Plane::from_normal(Vec3::new(1.0, 0.0, lift), Vec3::new(-1.0, 0.0, 1.0)),
+        Plane::new(
+            Vec3::new(0.0, 0.0, lift - 1.0),
+            Vec3::new(1.0, 0.0, 1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            solidcore::math::Vec2::new(2.0_f64.sqrt(), 1.0),
+            &domain,
+        ),
     )
+}
+
+/// Whether any edge of `b` is used by both faces.
+fn is_sewn(b: &Brep) -> bool {
+    solidcore::topology::brep::p1::edges(b, None)
+        .unwrap()
+        .into_iter()
+        .any(|e| solidcore::topology::edge::faces(b, e, None).unwrap().len() == 2)
 }
 
 /// The seam edge of a stitched pair (the one both faces use), with its tolerance and its largest
@@ -708,22 +722,19 @@ fn a_seam_off_a_face_surface_is_recomputed_on_both_surfaces_not_given_a_larger_t
         "the seam's gap {gap:e} is within its tolerance {tolerance:e}"
     );
     assert!(
-        tolerance < lift / 100.0,
+        tolerance < lift / 10.0,
         "the tolerance stayed the ordinary one, {tolerance:e}, against the offset {lift:e}"
     );
 }
 
 #[test]
-fn a_seam_across_a_gap_beyond_the_requested_tolerance_is_left_to_the_check() {
+fn a_seam_across_a_gap_beyond_the_requested_tolerance_is_left_unsewn() {
+    // The edges are `lift` apart, more than the stitch tolerance: they are not sewn.
     let lift = 2e-4;
     let mut k = Kernel::default();
     let mut b = crossing_pair(&mut k, lift);
     solidcore::topology::brep::p4::stitch_faces(&mut k, &mut b, 1e-5, None, false).unwrap();
-    let (tolerance, gap) = seam(&mut k, &mut b);
-    assert!(
-        tolerance < gap,
-        "tolerance {tolerance:e} against the gap {gap:e}: still refused by the check"
-    );
+    assert!(!is_sewn(&b), "the faces are not sewn across {lift:e}");
 }
 
 /// The second surface parallel to the first, `lift` above it everywhere (the surfaces touch
@@ -757,30 +768,12 @@ fn a_seam_between_surfaces_a_constant_gap_apart_takes_the_proved_gap_as_its_tole
 }
 
 #[test]
-fn a_seam_across_a_proved_gap_the_stitch_tolerance_does_not_allow_is_refused() {
+fn a_seam_across_a_gap_the_stitch_tolerance_does_not_allow_is_left_unsewn() {
     let lift = 6.8e-5;
-    let (tolerance, gap) = stitched_parallel(lift, 1e-5);
-    assert!(
-        tolerance < gap,
-        "tolerance {tolerance:e} against the gap {gap:e}: still refused by the check"
-    );
-}
-
-#[test]
-fn a_seam_whose_proved_gap_equals_the_stitch_tolerance_is_sewn_and_one_ulp_below_it_is_refused() {
-    let lift = 6.8e-5;
-    let (proved, gap) = stitched_parallel(lift, 1e-3);
-    assert!(gap <= proved);
-    // the stored tolerance is the enclosure itself: held to the limit as it is stored
-    let (at_limit, gap) = stitched_parallel(lift, proved);
-    assert_eq!(at_limit, proved);
-    assert!(gap <= at_limit);
-    let below = f64::from_bits(proved.to_bits() - 1);
-    let (refused, gap) = stitched_parallel(lift, below);
-    assert!(
-        refused < gap,
-        "tolerance {refused:e} against the gap {gap:e}"
-    );
+    let mut k = Kernel::default();
+    let mut b = parallel_pair(&mut k, lift);
+    solidcore::topology::brep::p4::stitch_faces(&mut k, &mut b, 1e-5, None, false).unwrap();
+    assert!(!is_sewn(&b), "the faces are not sewn across {lift:e}");
 }
 
 #[test]

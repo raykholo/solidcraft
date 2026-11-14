@@ -1812,10 +1812,15 @@ fn recomputed_seam_curve(
     // Only an edge whose curve is farther from a face than its tolerance needs a new curve.
     let mut widest = 0.0_f64;
     for eu in edge::edgeuses(b, e, None, None)? {
-        let Some(gap) = ignored(crate::topology::edgeuse::p1::max_edge_face_gap(
-            k, b, eu, true,
+        if !crate::topology::edgeuse::p1::has_edge_face_gap(b, eu)? {
+            continue;
+        }
+        // measured without caching: the cached gap of an edge use is what the validity
+        // tests read later, after the curve may have changed
+        let Some(gap) = ignored(crate::topology::edgeuse::p1::calc_max_edge_face_gap(
+            k, b, eu, false,
         ))?
-        .flatten() else {
+        else {
             continue;
         };
         if gap.gap_3d.is_finite() {
