@@ -380,8 +380,10 @@ fn a_leaning_boss_on_a_rim_round_is_refused() {
     let e = pick(&k, &b, Point3::new(0.0, 20.0, 10.0));
     let refusal = fillet_edges(&mut k, &mut b, &[e], 1.5, 1, 1, 1.0)
         .expect_err("a leaning boss over the band is refused");
+    // the round reaches into the boss's footprint: refused as a round into material, not an
+    // open body
     assert!(
-        format!("{refusal:?}").contains("not upright"),
+        format!("{refusal:?}").contains("reason: Some(RoundIntoMaterial)"),
         "refused for another cause: {refusal:?}"
     );
 }

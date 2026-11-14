@@ -478,6 +478,12 @@ const NOT_SEWN: &str =
     "Fillet Error: a round kept round a feature does not sew into the body along its rails and creases";
 
 impl FilletSession<'_> {
+    /// The refusal of a kept boss whose walls lean over the band.
+    fn not_upright(&mut self) -> SolidError {
+        self.note_keep_refusal(FilletErrorType::NotExact, NOT_UPRIGHT);
+        SolidError::blend_failed(OP, "a kept boss's walls are not upright")
+    }
+
     /// The fork's `SmFilletExecutive::KeepFeaturesInBands` (`eb883ad`): trim the rounds in place
     /// round the features their bands reach, and sew them into the target.
     ///
@@ -776,11 +782,7 @@ impl FilletSession<'_> {
                     .iter()
                     .any(|b| !b.are_disjoint(&rim_box, on_tol))
                 {
-                    self.note_keep_refusal(FilletErrorType::NotExact, NOT_UPRIGHT);
-                    return Err(SolidError::blend_failed(
-                        OP,
-                        "a kept boss's walls are not upright",
-                    ));
+                    return Err(self.not_upright());
                 }
                 continue;
             }
@@ -841,10 +843,7 @@ impl FilletSession<'_> {
             // is refused; clear of the band it is refused only if the round crosses one of its
             // own walls, a crease piece lying in both faces.
             if !feature.tilted_walls.is_empty() {
-                let refuse = |this: &mut Self| {
-                    this.note_keep_refusal(FilletErrorType::NotExact, NOT_UPRIGHT);
-                    SolidError::blend_failed(OP, "a kept boss's walls are not upright")
-                };
+                let refuse = |this: &mut Self| this.not_upright();
                 if !feature.creases.is_empty() {
                     return Err(refuse(self));
                 }
