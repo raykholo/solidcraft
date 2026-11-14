@@ -35,9 +35,11 @@ wrongly; leave such a body out with `bodies`. A refused export leaves a file alr
 
 To export a [sketch](sketching.md) with real circles, arcs, and lines, right-click the sketch
 in the **Browser** and choose **Export DXF…** (`sketch.export_dxf`). These become DXF
-`CIRCLE`, `ARC`, and `LINE` entities; a rectangle is four `LINE` entities.
+`CIRCLE`, `ARC`, and `LINE` entities; a rectangle is four `LINE` entities. Other curves, such as
+splines, are written as short straight `LINE` segments, and construction curves are left out.
 **File → Export Current View as DXF…** instead writes a projected drawing made of straight
-segments, so circles and arcs become segmented curves. See [view DXF export](../../../view-dxf.md)
+segments, so circles and arcs become segmented curves. See
+[view DXF export](https://github.com/tangency-labs/solidcraft/blob/main/docs/view-dxf.md)
 for projection and tolerance settings.
 
 Opening a STEP, IGES, FreeCAD or Rhino file creates a design with the file's bodies as a base feature, and
