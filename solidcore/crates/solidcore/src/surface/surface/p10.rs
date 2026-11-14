@@ -548,9 +548,13 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         let mut clipped = false;
         let unclipped_mid = bound_ivl.evaluate(0.5);
         if self.ray_fire {
-            let scaled_zero = EFF_ZERO * (1.0 + self.line_point.max_dimension());
-            if bound_ivl.min() < -scaled_zero {
-                bound_ivl = Extent1d::from_min_max(-scaled_zero, bound_ivl.max());
+            // (a band behind the start as wide as the one the interval is expanded by, so a
+            // root on the surface the ray starts on is found where it was, and dropped below
+            // where it was, rather than clamped to the end of the interval)
+            let behind =
+                EFF_ZERO * (1.0 + self.line_point.max_dimension()) + 2.0 * self.base.tolerance_3d;
+            if bound_ivl.min() < -behind {
+                bound_ivl = Extent1d::from_min_max(-behind, bound_ivl.max());
                 clipped = true;
             }
         }
