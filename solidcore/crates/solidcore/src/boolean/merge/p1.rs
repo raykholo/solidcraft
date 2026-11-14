@@ -937,8 +937,8 @@ fn face_corner_to_move_to(
 /// Not upstream (#16532): the point that minimises the largest gap to the faces of `v`, from
 /// `corner` where its faces meet. A face's gap is the distance to its nearest point, so the
 /// optimum `x` is where the vectors to the nearest points of the active faces balance: `x` is
-/// the centre of the smallest ball holding them, which for two faces is the midpoint of their
-/// nearest points. [`minimax_centre`] iterates that map from the corner, with the nearest
+/// the centre of the smallest ball holding them (the midpoint for two faces, the circumcentre for
+/// three). [`minimax_centre`] iterates that map from the corner, with the nearest
 /// points of each face to the vertex put at `x` ([`nearest_face_points`]).
 ///
 /// # Errors
@@ -986,11 +986,12 @@ fn nearest_face_points(k: &Kernel, brep: &mut Brep, v: VertexId, x: Point3) -> R
 const MINIMAX_STEPS: usize = 64;
 
 /// The point minimising the largest distance to a set of faces, from `start`: with
-/// `nearest(x)` the nearest point of each face to `x`, repeatedly moves `x` to the midpoint of
-/// the two of them farthest apart, until it stops. At the optimum of two active faces `x` is
-/// that midpoint (the vectors to the nearest points are opposite), so it is the fixed point;
-/// the part of `x` along a direction every face holds (an edge they share) never changes. For
-/// a corner on every face the nearest points are `x` itself and `x` stays.
+/// `nearest(x)` the nearest point of each face to `x`, repeatedly moves `x` to the centre of
+/// the smallest ball holding them ([`enclosing_ball_centre`]), until it stops. At the optimum
+/// the vectors from `x` to the nearest points of the active faces balance (`x` is the centre of
+/// their smallest ball), so it is the fixed point; the part of `x` along a direction every face
+/// holds (an edge they share) never changes. For a corner on every face the nearest points
+/// are `x` itself and `x` stays.
 fn minimax_centre(
     start: Point3,
     mut nearest: impl FnMut(Point3) -> Result<Vec<Point3>>,
@@ -998,27 +999,81 @@ fn minimax_centre(
     let mut x = start;
     for _ in 0..MINIMAX_STEPS {
         let points = nearest(x)?;
-        let mut far = (x, x, 0.0_f64);
-        for (i, &a) in points.iter().enumerate() {
-            for &b in points.iter().skip(i + 1) {
-                let d = a.distance(b);
-                if d > far.2 {
-                    far = (a, b, d);
-                }
-            }
-        }
-        let scale = 1.0 + x.length();
-        if far.2 <= 1e-12 * scale {
+        let Some(next) = enclosing_ball_centre(&points) else {
             break;
-        }
-        let next = 0.5 * (far.0 + far.1);
+        };
         let step = next.distance(x);
+        let scale = 1.0 + x.length();
         x = next;
         if step <= 1e-12 * scale {
             break;
         }
     }
     Ok(x)
+}
+
+/// The centre of the smallest ball holding `points` (`None` for none): the one of the centres of
+/// the balls through one to four of them (the point, the midpoint of two, the circumcentre of
+/// three or of four) with the smallest radius over all of `points`. The smallest enclosing ball
+/// is one of these, and the ball of a candidate is measured against every point, so a
+/// circumcentre of a subset that leaves a point out is never chosen over the true centre. For
+/// three points that is the circumcentre of an acute triangle and the midpoint of the longest
+/// side otherwise.
+fn enclosing_ball_centre(points: &[Point3]) -> Option<Point3> {
+    let mut best: Option<(f64, Point3)> = None;
+    let mut consider = |c: Point3| {
+        if !(c.x.is_finite() && c.y.is_finite() && c.z.is_finite()) {
+            return;
+        }
+        let radius = points.iter().map(|p| p.distance(c)).fold(0.0_f64, f64::max);
+        if best.map_or(true, |(r, _)| radius < r) {
+            best = Some((radius, c));
+        }
+    };
+    for (i, &a) in points.iter().enumerate() {
+        consider(a);
+        for (j, &b) in points.iter().enumerate().skip(i + 1) {
+            consider(0.5 * (a + b));
+            for (l, &c) in points.iter().enumerate().skip(j + 1) {
+                if let Some(o) = circumcentre3(a, b, c) {
+                    consider(o);
+                }
+                for &d in points.iter().skip(l + 1) {
+                    if let Some(o) = circumcentre4(a, b, c, d) {
+                        consider(o);
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, c)| c)
+}
+
+/// The centre of the circle through three points (`None` when they are on a line).
+fn circumcentre3(a: Point3, b: Point3, c: Point3) -> Option<Point3> {
+    let u = b - a;
+    let w = c - a;
+    let n = u.cross(w);
+    let n2 = n.dot(n);
+    if n2 <= 1e-24 * u.dot(u) * w.dot(w) || n2 == 0.0 {
+        return None;
+    }
+    let offset = (0.5 / n2) * (w.dot(w) * n.cross(u) + u.dot(u) * w.cross(n));
+    Some(a + offset)
+}
+
+/// The centre of the sphere through four points (`None` when they are in a plane).
+fn circumcentre4(a: Point3, b: Point3, c: Point3, d: Point3) -> Option<Point3> {
+    let u = b - a;
+    let w = c - a;
+    let t = d - a;
+    let det = u.dot(w.cross(t));
+    if det.abs() <= 1e-12 * u.length() * w.length() * t.length() || det == 0.0 {
+        return None;
+    }
+    let offset =
+        (u.dot(u) * w.cross(t) + w.dot(w) * t.cross(u) + t.dot(t) * u.cross(w)) * (0.5 / det);
+    Some(a + offset)
 }
 
 /// With `v` at the point under test: every vertex/face gap is under the intersection tolerance
@@ -1365,6 +1420,31 @@ mod tests {
         // a corner every face holds stays where it is
         let held = |x: Point3| -> Result<Vec<Point3>> { Ok(vec![x, x]) };
         assert_eq!(minimax_centre(Vec3::ZERO, held).unwrap(), Vec3::ZERO);
+    }
+
+    // CodeRabbit on #16538: three faces whose nearest points are the corners of an equilateral
+    // triangle of side 3e-5: the midpoint of a side is 2.6e-5 from the third, the centroid
+    // 1.73e-5 from each.
+    #[test]
+    fn the_least_largest_gap_point_of_three_faces_is_the_centroid() {
+        let s = 3.0e-5;
+        let corners = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(s, 0.0, 0.0),
+            Vec3::new(0.5 * s, 0.5 * s * 3.0_f64.sqrt(), 0.0),
+        ];
+        let nearest = |_: Point3| -> Result<Vec<Point3>> { Ok(corners.to_vec()) };
+        let at = minimax_centre(Vec3::ZERO, nearest).unwrap();
+        let want = Vec3::new(0.5 * s, s / (2.0 * 3.0_f64.sqrt()), 0.0);
+        assert!(at.distance(want) < 1e-12, "{at:?}");
+        // an obtuse triangle: the midpoint of its longest side
+        let flat = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(s, 0.0, 0.0),
+            Vec3::new(0.5 * s, 0.1 * s, 0.0),
+        ];
+        let at = minimax_centre(Vec3::ZERO, |_| Ok(flat.to_vec())).unwrap();
+        assert!(at.distance(Vec3::new(0.5 * s, 0.0, 0.0)) < 1e-12, "{at:?}");
     }
 
     #[test]
