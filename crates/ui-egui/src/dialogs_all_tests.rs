@@ -22,27 +22,26 @@ fn profile_refill_resolves_each_region_once_for_extrude_and_sweep() {
         let state = h.app.session.world_state().unwrap();
         let ss = state.sketch(sketch).unwrap();
         assert_eq!(ss.profiles.len(), 2);
-        let order = [1, 0, 1, 0];
-        // Distinct saved places can name the same region after a divider disappears.
-        let points = order
-            .iter()
-            .enumerate()
-            .map(|(n, &i)| ss.profiles[i].region.interior_point() + solidcore_record::Vec2::new(n as f64 * 0.01, 0.0))
-            .collect();
+        // Distinct saved places can name the same region after a divider disappears: two places
+        // in the square at x 4..6, two in the square at x 0..2, alternating.
+        let points: Vec<_> = [(5.0, 1.0), (1.01, 1.0), (5.02, 1.0), (1.03, 1.0)].map(|(x, y)| solidcore_record::Vec2::new(x, y)).to_vec();
+        let order: Vec<usize> = points.iter().map(|q| solidcraft_engine::doc::sketch::profile_at_point(&ss.profiles, *q).unwrap()).collect();
+        let (right, left) = (order[0], order[1]);
+        assert_ne!(right, left);
         let loops = order.iter().map(|&i| ss.profiles[i].outer_curves.clone()).collect();
         let curve = &state.sketch(path).unwrap().sketch.curves[0].id;
         let made = h.app.run(command, json!({"sketch":sketch,"profiles":[1,0],"distance":10,"path_sketch":path,"path":[curve]})).unwrap();
         let feature = made["feature"].as_u64().unwrap();
-        for selection in [ProfileSel::Points { points }, ProfileSel::Curves { loops }, ProfileSel::Indices { indices: order.to_vec() }] {
+        for selection in [ProfileSel::Points { points }, ProfileSel::Curves { loops }, ProfileSel::Indices { indices: order.clone() }] {
             let kind = &mut h.app.session.doc_mut().feature_mut(feature).unwrap().kind;
             match kind {
                 FeatureKind::Extrude { profiles, .. } | FeatureKind::Sweep { profiles, .. } => *profiles = selection,
                 _ => panic!("a profile feature"),
             }
             let d = for_feature(&h.app, feature, None).unwrap();
-            assert_eq!(d.inputs[0].items, vec![Sel::Profile { sketch, index: 1 }, Sel::Profile { sketch, index: 0 }], "{command}");
+            assert_eq!(d.inputs[0].items, vec![Sel::Profile { sketch, index: right }, Sel::Profile { sketch, index: left }], "{command}");
             let commands = apply_commands(&h.app, &d).unwrap();
-            assert_eq!(commands[0].1["params"]["profiles"], json!([1, 0]), "{command}");
+            assert_eq!(commands[0].1["params"]["profiles"], json!([right, left]), "{command}");
         }
     }
 }
