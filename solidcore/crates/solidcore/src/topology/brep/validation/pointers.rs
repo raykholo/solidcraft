@@ -785,15 +785,19 @@ pub(crate) fn validate_pointers_excluding(
             r.check(b, index, ok, EntityRef::Faceuse(this))?;
         }
     }
-    // Geometry queries need intact topology, including when reports are omitted.
-    let mut exclusion_failed = false;
-    if !r.failed {
-        check_vertex_exclusion(k, b, &mut r)?;
-        exclusion_failed = r.failed;
-        // Without a report array the status is the caller's only refusal signal.
-        if r.failed && r.array.is_none() {
-            return Ok((ERROR, true));
-        }
+    // A tolerance past twice the limit is refused from the numbers alone, so on any body,
+    // faceless or already failing; the geometric clearance queries need intact topology.
+    let topology_intact = !r.failed;
+    r.failed = false;
+    let wide = vertices_to_clear(b, &mut r)?;
+    if topology_intact {
+        check_vertex_exclusion(k, b, &mut r, &wide)?;
+    }
+    let exclusion_failed = r.failed;
+    r.failed |= !topology_intact;
+    // Without a report array the status is the caller's only refusal signal.
+    if exclusion_failed && r.array.is_none() {
+        return Ok((ERROR, true));
     }
     Ok((SUCCESS, exclusion_failed))
 }
@@ -1373,19 +1377,13 @@ fn face_contact(
     })
 }
 
-/// A local ball may cover incident and adjacent gaps, but not separate topology (rule 7 of
-/// `docs/validity-and-tolerances.md`). Applied only to vertices at or past the ratio limit of
-/// Test #82; an inconclusive query counts as reaching. Clearance is proven, not sampled: for each
-/// non-incident face and edge the distance from the vertex to the entity's bounding box is a lower
-/// bound, and the ball is clear when that is at least its radius. Otherwise the global closest-point
-/// solve looks for contact, and a miss counts only once cell-by-cell boxes over the whole face or
-/// edge ([`surface_clears`], [`curve_clears`]) put every part of it at least that far away. Use the same bounded-curve drop and trimmed-surface drop/classification as the
-/// coincidence validator, with each vertex's radius rather than a body-wide ratio.
-fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Result<()> {
-    // Only a vertex at or past the ratio limit is decided here; the rest pass Test #82 as before.
+/// Test #82 past `GROWTH_PAST_RATIO` times the limit (reported here), and the vertices from the
+/// limit up to that, which [`check_vertex_exclusion`] decides by clearance. Vertices under the
+/// limit pass Test #82 as before.
+fn vertices_to_clear(b: &Brep, r: &mut Reports<'_>) -> Result<Vec<VertexId>> {
     let limit = wide_vertex_limit(b);
     let mut vertices = Vec::new();
-    for v in b.vertex_list().to_vec() {
+    for &v in b.vertex_list() {
         let tolerance = b.vertex(v)?.tolerance;
         if tolerance > GROWTH_PAST_RATIO * limit {
             // too wide for clearance to excuse: a misplaced vertex, not a gap
@@ -1394,6 +1392,23 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
             vertices.push(v);
         }
     }
+    Ok(vertices)
+}
+
+/// A local ball may cover incident and adjacent gaps, but not separate topology (rule 7 of
+/// `docs/validity-and-tolerances.md`). Applied only to vertices at or past the ratio limit of
+/// Test #82; an inconclusive query counts as reaching. Clearance is proven, not sampled: for each
+/// non-incident face and edge the distance from the vertex to the entity's bounding box is a lower
+/// bound, and the ball is clear when that is at least its radius. Otherwise the global closest-point
+/// solve looks for contact, and a miss counts only once cell-by-cell boxes over the whole face or
+/// edge ([`surface_clears`], [`curve_clears`]) put every part of it at least that far away. Use the same bounded-curve drop and trimmed-surface drop/classification as the
+/// coincidence validator, with each vertex's radius rather than a body-wide ratio.
+fn check_vertex_exclusion(
+    k: &Kernel,
+    b: &mut Brep,
+    r: &mut Reports<'_>,
+    vertices: &[VertexId],
+) -> Result<()> {
     if vertices.is_empty() {
         return Ok(());
     }
@@ -1422,7 +1437,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
             k, &mut *b, f, false,
         ))?
         .filter(Extent3d::is_defined);
-        for &v in &vertices {
+        for &v in vertices {
             k.check_cancelled("topology::brep::validation::vertex_exclusion")?;
             if incident.contains(&v) || excluded.contains(&v) {
                 continue;
@@ -1529,7 +1544,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
         let Some(curve) = data.curve.as_ref() else {
             continue;
         };
-        for &v in &vertices {
+        for &v in vertices {
             k.check_cancelled("topology::brep::validation::vertex_exclusion")?;
             if Some(v) == first || Some(v) == last || excluded.contains(&v) {
                 continue;
