@@ -31,7 +31,8 @@
 //! - **Pole partitions.** After continuity splitting, a B-spline patch is also split
 //!   at interior knot iso curves whose positive-weight control points coincide within
 //!   the B-rep tolerance. A horn sweep's collapsed rail then lies on face boundaries,
-//!   independently of the closed profile's seam.
+//!   independently of the closed profile's seam. A patch whose isos collapse at every
+//!   knot in a direction is thinner than the tolerance there and is not split.
 //! - **Dead code.** `CreateFaceInRegionFromSurface`'s "new algorithm" branch is not
 //!   ported: `sbUseOldAlgorithm` is a `static constexpr TRUE`, so it is unreachable.
 //! - **Null dereferences** upstream are [`SolidError::InvalidInput`]: a null surface
@@ -388,9 +389,10 @@ pub fn create_faces_from_surface(
 
 /// Split collapsed interior knot iso curves after the ordinary continuity splits.
 /// On the whole sweep a rail may move along lines and collapse only at a bend.
+/// A patch whose iso curves collapse at every knot in a direction, its first and
+/// last included, is thinner than the tolerance across that direction: it has no
+/// pole there to keep on a boundary, and it is left whole.
 fn split_pole_lines(k: &Kernel, surface: Surface, tolerance: f64) -> Result<Vec<Surface>> {
-    use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
-
     let mut parts = vec![surface];
     for direction in [SurfParamType::U, SurfParamType::V] {
         let mut split = Vec::new();
@@ -398,28 +400,16 @@ fn split_pole_lines(k: &Kernel, surface: Surface, tolerance: f64) -> Result<Vec<
             let mut poles = Vec::new();
             if let SurfaceKind::BSpline(net) = part.kind() {
                 let (knots, _) = net.knots(direction, None)?;
-                for &parameter in knots.iter().skip(1).take(knots.len().saturating_sub(2)) {
-                    let iso = net
-                        .create_iso_parametric_curve(
-                            k,
-                            direction,
-                            parameter,
-                            IsoCurveOptions::default(),
-                        )?
-                        .curve
-                        .canonical()?;
-                    let Some(anchor) = iso.control_points.first() else {
-                        continue;
-                    };
-                    // Positive rational basis functions sum to one: the control
-                    // points bound the entire iso curve, including between knots.
-                    if iso.weights.iter().all(|w| w.is_finite() && *w > 0.0)
-                        && iso.control_points.iter().all(|p| {
-                            let gap = anchor.distance(*p);
-                            gap.is_finite() && gap <= tolerance
-                        })
-                    {
-                        poles.push(parameter);
+                let mut collapsed = Vec::new();
+                for &parameter in &knots {
+                    collapsed.push(iso_collapses(k, net, direction, parameter, tolerance)?);
+                }
+                if !collapsed.iter().all(|&c| c) {
+                    let last = knots.len().saturating_sub(1);
+                    for (index, (&parameter, &c)) in knots.iter().zip(&collapsed).enumerate() {
+                        if c && index > 0 && index < last {
+                            poles.push(parameter);
+                        }
                     }
                 }
             }
@@ -433,6 +423,32 @@ fn split_pole_lines(k: &Kernel, surface: Surface, tolerance: f64) -> Result<Vec<
         parts = split;
     }
     Ok(parts)
+}
+
+/// Whether the iso curve of `net` at `parameter` in `direction` lies within `tolerance`
+/// of one point. Positive rational basis functions sum to one, so the control points
+/// bound the entire iso curve, including between knots.
+fn iso_collapses(
+    k: &Kernel,
+    net: &crate::nurbs::b_spline_surface::BSplineSurface,
+    direction: SurfParamType,
+    parameter: f64,
+    tolerance: f64,
+) -> Result<bool> {
+    use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
+
+    let iso = net
+        .create_iso_parametric_curve(k, direction, parameter, IsoCurveOptions::default())?
+        .curve
+        .canonical()?;
+    let Some(anchor) = iso.control_points.first() else {
+        return Ok(false);
+    };
+    Ok(iso.weights.iter().all(|w| w.is_finite() && *w > 0.0)
+        && iso.control_points.iter().all(|p| {
+            let gap = anchor.distance(*p);
+            gap.is_finite() && gap <= tolerance
+        }))
 }
 
 // ---- CreatePlanarFaceWith3DCurves -----------------------------------------------------
