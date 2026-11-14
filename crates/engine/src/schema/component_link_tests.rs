@@ -15,7 +15,7 @@ use crate::schema::{ParamCheck, input_schema_for, output_schema_for};
 fn schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<InsertDesignParams>(), &["name", "parent", "path", "reuse", "translate"]);
     assert_keys(input_schema_for::<UpdateLinksParams>(), &["component", "components"]);
-    assert_keys(input_schema_for::<RelinkParams>(), &["component", "occurrence", "path"]);
+    assert_keys(input_schema_for::<RelinkParams>(), &["component", "names", "occurrence", "path"]);
     assert_keys(input_schema_for::<BreakLinkParams>(), &["component"]);
     assert_keys(input_schema_for::<LinksParams>(), &[]);
     assert_keys(input_schema_for::<ExtractParams>(), &["component", "path"]);
@@ -108,6 +108,9 @@ fn the_schemas_take_what_the_handlers_read() {
         &[
             (json!({"component": "Plate", "path": "b.solidcraft"}), true),
             (json!({"component": "Plate", "path": "b.solidcraft", "occurrence": 4}), true),
+            (json!({"component": "Plate", "path": "b.solidcraft", "names": "sync"}), true),
+            (json!({"component": "Plate", "path": "b.solidcraft", "names": "keep"}), true),
+            (json!({"component": "Plate", "path": "b.solidcraft", "names": "both"}), false),
             (json!({"component": "Plate", "path": "b.solidcraft", "occurrence": "Plate:2"}), false),
             (json!({"component": "Plate"}), false),
             (json!({"path": "b.solidcraft"}), false),

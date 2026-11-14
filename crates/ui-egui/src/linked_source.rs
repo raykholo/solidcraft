@@ -23,15 +23,83 @@ pub(crate) fn start_selected(app: &mut SolveApp) {
     if let [component] = components.as_slice()
         && app.session.doc.links.contains_key(component)
     {
-        start(app, *component, None);
+        ask(app, *component, None);
     } else {
         app.set_status(app.tr("ui.relink_select_one").to_string(), true);
     }
 }
 
-/// Ask for the design a linked component shows instead: in all its placements, or with
-/// `occurrence` in that one only.
+/// What Relink Source asks before the file picker opens: whether the linked bodies keep their
+/// names or take the new source's (#16711).
+#[derive(Clone, Debug)]
+pub struct RelinkChoice {
+    component: u64,
+    occurrence: Option<u64>,
+    document: Arc<solidcraft_engine::doc::Document>,
+    sync: bool,
+}
+
+/// Relink Source for `component`: asks which names the bodies keep, then for the design. One
+/// placement of several shows a component made from the new source, so its names are the
+/// source's and nothing is asked.
+pub(crate) fn ask(app: &mut SolveApp, component: u64, occurrence: Option<u64>) {
+    if app.file_picker_busy() || app.file_load_holds() {
+        return;
+    }
+    if !app.session.doc.links.contains_key(&component) {
+        app.set_status(app.tr_label("ui.relink_not_linked").to_string(), true);
+        return;
+    }
+    let several = app.session.doc.occurrences.iter().filter(|o| o.component == component).count() > 1;
+    if occurrence.is_some() && several {
+        start_with(app, component, occurrence, false);
+    } else {
+        app.menu.relink_choice = Some(RelinkChoice { component, occurrence, document: app.session.doc.clone(), sync: false });
+    }
+}
+
+/// The choice made: ask for the design, with the names `sync` says. Returns whether it went on.
+pub(crate) fn proceed(app: &mut SolveApp, sync: bool) -> bool {
+    let Some(choice) = app.menu.relink_choice.take() else { return false };
+    if !Arc::ptr_eq(&choice.document, &app.session.doc) {
+        app.set_status(app.tr_label("ui.relink_design_changed").to_string(), true);
+        return false;
+    }
+    start_with(app, choice.component, choice.occurrence, sync);
+    true
+}
+
+/// The card asking which names the bodies keep.
+pub fn show_relink_choice(app: &mut SolveApp, ctx: &egui::Context) {
+    let Some(choice) = app.menu.relink_choice.clone() else { return };
+    let (text, label, keep, sync) =
+        (app.tr("ui.relink_names_text"), app.tr("ui.relink_names_label"), app.tr("ui.relink_names_keep"), app.tr("ui.relink_names_sync"));
+    let mut picked = usize::from(choice.sync);
+    let (closed, action) = crate::ui_kit::Confirm::new(egui::Id::unique("sc_relink_names"), "help", solidcraft_ui_text::tr_label("Relink Source"))
+        .show(ctx, true, |ui| {
+            crate::ui_kit::text(ui, text, crate::ui_kit::Text::Report("relink_names", false));
+            crate::ui_kit::choice_row(ui, label, "relink_names_choice", &mut picked, &[keep, sync]);
+        });
+    if let Some(open) = app.menu.relink_choice.as_mut() {
+        open.sync = picked == 1;
+    }
+    match action {
+        crate::ui_kit::Action::Ok => drop(proceed(app, picked == 1)),
+        crate::ui_kit::Action::Cancel => app.menu.relink_choice = None,
+        _ if closed => app.menu.relink_choice = None,
+        _ => {}
+    }
+}
+
+/// Relink Source without asking about names: they stay as they are.
+#[cfg(test)]
 pub(crate) fn start(app: &mut SolveApp, component: u64, occurrence: Option<u64>) {
+    start_with(app, component, occurrence, false);
+}
+
+/// Ask for the design a linked component shows instead: in all its placements, or with
+/// `occurrence` in that one only. `sync`: its bodies take the new source's names.
+fn start_with(app: &mut SolveApp, component: u64, occurrence: Option<u64>, sync: bool) {
     if app.file_picker_busy() || app.file_load_holds() {
         return;
     }
@@ -56,6 +124,9 @@ pub(crate) fn start(app: &mut SolveApp, component: u64, occurrence: Option<u64>)
         let mut params = json!({"component": component, "path": path});
         if let Some(occurrence) = occurrence {
             params["occurrence"] = json!(occurrence);
+        }
+        if sync {
+            params["names"] = json!("sync");
         }
         let relinked = solidcraft_engine::io::vfs::allowing_hosts(&hosts, || app.run("component.relink", params));
         if let Ok(result) = relinked {
@@ -325,6 +396,9 @@ mod tests {
         answer(&mut app, Some(moved.to_string_lossy().into_owned()));
         let before = app.session.doc.clone();
         context_menu::run_item(&mut app, &item, egui::Pos2::ZERO);
+        assert!(app.menu.relink_choice.is_some(), "asks about the names first");
+        assert!(!app.file_picker_busy());
+        assert!(proceed(&mut app, false));
         assert!(app.file_picker_busy());
         assert!(Arc::ptr_eq(&before, &app.session.doc), "choosing is not an edit");
         crate::file_picker::tick(&mut app, &egui::Context::default());
@@ -402,6 +476,7 @@ mod tests {
         assert!(app.status.as_ref().is_some_and(|(s, _, error)| s.contains("Select one linked") && *error));
         app.session.selection = vec![solidcraft_engine::Sel::Occurrence { path: vec![occurrence] }];
         app.start("component.relink");
+        assert!(proceed(&mut app, false));
         assert!(app.file_picker_busy());
         crate::file_picker::tick(&mut app, &egui::Context::default());
         assert!(app.session.doc.links[&component].path.ends_with("moved.solidcraft"));
@@ -812,6 +887,35 @@ mod tests {
         crate::file_picker::tick(&mut app, &egui::Context::default());
         assert!(app.status.as_ref().is_some_and(|(s, _, error)| s.contains("check this component's joints") && *error));
         assert!(app.session.log.iter().any(|s| s.contains("check this component's joints")));
+        let _ = std::fs::remove_dir_all(folder);
+    }
+
+    /// #16711: the card's second option takes the new source's body names; cancelling asks for nothing.
+    #[test]
+    fn relink_names_choice_keeps_or_takes_the_new_sources_body_names() {
+        let (mut app, component, _, folder, _) = fixture("names");
+        let named = folder.join("named.solidcraft");
+        let mut part = Session::default();
+        part.execute("solid.box", &json!({"length": 10, "width": 20, "height": 30, "body_name": "Plate"})).unwrap();
+        part.execute("file.save", &json!({"path": named})).unwrap();
+        let names = |app: &SolveApp| -> Vec<String> {
+            app.session.model.state().bodies.iter().filter(|b| b.component == component).map(|b| b.name.clone()).collect()
+        };
+        let before = names(&app);
+        assert!(!before.contains(&"Plate".to_string()));
+        ask(&mut app, component, None);
+        app.menu.relink_choice = None;
+        assert!(!app.file_picker_busy(), "cancelled: nothing is asked");
+        answer(&mut app, Some(named.to_string_lossy().into_owned()));
+        ask(&mut app, component, None);
+        assert!(proceed(&mut app, false));
+        crate::file_picker::tick(&mut app, &egui::Context::default());
+        assert_eq!(names(&app), before, "keep leaves the names");
+        app.run("edit.undo", json!({})).unwrap();
+        ask(&mut app, component, None);
+        assert!(proceed(&mut app, true));
+        crate::file_picker::tick(&mut app, &egui::Context::default());
+        assert_eq!(names(&app), ["Plate"]);
         let _ = std::fs::remove_dir_all(folder);
     }
 }
