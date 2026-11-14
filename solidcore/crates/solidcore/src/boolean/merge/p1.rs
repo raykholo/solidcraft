@@ -891,7 +891,7 @@ pub(crate) fn boolean_post_process_with_notifications(
 /// tolerance is not past `xsect_tol` (it cannot hold such a gap), one already within `xsect_tol`
 /// of its faces, and one whose point
 ///
-/// - lies more than half the vertex's tolerance from it. The vertex's edge curves keep ending
+/// - lies more than a quarter of the vertex's tolerance from it (a move of nearly half is a vertex that is wrong, not slightly off: the #1979 ring-lip union). The vertex's edge curves keep ending
 ///   at its old point (`vertex::set_point` moves the point only), so the move is their new
 ///   vertex/edge gap, and `docs/validity-and-tolerances.md` (the `SmBrep` list 2 invariants)
 ///   asks vertex/edge and vertex/face gaps of at most half the vertex's tolerance. Only the
@@ -925,7 +925,11 @@ fn face_corner_to_move_to(
     };
     // one construction: the point that minimises the largest gap to the vertex's faces
     let target = min_max_gap_point(k, brep, v, start)?;
-    if target.distance(old) > tolerance / 2.0 {
+    // The edge curves keep ending at the old point, so the move is their new gap: a move up to
+    // half the tolerance would use all of the gap the invariants allow, so a quarter leaves
+    // half of it in reserve (a move of nearly the whole half is a vertex that is wrong, not
+    // slightly off: the #1979 ring-lip union at 1e-3).
+    if target.distance(old) > tolerance / 4.0 {
         return Ok(None);
     }
     brep.vertex_mut(v)?.point = target;
