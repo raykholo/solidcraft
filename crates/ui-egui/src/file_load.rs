@@ -450,11 +450,6 @@ impl SolveApp {
 }
 
 pub fn begin(app: &mut SolveApp, path: &str, insert: bool) {
-    // Opening a plugin `.zip` offers to install it, with the same review as Install plugin….
-    if !insert && crate::plugin_install::available() && path.to_ascii_lowercase().ends_with(".zip") {
-        crate::plugin_install::review(app, path.to_string());
-        return;
-    }
     // An STL or OBJ file states no unit: ask which, then import (see `crate::mesh_units`).
     if crate::mesh_units::ask(app, path, insert) {
         return;
@@ -497,6 +492,16 @@ pub(crate) fn preferred_options(app: &SolveApp, path: &str) -> serde_json::Map<S
 
 /// Queue a file operation; on the web (no threads) it runs now.
 pub fn begin_request(app: &mut SolveApp, mut request: Request) -> Result<(), String> {
+    // Opening a plugin `.zip` offers to install it, with the same review as Install plugin….
+    if request.kind == Kind::Open
+        && !request.plugin_import
+        && request.reply.is_none()
+        && crate::plugin_install::available()
+        && request.path.to_ascii_lowercase().ends_with(".zip")
+    {
+        crate::plugin_install::review(app, request.path.clone());
+        return Ok(());
+    }
     if request.kind == Kind::Open
         && app.preferences.verify_opened_designs
         && solidcraft_engine::io::is_design_path(&request.path)
