@@ -27,6 +27,7 @@
 //! new UV trim curve on a neighbour that had none. The 3D evaluation, its drop onto
 //! the existing face and every status are kept.
 use super::{invalid, required, Object, Reports, ERROR, SUCCESS};
+use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result};
 use crate::geom::assert_array::{AssertArray, AssertReport, ReportSpec};
 use crate::geom::extent1d::Extent1d;
@@ -52,7 +53,6 @@ use crate::topology::{
     VertexId, VertexuseId, VertexuseOwner,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use Curve;
 
 const MAX_WALK: usize = 100_000;
 
