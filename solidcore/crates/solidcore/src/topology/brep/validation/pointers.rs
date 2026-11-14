@@ -786,12 +786,26 @@ pub(crate) fn validate_pointers_excluding(
         }
     }
     // A tolerance past twice the limit is refused from the numbers alone, so on any body,
-    // faceless or already failing; the geometric clearance queries need intact topology.
+    // faceless or already failing. The geometric clearance queries need intact topology:
+    // without it a vertex from the limit up to twice it cannot prove its clearance, and Test
+    // #82 refuses it as on main.
     let topology_intact = !r.failed;
     r.failed = false;
     let wide = vertices_to_clear(b, &mut r)?;
     if topology_intact {
         check_vertex_exclusion(k, b, &mut r, &wide)?;
+    } else {
+        for &v in &wide {
+            let tolerance = b.vertex(v)?.tolerance;
+            r.value(
+                b,
+                82,
+                false,
+                EntityRef::Vertex(v),
+                wide_vertex_limit(b),
+                tolerance,
+            )?;
+        }
     }
     let exclusion_failed = r.failed;
     r.failed |= !topology_intact;
