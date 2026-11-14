@@ -1528,7 +1528,7 @@ impl CrvOnSurf {
             Err(_) => return Ok(None),
         };
         let gap = self.approx_cache_mut().max_gap_3d;
-        if !(gap.is_finite() && gap >= 0.0 && gap < BIG_DOUBLE) {
+        if !(0.0..BIG_DOUBLE).contains(&gap) {
             return Ok(None);
         }
         let req = BoundingBoxRequest {

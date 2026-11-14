@@ -2402,7 +2402,7 @@ mod issue_891_tests {
         use crate::primitive::api_primitives::create_cylinder_surface;
 
         let k = Kernel::default();
-        let mut uv = allocate_nurb_curve(2, 1, 4).unwrap();
+        let mut uv = allocate_nurb_curve(1, 1, 3).unwrap();
         for (p, (x, y)) in uv.cpts_mut().iter_mut().zip([(10.0, 0.2), (190.0, 0.8)]) {
             p.x = x;
             p.y = y;
