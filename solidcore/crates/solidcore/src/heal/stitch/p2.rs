@@ -368,6 +368,14 @@ pub enum ClosedGapKind {
         /// The edge the glue deleted.
         deleted: EdgeId,
     },
+    /// A sewn seam whose faces' surfaces stay apart: its curve recomputed halfway between them
+    /// and its tolerance grown to the gap enclosed over the whole curve (not upstream,
+    /// tangency-labs/solidcraft#16508). Reported after the [`Self::Edge`] closure of the same
+    /// edge, whose gap is that of the two original curves.
+    Seam {
+        /// The seam edge.
+        edge: EdgeId,
+    },
     /// A vertex pair one edge was squeezed into (the kept vertex stays).
     Squeezed {
         /// The vertex the squeeze kept.
@@ -1253,6 +1261,9 @@ impl Stitch<'_> {
                             // (not upstream) the sewn edge now serves both faces: where a
                             // face's surface is off its curve by more than its tolerance, the
                             // curve is recomputed from the surfaces, never the tolerance grown
+                            // the edge's tolerance as the glue left it: the edge closure's
+                            let glued = edge::tolerance(b, e)?;
+                            let mut seam_report = None;
                             if let Some(seam) = recomputed_seam_curve(k, b, e, this_tol)? {
                                 let mut trimmed = Vec::new();
                                 for eu in edge::edgeuses(b, e, None, None)? {
@@ -1274,9 +1285,9 @@ impl Stitch<'_> {
                                 // stored as it is and never above the stitch tolerance; the
                                 // edge is recorded with it below
                                 edge::set_tolerance(b, e, seam.gap, true, true)?;
+                                seam_report = Some((seam.gap, edge::tolerance(b, e)?));
                             }
                             if let Some((pre, bound)) = edge_report {
-                                let after = edge::tolerance(b, e)?;
                                 self.record_gap(
                                     ClosedGapKind::Edge {
                                         kept: e,
@@ -1284,6 +1295,15 @@ impl Stitch<'_> {
                                     },
                                     bound,
                                     pre,
+                                    glued,
+                                )?;
+                            }
+                            // the seam's own enclosed gap and the growth it applied
+                            if let Some((gap, after)) = seam_report {
+                                self.record_gap(
+                                    ClosedGapKind::Seam { edge: e },
+                                    gap,
+                                    glued,
                                     after,
                                 )?;
                             }

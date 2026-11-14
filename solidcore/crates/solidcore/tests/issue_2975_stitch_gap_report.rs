@@ -792,3 +792,40 @@ fn a_seam_between_surfaces_a_constant_gap_apart_is_sewn_at_the_default_tolerance
         "gap {gap:e} against tolerance {tolerance:e}"
     );
 }
+
+#[test]
+fn a_seam_between_surfaces_apart_reports_its_enclosed_gap_and_the_growth_it_applied() {
+    // The surfaces never meet: the seam curve halfway between them is `lift / 2` from each.
+    // The edge closure keeps the gap of the two original curves (none: one curve); the seam's
+    // own entry holds the enclosed gap to the surfaces and the growth that gap caused.
+    let lift = 6.8e-5;
+    let mut k = Kernel::default();
+    let mut b = parallel_pair(&mut k, lift);
+    let options = StitchAndOrientOptions {
+        stitch_tolerance: 1e-3,
+        ..StitchAndOrientOptions::default()
+    };
+    let gaps = stitch_and_orient_reported(&mut k, &mut b, &options).expect("the stitch runs");
+    for entry in &gaps {
+        check_accounting(entry);
+    }
+    let seams: Vec<_> = gaps
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.kind,
+                solidcore::heal::stitch::p2::ClosedGapKind::Seam { .. }
+            )
+        })
+        .collect();
+    assert_eq!(seams.len(), 1, "{gaps:?}");
+    let entry = seams[0];
+    assert!(entry.gap >= 0.5 * lift * (1.0 - 1e-9), "{entry:?}");
+    assert!(entry.gap <= 0.5 * lift * 1.01, "{entry:?}");
+    assert!(entry.tolerance_after >= entry.gap, "{entry:?}");
+    assert!(
+        entry.growth >= entry.tolerance_after - entry.tolerance_before,
+        "{entry:?}"
+    );
+    assert!(entry.growth > 0.0, "the seam's tolerance grew: {entry:?}");
+}
