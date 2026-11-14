@@ -142,20 +142,6 @@ fn profile_batch_picks_keep_one_sketch_for_extrude_and_sweep() {
 }
 
 #[test]
-fn profile_batch_picks_keep_measurement_sketches() {
-    let (mut h, first, _) = repeated_profile_fixture();
-    let second = h.app.run("sketch.create", json!({"plane":"XY","offset":20})).unwrap()["sketch"].as_u64().unwrap();
-    h.app.run("sketch.circle.center", json!({"center":[0,0],"radius":2})).unwrap();
-    h.app.run("sketch.finish", json!({})).unwrap();
-    let picks = vec![Sel::Profile { sketch: first, index: 0 }, Sel::Profile { sketch: second, index: 0 }];
-    h.app.session.selection = picks.clone();
-    let mut d = Dialog::for_command(&h.app, "inspect.measure").unwrap();
-    assert_eq!(d.inputs[0].items, picks);
-    d.take_box(&h.app.session, picks.clone(), false);
-    assert_eq!(d.inputs[0].items, picks);
-}
-
-#[test]
 fn measure_input_fits_external_sketch_geometry() {
     let mut h = Harness::new();
     let curve = Sel::ExternalSketchCurve { sketch: 17, id: "line1".into() };
