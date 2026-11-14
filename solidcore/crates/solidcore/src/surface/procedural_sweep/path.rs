@@ -1189,7 +1189,11 @@ fn path_spans(path: &BSplineCurve, start_normal: Vec3) -> Result<(BSplineCurve, 
     if closed {
         // A closed path needs no frame correction when parallel transport returns
         // the entire frame to its start. Otherwise the fitted sweep's distributed
-        // correction is a different motion and cannot use this definition.
+        // correction is a different motion and cannot use this definition. The
+        // closure is the path's last joint, so it is held to the same rule as every
+        // interior joint in `spans_of`: unit axes at most `G1_TANGENTS` apart. The
+        // sections' own gap is then checked against the B-rep's tolerance by
+        // `curve_sweep` before it joins the ends.
         let domain = motion.path.natural_interval();
         let start = motion.frame_side(domain.min(), false)?;
         let end = motion.frame_side(domain.max(), true)?;
