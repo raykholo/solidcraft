@@ -605,6 +605,29 @@ fn an_older_design_with_a_to_object_extrude_opens_pinned_to_its_saved_placements
     assert!((volume - 3000.0).abs() < 1e-6 && (low - 10.0).abs() < 1e-6 && (high - 40.0).abs() < 1e-6, "{volume} {low} {high}");
 }
 
+/// An older design whose components were never placed (no occurrences in the file) opens with
+/// each at the identity, and the extrude pinned to that.
+#[test]
+fn an_older_design_with_unplaced_components_opens_with_its_to_object_extrude_pinned() {
+    let s = post_to_the_roof();
+    let mut file: Value = serde_json::from_str(&s.doc.to_json()).unwrap_or_default();
+    if let Some(o) = file.as_object_mut() {
+        o.remove("format_pending");
+        o.remove("occurrences");
+    }
+    for feature in file["features"].as_array_mut().into_iter().flatten() {
+        if let Some(e) = feature["extent"].as_object_mut() {
+            e.remove("picked_placements");
+        }
+    }
+    let reopened = solidcraft_doc::Document::from_json(&file.to_string()).unwrap_or_else(|e| panic!("{e}"));
+    let pinned = reopened
+        .features
+        .iter()
+        .any(|f| matches!(&f.kind, solidcraft_doc::FeatureKind::Extrude { extent, .. } if !extent.picked_placements.is_empty()));
+    assert!(pinned, "the extrude is pinned as the design opens");
+}
+
 /// #1239: two parts as bodies of one component (a multi-body STEP import). The refusal names the
 /// way out, and after Create Components from Bodies the same origins make the joint.
 #[test]

@@ -1131,18 +1131,26 @@ pub fn to_active_frame(s: &Session, kind: &mut FeatureKind) {
 /// so the extrude keeps measuring against that: a joint that slides the drawer must not
 /// stretch a body that was built to the frame's face.
 pub fn pin_picked_placements(s: &Session, kind: &mut FeatureKind) {
+    let state = s.model.state();
+    pin_picked_placements_in(s, kind, s.active_component, &state);
+}
+
+/// [`pin_picked_placements`] for a feature of `own`, with the bodies of `state` (the model
+/// before the feature when an edit picks again). Placements are the design's as shown: the
+/// uncaptured moves count, the exploded view does not.
+pub fn pin_picked_placements_in(s: &Session, kind: &mut FeatureKind, own: u64, state: &solidcraft_doc::ModelState) {
     let FeatureKind::Extrude { extent, .. } = kind else { return };
     extent.picked_placements.clear();
     if (extent.to.is_none() && extent.from.is_none()) || s.doc.occurrences.is_empty() {
         return;
     }
-    let Some(inverse) = solidcraft_doc::mat_inverse(&s.active_component_frame()) else { return };
-    let state = s.model.state();
-    let mut owners = s.doc.model_body_components(&state);
+    let doc = s.design_document();
+    let Some(inverse) = solidcraft_doc::mat_inverse(&doc.component_transform(own)) else { return };
+    let mut owners = s.doc.model_body_components(state);
     owners.sort_unstable();
     owners.dedup();
-    for component in owners.into_iter().filter(|c| *c != s.active_component) {
-        let placement = solidcraft_doc::mat_mul(&inverse, &s.doc.component_transform(component));
+    for component in owners.into_iter().filter(|c| *c != own) {
+        let placement = solidcraft_doc::mat_mul(&inverse, &doc.component_transform(component));
         extent.picked_placements.push(solidcraft_doc::PickedPlacement { component, placement });
     }
 }
