@@ -563,17 +563,31 @@ pub fn split_body(body: &Body, tool: &SplitTool) -> Result<Vec<Body>> {
     sliced(body, patch.flip, |sb| sb.split_body(&surface))
 }
 
+/// Whether `tool`, a prism through the surface of `face` of `target` (run on past it), has its
+/// section wholly on that face: the decision between building the face split
+/// ([`split_prism_to_face`]) and trimming to the target body. Exact: it holds when no kept piece
+/// has its own end cap at `far` and every edge of the cut section lies on the picked face (its
+/// curve on the face's surface and inside its trim, [`solidcore_ops::cap::edges_lie_on_face`]),
+/// and the section is not empty.
+pub fn profile_lies_on_face(tool: &Body, target: &Body, face: usize, plane: &Plane, start: f64, far: f64) -> Result<bool> {
+    Ok(prism_parts(tool, target, face, plane, start, far)?.is_some())
+}
+
 /// `tool`, a prism through the surface of `face` of `target` (run on past it), cut at that
 /// surface (extended), keeping the pieces that start at `start`: the planar faces square to
 /// `plane`'s normal at that height along it. Whether the start lies in air or inside the
-/// target's material does not matter, and a piece never passes the face. `Ok(None)` when a kept
-/// piece reaches past the face where the profile is not over it: its own end cap at `far` is still
-/// there, or an edge of the cut section does not lie on the picked face (its curve on the face's
-/// surface and inside its trim, [`solidcore_ops::cap::edges_lie_on_face`]). No piece: empty.
+/// target's material does not matter, and a piece never passes the face. Refused, never
+/// retried another way, when the profile does not lie on the face ([`profile_lies_on_face`]).
+/// No piece: empty.
 ///
 /// The two heights are told apart by a tolerance of the body's own, never more than a quarter of
 /// the distance between them.
-pub fn split_prism_to_face(tool: &Body, target: &Body, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Option<Vec<Body>>> {
+pub fn split_prism_to_face(tool: &Body, target: &Body, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Vec<Body>> {
+    prism_parts(tool, target, face, plane, start, far)?.ok_or_else(|| invalid("the profile reaches past the To face"))
+}
+
+/// The kept pieces of the split, or `None` when one reaches past the face.
+fn prism_parts(tool: &Body, target: &Body, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Option<Vec<Body>>> {
     let (ops_target, order) = target.ops_body().ok_or_else(|| invalid("the To object is not a solid body"))?;
     let n = plane.normal();
     let mut out = Vec::new();
