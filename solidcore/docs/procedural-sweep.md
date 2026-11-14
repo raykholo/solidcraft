@@ -154,9 +154,9 @@ coordinates: C(w) placed by the frame is `Frame::place`, T + x C_x + y C_y + z C
 
 ### 3.4 The net and the map
 
-The definition carries a map (`PathMotion::nodes`): pairs (v_k, t_k), both strictly ascending,
-read by linear interpolation and held beyond the ends. Constructed path sweeps use the
-identity map. The face's (u, v) reach the definition's (w, t) through a
+The net's parameter across the sweep is not always the path's t, so the definition carries a
+map (`PathMotion::nodes`): pairs (v_k, t_k), both strictly ascending, read by linear
+interpolation and held beyond the ends. The face's (u, v) reach the definition's (w, t) through a
 second, affine map (`SweepMap`: w = a₀ + b₀ p, t = a₁ + b₁ q, (p, q) = (u, v) or (v, u) when
 swapped) that the net's reversals, reparametrisations and swaps move.
 
@@ -164,10 +164,15 @@ There are two nets:
 - **Exact** (`PathMotion::create_exact`), for a path of lines and arcs: built from the definition
   itself (§4). Its parameter across the sweep is the path's t; the nodes are the path's joints,
   mapped to themselves.
-- **Fitted** (`PathMotion::create`): the net `sweep_scale` skinned. Its sections use the path's
-  parameters and its boundary derivatives in that same parameter. Contiguous pieces join
-  without shifting their parameters, so `find_nodes` maps each traced station to itself.
-  A net whose domain differs from the path's has no definition rather than a loose one.
+- **Fitted** (`PathMotion::create`): the net `sweep_scale` skinned. Its parameter across the sweep
+  is the skin's chord length: piece k's sections at the end of the pieces before it + their
+  averaged normalised chord lengths (`find_nodes`, `chord_parameters`, replaying the skin's
+  `interp_params`). A piece along which the profile's first or last control point stays within
+  `MODEL_TOL` (a horn bend, where the profile's end sits on the arc's centre) has no chord
+  length to rescale G1 derivatives by, so `sweep_scale` skins it at the path's parameters with
+  C1 derivatives instead, and `SweepTrace::path_parameters` says so; its nodes are its path
+  parameters, shifted to follow the piece before. A net whose domain does not end where the
+  pieces do has no definition rather than a loose one.
 
 `curve_sweep` (`primitive/primitive_creation/p3/construct.rs`) tries the exact net first and keeps
 it when its bound is at most `ZONE_TOL_3D`; otherwise it keeps the fitted net, with a definition
@@ -442,8 +447,8 @@ Known limits of what is merged:
 - **A wall has no definition.** Find its kind in the ledger first. If it should have one, check in
   order: does a closed path's frame close (`path_spans`), is every span a line or an arc (`classify`), is
   every joint G1 (`spans_of`), is the sweep scaled or translational (`curve_sweep`'s match on
-  `prepared.scale`), did the exact net's bound pass `ZONE_TOL_3D`, does the fitted net's domain match
-  the path's (`find_nodes`). Each refusal is an `InvalidInput` with its reason; call
+  `prepared.scale`), did the exact net's bound pass `ZONE_TOL_3D`, does the fitted net's domain end
+  where its pieces do (`find_nodes`). Each refusal is an `InvalidInput` with its reason; call
   `ProceduralSweep::create_path_exact` or `PathMotion::create` in a test to read it.
 - **The bound is far larger than the gap.** For a path, the cell budget may be spent (raise
   nothing; find why the second-order terms are large: a path span whose |T″| bound from its

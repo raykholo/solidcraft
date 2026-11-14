@@ -21,9 +21,12 @@
 //! certified enclosure is not here yet), or a closed one whose transported frame does
 //! not close, has no definition: the #2505 ledger's `path-spline` and `path-closed`.
 //!
-//! **The map.** The fitted net uses the trajectory parameters at every section, with
-//! derivatives in that same parameter. Contiguous pieces join without a parameter shift,
-//! so the map from the fitted net to the path is the identity at the traced stations.
+//! **The map.** The net's parameter across the sweep is the skin's chord length, not the
+//! path's `t`, except on a piece along which an end of the profile stays put, which is
+//! skinned at the path's `t`. The definition carries nodes `(v_k, t_k)`, the net's parameter at each
+//! placed section (the skin's own, replayed; the bound below holds for whatever map is
+//! stored), and reads `t` by interpolating them linearly: the bound is that of
+//! `|B(u, v) - S(u, t(v))|`.
 //!
 //! **The bound.** Every section of the net is the profile's control points moved by one
 //! motion, in the same rational basis `R_i(u)` (non-negative, summing to 1) for every `v`,
@@ -54,7 +57,7 @@ use crate::nurbs::b_spline_curve::p1::KnotType;
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::p1::{BSplineSurfaceForm, CanonicalSurfaceData};
 use crate::nurbs::b_spline_surface::BSplineSurface;
-use crate::nurbs::math::gamma;
+use crate::nurbs::math::{gamma, MODEL_TOL};
 use crate::nurbs::srf_adv::p6::SweepTrace;
 
 use crate::blend::fillet_section::interval::round_up;
@@ -514,7 +517,7 @@ impl PathMotion {
             nodes: Vec::new(),
         };
         let columns = NetView::read(profile, net)?;
-        motion.nodes = motion.find_nodes(&columns, &trace.pieces)?;
+        motion.nodes = motion.find_nodes(&columns, &trace.pieces, &trace.path_parameters)?;
         let bound = motion.certify(&columns, FITTED_GOAL)?;
         Ok((motion, bound, columns.swapped))
     }
@@ -662,32 +665,134 @@ impl PathMotion {
         })
     }
 
-    /// Sweep skins interpolate at the trajectory parameters and preserve the supplied
-    /// derivatives in that parameter. Adjacent pieces have contiguous domains, so joining
-    /// them adds no parameter offset: the net-to-path map is the identity.
-    fn find_nodes(&self, cols: &NetView, pieces: &[Vec<f64>]) -> Result<Vec<(f64, f64)>> {
-        let domain = self.path.natural_interval();
-        if pieces.is_empty() || cols.domain != (domain.min(), domain.max()) {
-            return Err(bad(
-                "a net's parameter across the sweep is not the path's parameter",
-            ));
-        }
+    /// The net's parameter at each section: the skin's own. A piece skinned with G1
+    /// rescaling has parameters in `[0, 1]` that are the averaged normalised chord lengths of
+    /// the sections' control points (`interp_params`, in homogeneous coordinates); a piece
+    /// along which an end of the profile stays put is skinned at the path's parameters
+    /// (`SweepTrace::path_parameters`). The pieces are joined with their parameters shifted
+    /// to follow one another, the first unshifted. The map is data (the bound holds for any),
+    /// so where the net's own is not these (a wall whose domain does not end where the pieces
+    /// do) the sweep has no definition rather than a loose one.
+    fn find_nodes(
+        &self,
+        cols: &NetView,
+        pieces: &[Vec<f64>],
+        path_parameters: &[bool],
+    ) -> Result<Vec<(f64, f64)>> {
         let mut nodes: Vec<(f64, f64)> = Vec::new();
-        for piece in pieces {
-            if piece.len() < 2 {
+        let mut start: Option<f64> = None;
+        let mut offset = 0.0_f64;
+        for (k, piece) in pieces.iter().enumerate() {
+            let (Some(&first), Some(&last)) = (piece.first(), piece.last()) else {
                 return Err(bad("a piece has at least two sections"));
+            };
+            let local: Vec<f64> = if path_parameters.get(k).copied().unwrap_or(false) {
+                if piece.len() < 2 {
+                    return Err(bad("a piece has at least two sections"));
+                }
+                if start.is_none() {
+                    offset = first;
+                }
+                piece.iter().map(|&t| t - first).collect()
+            } else {
+                self.chord_parameters(cols, piece)?
+            };
+            if start.is_none() {
+                start = Some(offset);
             }
-            for &t in piece {
+            for (&t, &p) in piece.iter().zip(&local) {
+                let v = offset + p;
                 match nodes.last() {
-                    Some(&(_, previous)) if t == previous => {}
-                    Some(&(_, previous)) if !t.is_finite() || t <= previous => {
+                    Some(&(pv, pt)) if v == pv && t == pt => {}
+                    Some(&(pv, pt)) if !(v > pv && t > pt) => {
                         return Err(bad("the net's sections are not in the path's order"));
                     }
-                    _ => nodes.push((t, t)),
+                    _ => nodes.push((v, t)),
+                }
+            }
+            offset += local.last().copied().unwrap_or(last - first);
+        }
+        let (v0, v1) = cols.domain;
+        let Some(start) = start else {
+            return Err(bad(
+                "a net's parameter across the sweep is not its pieces' skins",
+            ));
+        };
+        let span = offset - start;
+        if !(v0 == start && (v1 - offset).abs() <= 1e-9 * span) {
+            return Err(bad(
+                "a net's parameter across the sweep is not its pieces' skins",
+            ));
+        }
+        Ok(nodes)
+    }
+
+    /// `interp_params` of the sections of one piece: the sections' control points in
+    /// homogeneous coordinates, the cumulative chord lengths normalised per control point
+    /// and averaged over those with a length above `MODEL_TOL`.
+    fn chord_parameters(&self, cols: &NetView, piece: &[f64]) -> Result<Vec<f64>> {
+        let n = piece.len();
+        if n < 2 {
+            return Err(bad("a piece has at least two sections"));
+        }
+        let mut sections: Vec<Vec<[f64; 4]>> = Vec::with_capacity(n);
+        for &t in piece {
+            let frame = self.frame(t)?;
+            sections.push(
+                cols.profile
+                    .iter()
+                    .zip(&cols.weights)
+                    .map(|(c, &w)| {
+                        let p = frame.place(*c);
+                        if cols.rational {
+                            [w * p.x, w * p.y, w * p.z, w]
+                        } else {
+                            [p.x, p.y, p.z, 0.0]
+                        }
+                    })
+                    .collect(),
+            );
+        }
+        let mut t = vec![0.0_f64; n];
+        let mut used = 0.0_f64;
+        for i in 0..cols.profile.len() {
+            let mut cum = vec![0.0_f64; n];
+            let mut sum = 0.0;
+            for k in 1..n {
+                let (Some(a), Some(b)) = (
+                    sections.get(k - 1).and_then(|s| s.get(i)),
+                    sections.get(k).and_then(|s| s.get(i)),
+                ) else {
+                    return Err(bad("a section lacks a control point"));
+                };
+                let d = a
+                    .iter()
+                    .zip(b)
+                    .map(|(x, y)| (x - y) * (x - y))
+                    .sum::<f64>()
+                    .sqrt();
+                sum += d;
+                if let Some(slot) = cum.get_mut(k) {
+                    *slot = sum;
+                }
+            }
+            if sum > MODEL_TOL {
+                used += 1.0;
+                for (slot, c) in t.iter_mut().zip(&cum) {
+                    *slot += c / sum;
                 }
             }
         }
-        Ok(nodes)
+        if !(used > 0.0) {
+            return Err(bad("a piece's sections are apart"));
+        }
+        for slot in &mut t {
+            *slot /= used;
+        }
+        if let Some(last) = t.last_mut() {
+            *last = 1.0;
+        }
+        Ok(t)
     }
 
     /// The certified bound (module docs).
@@ -854,6 +959,10 @@ struct NetView {
     columns: Vec<Column>,
     /// The profile's control points, in the frame's coordinates.
     profile: Vec<Vec3>,
+    /// Their weights (1 for a polynomial profile).
+    weights: Vec<f64>,
+    /// Whether the profile is rational.
+    rational: bool,
     unique_knots: Vec<f64>,
     domain: (f64, f64),
     swapped: bool,
@@ -941,6 +1050,8 @@ impl NetView {
             .ok_or_else(|| bad("a net has sections"))?;
         Ok(Self {
             columns,
+            weights: (0..pc.control_points.len()).map(pw).collect(),
+            rational: !pc.weights.is_empty(),
             profile: pc.control_points,
             unique_knots: along_knots.clone(),
             domain,
