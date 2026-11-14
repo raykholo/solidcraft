@@ -1129,7 +1129,21 @@ impl Cone {
             return Ok(None);
         }
         let z_axis = ruling.unitize_or_z();
-        if !z_axis.is_parallel_to(bot.frame.z_axis(), ang_tol) {
+
+        // The form must still be a cylinder, as before: the arcs' centres lie along their
+        // planes' normal (the rounding the ruling avoids is far under `ang_tol`, which is
+        // what a form past it is refused by). This only validates; the frame is the ruling's.
+        let centre_line = center_top - center_bot;
+        if centre_line.length() < EFF_ZERO
+            || !centre_line.is_parallel_to(bot.frame.z_axis(), ang_tol)
+        {
+            return Ok(None);
+        }
+        // A top row turned about the axis by up to `ang_tol` (the arcs' X axes are held to it
+        // above, in radians) tilts the ruling by that angle times radius over height, so the
+        // ruling is held to the normal within that.
+        let tilt = z_axis.angle_between(bot.frame.z_axis()).unwrap_or(PI);
+        if tilt.min(PI - tilt) > EFF_ZERO_SQRT * (1.0 + bot.radius / height) {
             return Ok(None);
         }
 
