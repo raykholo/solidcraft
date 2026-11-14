@@ -390,7 +390,7 @@ impl Camera {
                 let (_, _, b) = self.basis();
                 let d = a - self.target;
                 let plane = d - b * d.dot(b);
-                self.target = self.target + plane * (1.0 - nd / self.distance);
+                self.target += plane * (1.0 - nd / self.distance);
             }
         }
         self.distance = nd;

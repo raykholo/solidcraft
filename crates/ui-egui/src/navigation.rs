@@ -428,6 +428,21 @@ pub(crate) fn claim_wheel(ctx: &egui::Context) {
     });
 }
 
+/// Runs `f` on the camera as the view draws it. The stored camera's angle can differ from the drawn one
+/// (the perspective preference), and a zoom behaves differently in orthographic and perspective (#16601).
+fn with_fov(cam: &mut Camera, fov: f64, f: impl FnOnce(&mut Camera)) {
+    let stored = cam.fov;
+    cam.fov = fov;
+    f(cam);
+    cam.fov = stored;
+}
+
+/// `Camera::zoom_at` on the app's camera at the drawn angle.
+fn zoom_in_view(app: &mut SolveApp, factor: f64, anchor: Option<Vec3>) {
+    let fov = app.view_fov();
+    with_fov(&mut app.cam, fov, |cam| cam.zoom_at(factor, anchor));
+}
+
 /// Zoom anchor: the model point under the cursor, else the target's depth.
 /// Preferences › Navigation › Zoom to the cursor (off: toward the view's centre).
 pub(crate) fn zoom_anchor(app: &mut SolveApp, rect: egui::Rect, hover: Option<egui::Pos2>, surface: bool) -> Option<Vec3> {
@@ -562,7 +577,7 @@ pub(crate) fn view_key(app: &mut SolveApp, ctx: &egui::Context, key: egui::Key, 
             let zoom = |app: &mut SolveApp| {
                 app.cancel_view_animation();
                 app.viewport.orbit_free = None;
-                app.cam.zoom_at(f, None);
+                zoom_in_view(app, f, None);
             };
             if result {
                 crate::render_workspace::with_result_camera(app, zoom);
@@ -806,7 +821,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             camera_motion(app, rect, params);
         } else {
             app.cancel_view_animation();
-            app.cam.zoom_at(f, anchor);
+            zoom_in_view(app, f, anchor);
         }
     }
     if wheel_inside && scroll.is_finite() && scroll != 0.0 {
@@ -821,7 +836,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
             camera_motion(app, rect, params);
         } else {
             app.cancel_view_animation();
-            app.cam.zoom_at(f, anchor);
+            zoom_in_view(app, f, anchor);
         }
     }
     // Two-finger scroll pans the model with the fingers.
@@ -1028,7 +1043,8 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
                         && button == Some(crate::prefs::NavButton::Right)
                         && mods.alt;
                     let movement = if horizontal { -delta.x } else { delta.y };
-                    app.cam.zoom_at((f64::from(movement) * 0.01 * sign * crate::prefs::zoom_sign(app)).exp(), anchor);
+                    let f = (f64::from(movement) * 0.01 * sign * crate::prefs::zoom_sign(app)).exp();
+                    zoom_in_view(app, f, anchor);
                 }
                 _ => {}
             }
@@ -1215,13 +1231,15 @@ pub(crate) fn device(app: &mut SolveApp, rect: Rect, caps: NavCaps) {
     });
     if let Some(queued) = app.viewport.device_motion.take() {
         let before = app.cam;
-        device_camera(&mut app.cam, queued.motion, queued.seconds, height, turn, app.preferences.free_orbit, anchor, pivot);
+        let (free, fov) = (app.preferences.free_orbit, app.view_fov());
+        with_fov(&mut app.cam, fov, |cam| device_camera(cam, queued.motion, queued.seconds, height, turn, free, anchor, pivot));
         app.cam = crate::view_angles::keep_locked(app, before, app.cam);
     }
     // A device app's motion (the navigation bridge), on the same terms.
     if let Some(queued) = app.viewport.bridge_motion.take() {
         let before = app.cam;
-        bridge_camera(&mut app.cam, queued, height, turn, app.preferences.zoom_reverse, app.preferences.free_orbit, anchor, pivot);
+        let (reverse, free, fov) = (app.preferences.zoom_reverse, app.preferences.free_orbit, app.view_fov());
+        with_fov(&mut app.cam, fov, |cam| bridge_camera(cam, queued, height, turn, reverse, free, anchor, pivot));
         app.cam = crate::view_angles::keep_locked(app, before, app.cam);
     }
 }
@@ -3087,6 +3105,8 @@ mod tests {
         use super::*;
         use crate::space_mouse::{BridgeMotion, DeviceMotion, Motion};
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(800.0, 600.0));
+        // The eye stops at the model only in perspective: an orthographic zoom keeps the depth, so its eye
+        // never approaches the model (#16601). The held point stays under the press in both.
         let outside = |cam: &Camera| {
             let e = cam.eye();
             e.x.abs() > 20.0 - 1e-6 || e.y.abs() > 20.0 - 1e-6 || e.z.abs() > 20.0 - 1e-6
@@ -3109,7 +3129,12 @@ mod tests {
                     }
                     device(&mut h.app, rect, NavCaps::MODEL);
                 }
-                assert_eq!(outside(&h.app.cam), stop_at_model, "stop={stop_at_model} cursor={to_cursor} cap={cap}: eye {:?}", h.app.cam.eye());
+                assert_eq!(
+                    outside(&h.app.cam),
+                    stop_at_model && h.app.perspective_view(),
+                    "stop={stop_at_model} cursor={to_cursor} cap={cap}: eye {:?}",
+                    h.app.cam.eye()
+                );
                 if !stop_at_model {
                     assert_eq!(h.app.cam.target, Camera::default().target, "legacy zoom keeps the target fixed");
                 }
@@ -3136,7 +3161,12 @@ mod tests {
             for _ in 0..12 {
                 h.call("ui.drag", json!({"x0": at.x, "y0": at.y, "x1": at.x, "y1": at.y - 160.0, "steps": 40}));
             }
-            assert_eq!(outside(&h.app.cam), stop_at_model, "drag stop={stop_at_model} cursor={to_cursor}: eye {:?}", h.app.cam.eye());
+            assert_eq!(
+                outside(&h.app.cam),
+                stop_at_model && h.app.perspective_view(),
+                "drag stop={stop_at_model} cursor={to_cursor}: eye {:?}",
+                h.app.cam.eye()
+            );
             if !stop_at_model {
                 assert_eq!(h.app.cam.target, Camera::default().target, "legacy drag-zoom keeps the target fixed");
             }
