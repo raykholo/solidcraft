@@ -1833,7 +1833,9 @@ fn an_open_shell_the_sewing_leaves_open_is_read_as_a_sheet_with_all_its_faces() 
     let imp = step_import(&t).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(imp.bodies.len(), 1, "{:?}", imp.warnings);
     let open = &imp.bodies[0];
-    assert!(open.body.is_surface() && !open.closed && open.refused.is_none(), "{:?}", imp.warnings);
+    // The sewing leaves the shell open, so it comes in as surfaces and says so.
+    assert!(open.body.is_surface() && !open.closed, "{:?}", imp.warnings);
+    assert!(imp.warnings.iter().any(|w| w.contains("imported as surfaces") && w.contains("not closed")), "{:?}", imp.warnings);
     assert_eq!((open.file_faces, open.body.face_count()), (5, 5), "{:?}", imp.warnings);
     assert!(!imp.warnings.iter().any(|w| w.contains("left out")), "{:?}", imp.warnings);
     // Five unit faces, each once.
