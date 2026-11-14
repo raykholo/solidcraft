@@ -169,7 +169,8 @@ size. Vertex tolerances must be finite and at least the body's (allowing the che
 margin). A vertex tolerance under 1000 times the body's passes Test 82 as ever. One at or past that
 limit, an imported corner whose gap is local, is accepted only if its ball reaches no face or edge
 it does not bound or neighbour (rule 7); a ball that does, or whose clearance cannot be established,
-is refused with Test 82. Geometric gap checks still apply. The pointer check keeps its ratio of 1000
+is refused with Test 82, and so is any past twice the limit (a tolerance covers a gap, never a
+misplaced vertex; the boolean's tolerance update grows a vertex no further either). Geometric gap checks still apply. The pointer check keeps its ratio of 1000
 for faces and edges (`validation/pointers.rs`); the separate Edge tests 5, 6 are obsolete, and Face
 tests 25, 26 and 30 are not run (`assert_valid/face.rs`).
 
@@ -398,8 +399,8 @@ and the tolerance pass.
   bands) is not checked.
 - No step closes a gap by recomputing geometry: `fix_bad_gaps` is empty, the coincident-edge and
   missed-intersection steps are not implemented upstream.
-- A vertex tolerance past 1000 times the body's is decided by clearance from non-incident topology,
-  not by the ratio; faces and edges retain the pointer check's ratio of 1000. The separate Edge
+- A vertex tolerance from 1000 to 2000 times the body's is decided by clearance from non-incident
+  topology, not by the ratio; past 2000 times it is refused; faces and edges retain the pointer check's ratio of 1000. The separate Edge
   tests 5, 6 are obsolete; Face 25, 26, 30 are not run.
 
 ## 11. If you're stuck

@@ -561,28 +561,42 @@ mod tests {
             .collect()
     }
 
-    /// `Test #82` holds under `LARGE_SMALL_SIZE_RATIO` times the body's tolerance as before. At or
-    /// past that limit the ratio no longer decides: the vertex is accepted when its ball reaches
-    /// no face or edge it does not bound, refused (test 82) when it does. In the 10 x 10 x 10 box
-    /// the nearest non-incident face is 10 away, so 1 x and 2 x the limit (0.01 and 0.02) clear.
-    /// In the 1 x 2 x 3 box the nearest is the face x = 1: a corner tolerance of 0.999 clears it,
-    /// 1.0 touches it and 2.0 passes through it.
+    /// `Test #82` holds under `LARGE_SMALL_SIZE_RATIO` times the body's tolerance as before. From
+    /// that limit up to `GROWTH_PAST_RATIO` times it the ratio no longer decides: the vertex is
+    /// accepted when its ball reaches no face or edge it does not bound, refused (test 82) when it
+    /// does. Past that a tolerance would be absorbing a misplaced vertex: refused whatever its
+    /// ball clears. In the 10 x 10 x 10 box the nearest non-incident face is 10 away, so 1 x and
+    /// 2 x the limit clear and 2.5 x and 50 x are refused. In a box 1.5 x the limit wide the
+    /// nearest is that far: a corner tolerance of 0.9 of it clears, 1.0 touches it and 1.1 passes
+    /// through it.
     #[test]
     fn a_vertex_past_the_ratio_limit_is_accepted_only_where_its_ball_clears_other_topology() {
-        for factor in [0.999_999, 1.0, 2.0, 50.0] {
+        for (factor, refused) in [
+            (0.999_999, false),
+            (1.0, false),
+            (2.0, false),
+            (2.5, true),
+            (50.0, true),
+        ] {
             with_box(|k, b| {
                 let (v, _, limit) = corner_and_limit(b);
                 b.vertex_mut(v)?.tolerance = factor * limit;
-                assert_eq!(failed_tests(k, b), Vec::<u32>::new(), "at {factor} x limit");
+                let failed = failed_tests(k, b);
+                assert_eq!(
+                    failed.contains(&82),
+                    refused,
+                    "at {factor} x limit: {failed:?}"
+                );
                 Ok(())
             })
             .unwrap();
         }
-        for (radius, refused) in [(0.999, false), (1.0, true), (2.0, true)] {
+        for (radius, refused) in [(0.9, false), (1.0, true), (1.1, true)] {
             let mut k = Kernel::default();
             let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 1.0, 2.0, 3.0).unwrap();
-            let limit = crate::geom::tol::LARGE_SMALL_SIZE_RATIO * b.tolerance();
-            assert!(radius > limit);
+            // a body tolerance whose limit is 1000 / 1500: the nearest non-incident face (x = 1)
+            // is 1.5 x the limit away, so the radii below are 1.35 x to 1.65 x it
+            b.set_tolerance(1.0 / 1500.0);
             let v = b.vertex_list()[0];
             b.vertex_mut(v).unwrap().tolerance = radius;
             assert_eq!(

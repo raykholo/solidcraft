@@ -14,7 +14,8 @@
 //! Vertex tolerances must be finite. Test #82 (under `LARGE_SMALL_SIZE_RATIO` times the body's
 //! tolerance) holds as before; a vertex at or past that limit, such as an imported corner with a
 //! local gap, is decided by geometry instead: its ball must not reach a face or edge it does not
-//! bound or sit next to (an inconclusive query counts as reaching).
+//! bound or sit next to (an inconclusive query counts as reaching), and past `GROWTH_PAST_RATIO`
+//! times that limit Test #82 refuses it outright.
 //! Native const geometry repairs use mutable curve access. Warning-only checks
 //! retain their evaluations and repairs; diagnostic log strings are omitted.
 //! Not upstream (WR-406, tangency-labs/solidcore#891): a UV trim's turn at its
@@ -947,6 +948,14 @@ fn wide_vertex_limit(b: &Brep) -> f64 {
     tol::LARGE_SMALL_SIZE_RATIO * b.tolerance()
 }
 
+/// How far past `LARGE_SMALL_SIZE_RATIO` times the body's tolerance a vertex tolerance may go and
+/// still be decided by clearance: an imported corner needs 1.14 times the limit, a corner half a
+/// millimetre off its edges in a 10 mm box 50 times. A tolerance covers a rounding or intersection
+/// gap, never a misplaced vertex, so past this many times the limit Test #82 refuses it whatever
+/// its ball clears. The boolean's tolerance update grows a vertex no further than this either
+/// (`validate_and_update`).
+pub(super) const GROWTH_PAST_RATIO: f64 = 2.0;
+
 fn check_vertices(b: &Brep, r: &mut Reports<'_>) -> Result<()> {
     for &v in b.vertex_list() {
         let data = b.vertex(v)?;
@@ -1155,6 +1164,31 @@ fn report_vertex_exclusion(
     Ok(())
 }
 
+/// Test #82 for a vertex whose tolerance is past `GROWTH_PAST_RATIO` times the limit.
+fn report_vertex_too_wide(b: &Brep, r: &mut Reports<'_>, v: VertexId) -> Result<()> {
+    r.failed = true;
+    let Some(array) = r.array.as_deref_mut() else {
+        return Ok(());
+    };
+    let (owner, owner_type, owner_name) = super::object_info(b, EntityRef::Vertex(v).into())?;
+    array.add_unique_delete_duplicate(AssertReport::new(ReportSpec {
+        reporter: Some(super::object_info(b, EntityRef::Brep(BrepId::from_index(0)).into())?.0),
+        test_index: 82,
+        test_class: super::BREP_TYPE,
+        owner: Some(owner),
+        owner_type,
+        owner_type_string: Some(owner_name),
+        other: None,
+        other_type: 0,
+        other_type_string: None,
+        tol3d: GROWTH_PAST_RATIO * wide_vertex_limit(b),
+        value: b.vertex(v)?.tolerance,
+        list_index: 1,
+        message: Some("Vertex tolerance is too wide to excuse by clearance".into()),
+    })?);
+    Ok(())
+}
+
 enum FaceContact {
     Clear,
     Contact(f64),
@@ -1226,8 +1260,12 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
     // Only a vertex at or past the ratio limit is decided here; the rest pass Test #82 as before.
     let limit = wide_vertex_limit(b);
     let mut vertices = Vec::new();
-    for &v in b.vertex_list() {
-        if b.vertex(v)?.tolerance >= limit {
+    for v in b.vertex_list().to_vec() {
+        let tolerance = b.vertex(v)?.tolerance;
+        if tolerance > GROWTH_PAST_RATIO * limit {
+            // too wide for clearance to excuse: a misplaced vertex, not a gap
+            report_vertex_too_wide(b, r, v)?;
+        } else if tolerance >= limit {
             vertices.push(v);
         }
     }

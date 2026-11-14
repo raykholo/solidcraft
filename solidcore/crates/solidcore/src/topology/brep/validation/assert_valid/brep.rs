@@ -274,10 +274,7 @@ pub(super) fn validate_and_update(
     result
 }
 
-/// How far past `LARGE_SMALL_SIZE_RATIO` times the body's tolerance a boolean may grow a vertex's
-/// tolerance to cover a computed gap (an imported corner needs 1.14 times the limit; a corner
-/// half a millimetre off its edges in a 10 mm box needs 50 times).
-pub(super) const GROWTH_PAST_RATIO: f64 = 2.0;
+use super::super::pointers::GROWTH_PAST_RATIO;
 
 fn validate_and_update_body(
     k: &mut Kernel,
