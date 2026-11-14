@@ -450,6 +450,11 @@ impl SolveApp {
 }
 
 pub fn begin(app: &mut SolveApp, path: &str, insert: bool) {
+    // Opening a plugin `.zip` offers to install it, with the same review as Install plugin….
+    if !insert && crate::plugin_install::available() && path.to_ascii_lowercase().ends_with(".zip") {
+        crate::plugin_install::review(app, path.to_string());
+        return;
+    }
     // An STL or OBJ file states no unit: ask which, then import (see `crate::mesh_units`).
     if crate::mesh_units::ask(app, path, insert) {
         return;
