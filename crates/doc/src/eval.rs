@@ -9226,19 +9226,22 @@ fn trim_to_body(tools: Vec<Traced>, target: &ModelBody, dist_to_start: impl Fn(V
     Ok(out)
 }
 
-/// Tools run to a curved To face, one construction chosen by geometry before building: when each
-/// tool's section lies wholly on the face ([`kernel::profile_lies_on_face`]), the prism cut at
-/// that face's extended surface (the kernel's [`kernel::split_prism_to_face`]), the piece that
-/// starts at `start` kept whether the start lies in air or inside the target's material;
-/// otherwise the tool trimmed to the target body ([`trim_to_body`], as a profile only partly over
-/// the face always was), refused when a piece still has its end cap at `far`.
+/// Tools run to a curved To face, one construction chosen by the exact on-face test, not by a
+/// failed attempt: the kernel's [`kernel::face_split_if_on_face`] splits each tool's prism at the
+/// face's extended surface and says whether its section lies wholly on the face. When every
+/// tool's does, those pieces (the one that starts at `start`, whether that lies in air or inside
+/// the target's material) are the result; otherwise the tool is trimmed to the target body
+/// ([`trim_to_body`], as a profile only partly over the face always was), refused when a piece
+/// still has its end cap at `far`.
 fn trim_to_face(tools: Vec<Traced>, target: &ModelBody, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Vec<Traced>> {
+    let mut out = Vec::new();
     let mut on_face = true;
     for t in &tools {
-        if !kernel::profile_lies_on_face(&t.body, &target.body, face, plane, start, far)? {
+        let Some(parts) = kernel::face_split_if_on_face(&t.body, &target.body, face, plane, start, far)? else {
             on_face = false;
             break;
-        }
+        };
+        out.extend(parts.into_iter().map(|part| Traced::step(part, &[t])));
     }
     if !on_face {
         let n = plane.normal();
@@ -9247,11 +9250,6 @@ fn trim_to_face(tools: Vec<Traced>, target: &ModelBody, face: usize, plane: &Pla
             return Err(DocError::Invalid("the profile reaches past the To face".into()));
         }
         return Ok(trimmed);
-    }
-    let mut out = Vec::new();
-    for t in &tools {
-        let parts = kernel::split_prism_to_face(&t.body, &target.body, face, plane, start, far)?;
-        out.extend(parts.into_iter().map(|part| Traced::step(part, &[t])));
     }
     if out.is_empty() {
         return Err(DocError::Invalid("nothing lies between the profile and the To object".into()));
