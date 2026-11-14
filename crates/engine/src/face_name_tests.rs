@@ -492,3 +492,21 @@ fn a_modelled_thread_saved_under_a_numbered_bore_wall_is_found_at_its_pick() {
     let result = reopened.model.result(reopened.doc.features[thread].id).unwrap();
     assert!(result.error.as_deref().is_some_and(|e| e.contains("reselect")), "{:?}", result.error);
 }
+
+/// The recovery is a thread's alone (#16602): any other feature saved under the same numbered piece
+/// of a cylinder's side would take in the whole side the old piece never covered, so it asks for
+/// the face to be picked again.
+#[test]
+fn a_shell_saved_under_a_numbered_side_piece_of_a_cylinder_still_asks_to_reselect() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 30, "base": [0, 0, 0], "body_name": "Shaft"}));
+    run(&mut s, "solid.shell", json!({"faces": [[0, 5, 15]], "thickness": 1, "body": "Shaft", "name": "Shell1"}));
+    let shell = s.doc.features.iter().position(|f| f.name == "Shell1").unwrap();
+    assert_eq!(s.doc.features[shell].face_names, vec!["F1:side".to_string()]);
+
+    let mut saved = (*s.doc).clone();
+    saved.features[shell].face_names = vec!["F1:side#2".to_string()];
+    let reopened = Session::opened_at(saved, None, None);
+    let result = reopened.model.result(reopened.doc.features[shell].id).unwrap();
+    assert!(result.error.as_deref().is_some_and(|e| e.contains("reselect")), "{:?}", result.error);
+}
