@@ -83,8 +83,9 @@ pub enum PrismPart {
 /// Whether every one of `edges` (record edges of `part`, through `part_order`) lies on face
 /// `face` (a record index) of `target`: each edge's own kernel curve and interval, as the
 /// B-rep validator reads an edge (a traced surface-intersection curve too), on the face's
-/// surface over the whole edge and inside its trim ([`curve_lies_on_face`]), within
-/// `tolerance`. No edges lie on any face. `target` may gain UV trim curves.
+/// surface (checked at sampled points) and inside its trim (each part of the interval
+/// classified against the face's boundary) ([`curve_lies_on_face`]), within
+/// `tolerance`. No edges vacuously lie on any face. `target` may gain UV trim curves.
 ///
 /// # Errors
 /// [`Error::Argument`] for a face or edge past its body's, an edge without a curve, or a
@@ -132,7 +133,8 @@ pub fn edges_lie_on_face(
 /// [`PrismPart::Dropped`] unless one of its `planar` faces is the start cap; else
 /// [`PrismPart::ReachesPast`] when one is the far cap, or when an edge of its `section` (record edges of
 /// the face the cut made, which came from no face of the prism) is not on the target's face
-/// ([`edges_lie_on_face`]); else [`PrismPart::Kept`].
+/// ([`edges_lie_on_face`]), or when the section is empty (nothing shows the piece ends at the face);
+/// else [`PrismPart::Kept`].
 ///
 /// # Errors
 /// As [`edges_lie_on_face`].
@@ -161,6 +163,7 @@ pub fn prism_part(
     Ok(if !cap_at(cut.start) {
         PrismPart::Dropped
     } else if cap_at(cut.far)
+        || section.is_empty()
         || !edges_lie_on_face(
             target,
             order,
@@ -279,6 +282,21 @@ mod tests {
             judge(other, &[cap(0.0)]),
             PrismPart::ReachesPast,
             "the section is off the face"
+        );
+        assert_eq!(
+            prism_part(
+                &body,
+                &order,
+                on_face,
+                &body,
+                &order,
+                &[cap(0.0)],
+                &[],
+                &cut
+            )
+            .unwrap(),
+            PrismPart::ReachesPast,
+            "an empty section shows nothing at the face"
         );
     }
 }
