@@ -1,50 +1,26 @@
 {
   "ar": {
-    "ui.relink_names_keep": "الاحتفاظ بالأسماء الحالية",
-    "ui.relink_names_label": "الأسماء",
-    "ui.relink_names_sync": "استخدام أسماء المصدر الجديد",
-    "ui.relink_names_text": "اختر كيف تُسمّى الأجسام المرتبطة بعد أن يحلّ المصدر الجديد محل القديم."
+    "ui.relink_source_names": "إعادة ربط المصدر واستخدام أسمائه…"
   },
   "de": {
-    "ui.relink_names_keep": "Aktuelle Namen behalten",
-    "ui.relink_names_label": "Namen",
-    "ui.relink_names_sync": "Namen aus der neuen Quelle verwenden",
-    "ui.relink_names_text": "Wähle, wie die verknüpften Körper heißen, nachdem die neue Quelle die alte ersetzt hat."
+    "ui.relink_source_names": "Quelle neu verknüpfen und ihre Namen verwenden…"
   },
   "en": {
-    "ui.relink_names_keep": "Keep current names",
-    "ui.relink_names_label": "Names",
-    "ui.relink_names_sync": "Use names from the new source",
-    "ui.relink_names_text": "Choose what the linked bodies are called after the new source replaces the old one."
+    "ui.relink_source_names": "Relink Source and Use Its Names…"
   },
   "he": {
-    "ui.relink_names_keep": "שמירת השמות הנוכחיים",
-    "ui.relink_names_label": "שמות",
-    "ui.relink_names_sync": "שימוש בשמות מהמקור החדש",
-    "ui.relink_names_text": "בחרו כיצד ייקראו הגופים המקושרים לאחר שהמקור החדש מחליף את הישן."
+    "ui.relink_source_names": "קישור מחדש למקור ושימוש בשמותיו…"
   },
   "ja": {
-    "ui.relink_names_keep": "現在の名前を保持",
-    "ui.relink_names_label": "名前",
-    "ui.relink_names_sync": "新しい参照元の名前を使う",
-    "ui.relink_names_text": "新しい参照元が古いものに置き換わった後、リンクされたボディの名前をどうするか選びます。"
+    "ui.relink_source_names": "参照元を再リンクして名前を使う…"
   },
   "ko": {
-    "ui.relink_names_keep": "현재 이름 유지",
-    "ui.relink_names_label": "이름",
-    "ui.relink_names_sync": "새 소스의 이름 사용",
-    "ui.relink_names_text": "새 소스가 이전 소스를 대체한 뒤 연결된 바디의 이름을 어떻게 할지 선택하세요."
+    "ui.relink_source_names": "소스 다시 연결 및 이름 사용…"
   },
   "vi": {
-    "ui.relink_names_keep": "Giữ tên hiện tại",
-    "ui.relink_names_label": "Tên",
-    "ui.relink_names_sync": "Dùng tên từ nguồn mới",
-    "ui.relink_names_text": "Chọn tên của các thân được liên kết sau khi nguồn mới thay thế nguồn cũ."
+    "ui.relink_source_names": "Liên kết lại nguồn và dùng tên của nó…"
   },
   "zh": {
-    "ui.relink_names_keep": "保留当前名称",
-    "ui.relink_names_label": "名称",
-    "ui.relink_names_sync": "使用新来源的名称",
-    "ui.relink_names_text": "选择新来源替换旧来源后，链接实体的名称如何处理。"
+    "ui.relink_source_names": "重新链接来源并使用其名称…"
   }
 }

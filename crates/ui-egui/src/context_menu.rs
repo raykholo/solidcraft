@@ -190,8 +190,6 @@ pub struct MenuState {
     pub(crate) joint_move_warning: Option<crate::joint_handles::Blocked>,
     /// Identical copies Extract to File found, waiting to be linked too.
     pub link_copies: Option<crate::linked_source::Copies>,
-    /// Relink Source asking whether the bodies keep their names, before it asks for the design.
-    pub relink_choice: Option<crate::linked_source::RelinkChoice>,
     /// The Properties window: title and measurements.
     pub props: Option<(String, Value)>,
     /// Its measurement while it runs beside the window (#5203).
@@ -1154,6 +1152,7 @@ fn component_items(app: &SolveApp, id: u64) -> Vec<Item> {
     }
     if doc.links.contains_key(&id) {
         own.push(act("ui.relinkSource", "Relink Source (All Instances)…", "update").with(json!({"component": id})));
+        own.push(act("ui.relinkSourceNames", "Relink Source and Use Its Names…", "update").with(json!({"component": id})));
     } else if id != 0 && app.session.can_extract(id) {
         own.push(act("ui.extractComponent", "Extract to File…", "export").with(json!({"component": id})));
     }
@@ -1599,7 +1598,12 @@ pub fn run_item(app: &mut SolveApp, item: &Item, at: Pos2) {
         "ui.cancelSketch" => app.cancel_sketch(),
         "ui.relinkSource" | "ui.relinkPlacement" => {
             if let Some(component) = id_of(&p, "component") {
-                crate::linked_source::ask(app, component, id_of(&p, "occurrence"));
+                crate::linked_source::start(app, component, id_of(&p, "occurrence"));
+            }
+        }
+        "ui.relinkSourceNames" => {
+            if let Some(component) = id_of(&p, "component") {
+                crate::linked_source::start_with(app, component, None, true);
             }
         }
         "ui.extractComponent" => {

@@ -355,8 +355,8 @@ pub struct RelinkParams {
     #[serde(default, deserialize_with = "placement", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "u64")]
     pub occurrence: Option<u64>,
-    /// `keep` (the default) keeps the bodies' current names by position and gives only the
-    /// bodies the new source adds their names there; `sync` takes the new source's body names,
+    /// `keep` (the default) leaves the body names as relinking always did (replaced only when
+    /// the new source has another number of bodies); `sync` takes the new source's body names,
     /// also in the materials, appearances and features that name those bodies, and gives the
     /// linked feature the source design's name when it still has its component's. The
     /// component's own name stays yours. Not used when `occurrence` relinks one of several

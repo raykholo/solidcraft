@@ -71,7 +71,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&RELINK_CONTRACT)
         .output(output_schema_for::<RelinkResult>)
         .params(
-        "component: id or name of a linked component; path: a saved design (.sc or .json) — replaces the source and linked bodies for all its occurrences, preserving identities and placements; names?: \"keep\" (default) keeps the bodies' current names by position and gives only the bodies the new source adds its names, \"sync\" takes the new source's body names, renames what other features, materials and appearances keep under the old names with them, and gives the linked feature the source design's name when it still has its component's (component and placement names stay yours; only for the whole component, a placement relinked on its own shows a component made from the new source); occurrence?: one of its placements — when it has others, only that placement comes to show the design, as a placement of the component already linked to it or of a new one under the same parent, keeping its position and joints (component is then the one it shows, previous_component the one it showed); returns path, previous_path, warnings, joint_errors and joint_conflicts",
+        "component: id or name of a linked component; path: a saved design (.sc or .json) — replaces the source and linked bodies for all its occurrences, preserving identities and placements; names?: \"keep\" (default) leaves the body names as relinking always did (replaced only when the new source has another number of bodies), \"sync\" takes the new source's body names, renames what other features, materials and appearances keep under the old names with them, and gives the linked feature the source design's name when it still has its component's (component and placement names stay yours; only for the whole component, a placement relinked on its own shows a component made from the new source); occurrence?: one of its placements — when it has others, only that placement comes to show the design, as a placement of the component already linked to it or of a new one under the same parent, keeping its position and joints (component is then the one it shows, previous_component the one it showed); returns path, previous_path, warnings, joint_errors and joint_conflicts",
     ),
     CommandSpec::new("component.break_link", "Break Link", crate::checked!("component.break_link", break_link))
         .icon("break")
@@ -832,8 +832,10 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
         warnings.push("the linked geometry changed; check this component's joints, even when the solver reports no error".to_string());
     }
     if let Some(f) = s.doc_mut().feature_mut(link.feature) {
-        // Both modes start from the names the bodies have; `sync` renames them below.
-        f.body_names = kept_names(&f.body_names, sf.body_names);
+        // Both modes start as Relink always did; `sync` renames the bodies below.
+        if f.body_names.len() != sf.body_names.len() {
+            f.body_names = sf.body_names;
+        }
         f.kind = sf.kind;
         f.link_faces = faces;
     }
@@ -869,22 +871,21 @@ fn relink(s: &mut Session, p: &Value) -> Result<Value> {
     )
 }
 
-/// The body names a relink with `names: "keep"` stores: each body keeps the name at its position,
-/// and only a body the new source adds (a position past the old names, or with no name stored)
-/// takes the name the new source gives it. Bodies the new source no longer has drop their names.
-fn kept_names(old: &[String], new: Vec<String>) -> Vec<String> {
-    new.into_iter().enumerate().map(|(i, n)| old.get(i).filter(|o| !o.trim().is_empty()).cloned().unwrap_or(n)).collect()
-}
-
 /// `names: "sync"`: the linked bodies, by position, take the names the new source gives them,
 /// through the rename `body.rename` does, so the materials, appearances and later features that
 /// name a body follow it. A body that cannot take its new name (another body has it) keeps its
 /// name and is reported. The linked feature takes the source design's name when it still has the
 /// component's (the pair Insert Design makes); the component keeps its name.
 fn sync_names(s: &mut Session, comp: u64, feature: u64, source_name: &str, source: &[String], warnings: &mut Vec<String>) {
-    let current: Vec<String> = s.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect();
-    let slots = s.doc.feature(feature).map(|f| f.body_name_slots(current.len())).unwrap_or_default();
-    for (old, slot) in current.iter().zip(slots) {
+    // The feature's own build result names every body it made, in build order, which is what the
+    // stored name slots follow; a later feature may have removed some of them from the model.
+    let made: Vec<String> =
+        s.model.result(feature).map(|r| r.state.bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect()).unwrap_or_default();
+    let slots = s.doc.feature(feature).map(|f| f.body_name_slots(made.len())).unwrap_or_default();
+    let alive: Vec<String> = s.model.state().bodies.iter().filter(|b| b.feature == feature).map(|b| b.name.clone()).collect();
+    let survivors = made.iter().zip(slots).filter(|(name, _)| alive.contains(name));
+    for (old, slot) in survivors.map(|(n, slot)| (n.clone(), slot)).collect::<Vec<_>>() {
+        let old = &old;
         let Some(target) = source.get(slot).map(|n| n.trim()).filter(|n| !n.is_empty()) else { continue };
         if old == target {
             continue;

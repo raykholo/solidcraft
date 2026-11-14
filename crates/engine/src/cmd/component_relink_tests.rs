@@ -794,10 +794,10 @@ fn relink_keeps_body_names_by_default_and_syncs_them_on_request() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// With `keep` the bodies keep their names by position when the count changes, and only an added
-/// body takes the new source's name; `sync` takes them all.
+/// `keep` is what relinking always did: the names are replaced when the body count changes.
+/// `sync` takes the new source's names whatever the count.
 #[test]
-fn relink_keep_names_by_position_when_the_body_count_changes() {
+fn relink_names_when_the_body_count_changes() {
     let dir = folder("names-count");
     let (one, two) = (dir.join("one.solidcraft"), dir.join("two.solidcraft"));
     named_parts(&one, &["Body_A"]);
@@ -805,9 +805,9 @@ fn relink_keep_names_by_position_when_the_body_count_changes() {
     let mut s = Session::default();
     let component = run(&mut s, "component.insert_design", json!({"path": one}))["component"].as_u64().unwrap();
     run(&mut s, "component.relink", json!({"component": component, "path": two}));
-    assert_eq!(linked_names(&s, component), ["Body_A", "Extra"]);
-    run(&mut s, "component.relink", json!({"component": component, "path": one}));
-    assert_eq!(linked_names(&s, component), ["Body_A"], "the body the source no longer has is gone");
+    assert_eq!(linked_names(&s, component), ["Body_B", "Extra"]);
+    run(&mut s, "component.relink", json!({"component": component, "path": one, "names": "keep"}));
+    assert_eq!(linked_names(&s, component), ["Body_A"]);
     run(&mut s, "component.relink", json!({"component": component, "path": two, "names": "sync"}));
     assert_eq!(linked_names(&s, component), ["Body_B", "Extra"]);
     let _ = std::fs::remove_dir_all(dir);

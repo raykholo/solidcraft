@@ -3870,7 +3870,6 @@ impl SolveApp {
         easyprint_ui::show(self, ui.ctx());
         plugin_install::show(self, ui.ctx());
         linked_source::show_copies(self, ui.ctx());
-        linked_source::show_relink_choice(self, ui.ctx());
         joint_handles::show_warning(self, ui.ctx());
         shortcut_box::show(self, ui.ctx());
         prefs::show(self, ui.ctx());
