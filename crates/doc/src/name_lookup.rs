@@ -17,7 +17,7 @@
 //! contains the saved pick and comes directly from its original construction feature.
 //! This check is local to manual sketch projection. A thread alone also finds a round side
 //! again that 0.30.1 saved as a numbered piece (`F2:side#2`) or under a later index
-//! (`F4:bore:side:1`): see [`locate_face_for_thread`] (#16602).
+//! (`F4:bore:side:1`): see [`locate_thread_face_on_body`] (#16602).
 
 use solidcore_record::Vec3;
 use solidcraft_geom::Mesh;
@@ -849,16 +849,6 @@ pub fn locate_face(st: &ModelState, name: &str, p: Vec3) -> Option<FaceHit> {
     locate_face_with(st, name, p, false)
 }
 
-/// [`locate_face`] with the recovery of a thread's face: a round side (cylinder or cone) saved by
-/// 0.30.1 as a numbered piece (`F1:side#2`) or a round tool's wall under a later index
-/// (`F4:bore:side:1`) is found as the whole face it is now, when it is the only face of its stem
-/// and the saved pick lies on it (#16602). Only a thread asks for this: a thread wants the whole
-/// face whatever piece it was saved on, while any other feature would take in material the old
-/// piece never covered.
-pub fn locate_face_for_thread(st: &ModelState, name: &str, p: Vec3) -> Option<FaceHit> {
-    locate_face_with(st, name, p, true)
-}
-
 fn locate_face_with(st: &ModelState, name: &str, p: Vec3, round: bool) -> Option<FaceHit> {
     if crate::sheet::split_sheet_face_name(name).is_some() {
         return sheet_locate(st, name, p).ok();
@@ -927,7 +917,12 @@ pub fn locate_face_on_body(st: &ModelState, body: Option<&str>, name: &str, p: V
     locate_face_on_body_with(st, body, name, p, false)
 }
 
-/// [`locate_face_on_body`] with the recovery of [`locate_face_for_thread`].
+/// [`locate_face_on_body`] with the recovery of a thread's face: a round side (cylinder or cone) saved by
+/// 0.30.1 as a numbered piece (`F1:side#2`) or a round tool's wall under a later index
+/// (`F4:bore:side:1`) is found as the whole face it is now, when it is the only face of its stem
+/// and the saved pick lies on it (#16602). Only a thread asks for this: a thread wants the whole
+/// face whatever piece it was saved on, while any other feature would take in material the old
+/// piece never covered.
 pub fn locate_thread_face_on_body(st: &ModelState, body: Option<&str>, name: &str, p: Vec3) -> Option<FaceHit> {
     locate_face_on_body_with(st, body, name, p, true)
 }
