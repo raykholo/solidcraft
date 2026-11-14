@@ -894,10 +894,9 @@ pub(crate) fn boolean_post_process_with_notifications(
 /// - lies more than half the vertex's tolerance from it. The vertex's edge curves keep ending
 ///   at its old point (`vertex::set_point` moves the point only), so the move is their new
 ///   vertex/edge gap, and `docs/validity-and-tolerances.md` (the `SmBrep` list 2 invariants)
-///   asks vertex/edge and vertex/face gaps of at most half the vertex's tolerance. For a corner
-///   the move is measured here, `best_point.distance(old)`: `calc_corner_from_faces`'s
-///   `max_gap_3d` is that distance in all its branches but the parallel faces', where it is the
-///   residual.
+///   asks vertex/edge and vertex/face gaps of at most half the vertex's tolerance. Only the
+///   point's own displacement is limited, not the corner's: the corner may lie farther than
+///   the point.
 /// - leaves a gap of `xsect_tol` or more to any of its faces, or of more than half the vertex's
 ///   tolerance to the end of any incident edge curve (both measured with the vertex put
 ///   at the point for the measurement only): a partial move would stay invalid.
@@ -919,7 +918,7 @@ fn face_corner_to_move_to(
     let old = brep.vertex(v)?.point;
     let moved = at.best_point.distance(old);
     // an undefined corner point (NaN) stays out as well
-    if !at.found_point || moved.is_nan() || moved > tolerance / 2.0 {
+    if !at.found_point || moved.is_nan() {
         return Ok(None);
     }
     // one construction: the point that minimises the largest gap to the vertex's faces
@@ -935,31 +934,31 @@ fn face_corner_to_move_to(
     Ok(cured.then_some(target))
 }
 
-/// Not upstream (#16532): the point that minimises the largest gap to the faces of `v`, given
-/// `corner` where its faces meet. A face's gap is the distance to its nearest point, which on a
-/// face the corner lies beside (a round whose patch ends at its tangent line) is not the
-/// corner. With `p_f` the nearest point of each face to `corner`, the point is the centre of
-/// the smallest ball holding `corner` and every `p_f`, taken as the midpoint of the two
-/// farthest apart (exact when two points bound the ball, as for two faces; for more, the
-/// largest gap from it is at most half the diameter of the set). Faces that hold the corner
-/// give `corner` itself.
+/// Not upstream (#16532): the point that minimises the largest gap to the faces of `v`, from
+/// `corner` where its faces meet. A face's gap is the distance to its nearest point, so the
+/// optimum `x` is where the vectors to the nearest points of the active faces balance: `x` is
+/// the centre of the smallest ball holding them, which for two faces is the midpoint of their
+/// nearest points. [`minimax_centre`] iterates that map from the corner, with the nearest
+/// points of each face to the vertex put at `x` ([`nearest_face_points`]).
 ///
 /// # Errors
 /// Those of the gap and surface evaluations.
 fn min_max_gap_point(k: &Kernel, brep: &mut Brep, v: VertexId, corner: Point3) -> Result<Point3> {
-    use crate::topology::vertexuse;
     let old = brep.vertex(v)?.point;
-    brep.vertex_mut(v)?.point = corner;
-    let mut points = vec![corner];
-    let mut failed = None;
+    let found = minimax_centre(corner, |x| nearest_face_points(k, brep, v, x));
+    brep.vertex_mut(v)?.point = old;
+    reset_vertex_face_gaps(brep, v)?;
+    found
+}
+
+/// The nearest point of each face of `v` to `x` (the vertex is left at `x`).
+fn nearest_face_points(k: &Kernel, brep: &mut Brep, v: VertexId, x: Point3) -> Result<Vec<Point3>> {
+    use crate::topology::vertexuse;
+    brep.vertex_mut(v)?.point = x;
+    let mut points = Vec::new();
     for vu in vertex::vertexuses(brep, v)? {
-        let gap = match vertexuse::vertex_face_gap(k, brep, vu, true) {
-            Ok(Some(g)) => g,
-            Ok(None) => continue,
-            Err(e) => {
-                failed = Some(e);
-                break;
-            }
+        let Some(gap) = vertexuse::vertex_face_gap(k, brep, vu, true)? else {
+            continue;
         };
         let face = match gap.vertexuse {
             Some(gvu) => vertexuse::faceuse(brep, gvu)?
@@ -974,30 +973,52 @@ fn min_max_gap_point(k: &Kernel, brep: &mut Brep, v: VertexId, corner: Point3) -
         else {
             continue;
         };
-        match surface.evaluate_point(k, gap.face_uv) {
-            Ok(p) if p.x.is_finite() && p.y.is_finite() && p.z.is_finite() => points.push(p),
-            Ok(_) => {}
-            Err(e) => {
-                failed = Some(e);
-                break;
-            }
+        let p = surface.evaluate_point(k, gap.face_uv)?;
+        if p.x.is_finite() && p.y.is_finite() && p.z.is_finite() {
+            points.push(p);
         }
     }
-    brep.vertex_mut(v)?.point = old;
-    reset_vertex_face_gaps(brep, v)?;
-    if let Some(e) = failed {
-        return Err(e);
-    }
-    let mut far = (corner, corner, 0.0_f64);
-    for (i, &a) in points.iter().enumerate() {
-        for &b in &points[i + 1..] {
-            let d = a.distance(b);
-            if d > far.2 {
-                far = (a, b, d);
+    Ok(points)
+}
+
+/// The most steps [`minimax_centre`] takes: each step at least halves the distance to the
+/// optimum along the directions the faces constrain.
+const MINIMAX_STEPS: usize = 64;
+
+/// The point minimising the largest distance to a set of faces, from `start`: with
+/// `nearest(x)` the nearest point of each face to `x`, repeatedly moves `x` to the midpoint of
+/// the two of them farthest apart, until it stops. At the optimum of two active faces `x` is
+/// that midpoint (the vectors to the nearest points are opposite), so it is the fixed point;
+/// the part of `x` along a direction every face holds (an edge they share) never changes. For
+/// a corner on every face the nearest points are `x` itself and `x` stays.
+fn minimax_centre(
+    start: Point3,
+    mut nearest: impl FnMut(Point3) -> Result<Vec<Point3>>,
+) -> Result<Point3> {
+    let mut x = start;
+    for _ in 0..MINIMAX_STEPS {
+        let points = nearest(x)?;
+        let mut far = (x, x, 0.0_f64);
+        for (i, &a) in points.iter().enumerate() {
+            for &b in points.iter().skip(i + 1) {
+                let d = a.distance(b);
+                if d > far.2 {
+                    far = (a, b, d);
+                }
             }
         }
+        let scale = 1.0 + x.length();
+        if far.2 <= 1e-12 * scale {
+            break;
+        }
+        let next = 0.5 * (far.0 + far.1);
+        let step = next.distance(x);
+        x = next;
+        if step <= 1e-12 * scale {
+            break;
+        }
     }
-    Ok(0.5 * (far.0 + far.1))
+    Ok(x)
 }
 
 /// With `v` at the point under test: every vertex/face gap is under the intersection tolerance
@@ -1316,6 +1337,34 @@ mod tests {
         r.point = Vec3::new(d, 0.0, 0.0);
         r.tolerance = tolerance;
         (k, b, v)
+    }
+
+    // CodeRabbit on #16538: the midpoint of the nearest points to the corner is not the point
+    // of least largest gap. A face y = x through the corner and one on y = 0 from x = d: the
+    // midpoint (d / 2, 0) is d / 2 from the second, (3d / 4, d / 4) is d / (2 sqrt 2) from both.
+    #[test]
+    fn the_least_largest_gap_point_balances_the_faces() {
+        let d = 5.0e-5;
+        let nearest = |x: Point3| -> Result<Vec<Point3>> {
+            let on_line = 0.5 * (x.x + x.y);
+            Ok(vec![
+                Vec3::new(on_line, on_line, x.z),
+                Vec3::new(x.x.max(d), 0.0, x.z),
+            ])
+        };
+        let at = minimax_centre(Vec3::ZERO, nearest).unwrap();
+        let want = Vec3::new(0.75 * d, 0.25 * d, 0.0);
+        assert!(at.distance(want) < 1e-12, "{at:?}");
+        let gap = |p: Point3| {
+            let to_line = (p.x - p.y).abs() / 2.0_f64.sqrt();
+            let to_ray = Vec3::new(p.x - p.x.max(d), p.y, 0.0).length();
+            to_line.max(to_ray)
+        };
+        assert!(gap(at) < 0.4 * d, "{}", gap(at));
+        assert!(gap(at) < gap(Vec3::new(0.5 * d, 0.0, 0.0)));
+        // a corner every face holds stays where it is
+        let held = |x: Point3| -> Result<Vec<Point3>> { Ok(vec![x, x]) };
+        assert_eq!(minimax_centre(Vec3::ZERO, held).unwrap(), Vec3::ZERO);
     }
 
     #[test]

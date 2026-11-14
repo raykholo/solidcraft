@@ -884,7 +884,8 @@ fn a_slab_a_hair_past_a_fillets_tangent_line_joins_valid() {
     use solidcore::topology::{edge, vertex};
 
     let mut failures = Vec::new();
-    for dx in [1e-5, 2e-5, 2.5e-5, 1e-4] {
+    // (offset, vertices): the kernel's counts; one more where the slab clears the tangent line
+    for (dx, want_vertices) in [(1e-5, 17), (2e-5, 17), (2.5e-5, 17), (1e-4, 18)] {
         let mut k = Kernel::default();
         let mut block =
             api::create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 10.0, 10.0, 10.0).unwrap();
@@ -918,6 +919,29 @@ fn a_slab_a_hair_past_a_fillets_tangent_line_joins_valid() {
         }
         if !solidcore::topology::brep::p2::is_manifold_solid(&brep).unwrap() {
             failures.push(format!("dx {dx:e}: not a closed manifold solid"));
+        }
+        // the box less the round's 10 (4 - pi) plus the slab's 150 outside the box
+        let want_volume = 1110.0 + 10.0 * PI;
+        let store = AttributeStore::new();
+        let key_of = |_| ObjectKey(0);
+        let attrs = PropertyAttributes {
+            store: &store,
+            key_of: &key_of,
+        };
+        let volume = brep_volume(&k, &mut brep, 1e-7, &attrs).unwrap();
+        if (volume - want_volume).abs() > VOLUME_REL_TOL * want_volume {
+            failures.push(format!("dx {dx:e}: volume {volume} vs {want_volume}"));
+        }
+        // eleven faces; a closed genus 0 body has V - E + F = 2
+        let faces = solidcore::topology::brep::p1::faces(&brep, None)
+            .unwrap()
+            .len();
+        let vertices = brep.vertices().ids().count();
+        let edges = brep.edges().ids().count();
+        if (faces, vertices, edges) != (11, want_vertices, want_vertices + 9) {
+            failures.push(format!(
+                "dx {dx:e}: {faces} faces, {vertices} vertices, {edges} edges"
+            ));
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");
