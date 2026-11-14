@@ -1951,7 +1951,7 @@ fn recomputed_seam_curve(
     let Some(total) = params.last().copied() else {
         return Ok(None);
     };
-    for p in params.iter_mut() {
+    for p in &mut params {
         *p = lo + (hi - lo) * (*p / total);
     }
     let interpolate = |points: &[Vec3], params: &[f64]| {
