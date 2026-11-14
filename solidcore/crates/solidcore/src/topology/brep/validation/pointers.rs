@@ -27,8 +27,12 @@
 //! new UV trim curve on a neighbour that had none. The 3D evaluation, its drop onto
 //! the existing face and every status are kept.
 use super::{invalid, required, Object, Reports, ERROR, SUCCESS};
+use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result};
 use crate::geom::assert_array::{AssertArray, AssertReport, ReportSpec};
+use crate::geom::extent1d::Extent1d;
+use crate::geom::extent2d::Extent2d;
+use crate::geom::extent3d::Extent3d;
 use crate::geom::global_solver::SolverOperation;
 use crate::geom::tol;
 use crate::intersect::point_class::{PointClassType, PointClassification};
@@ -1189,6 +1193,112 @@ fn report_vertex_too_wide(b: &Brep, r: &mut Reports<'_>, v: VertexId) -> Result<
     Ok(())
 }
 
+/// Distance from `p` to the box (0 inside): a lower bound on the distance to anything in it.
+fn box_distance(bbox: &Extent3d, p: Vec3) -> f64 {
+    Extent3d::from_point(p).min_distance(bbox)
+}
+
+/// How many cell boxes a clearance proof may ask for before it gives up (and the ball counts
+/// as reaching).
+const CLEARANCE_BOXES: usize = 512;
+
+/// Whether every point of `surface` over `domain` is at least `radius` from `point`, proven by
+/// bounding boxes: a cell whose box (grown by the zone) is that far away is clear, any other is
+/// split in four. Running out of boxes, a failed box or a domain that cannot be split proves
+/// nothing, so the answer is false.
+fn surface_clears(
+    k: &Kernel,
+    surface: &Surface,
+    domain: &Extent2d,
+    face_tolerance: f64,
+    point: Vec3,
+    radius: f64,
+) -> Result<bool> {
+    let zone = tol::zone_tol3d(k, face_tolerance);
+    let mut cells = vec![*domain];
+    let mut asked = 0_usize;
+    while let Some(cell) = cells.pop() {
+        k.check_cancelled("topology::brep::validation::vertex_exclusion")?;
+        if asked >= CLEARANCE_BOXES {
+            return Ok(false);
+        }
+        asked += 1;
+        let Some(mut cell_box) =
+            exclusion_probe(surface.calculate_bounding_box(k, &cell, [true, false, false], true))?
+                .and_then(|boxes| boxes.normal_box)
+                .filter(Extent3d::is_defined)
+        else {
+            return Ok(false);
+        };
+        cell_box.expand_absolute(zone);
+        if box_distance(&cell_box, point) >= radius {
+            continue;
+        }
+        let (lo, hi) = (cell.min(), cell.max());
+        let mid = Point2::new(0.5 * (lo.x + hi.x), 0.5 * (lo.y + hi.y));
+        if ![lo.x, lo.y, hi.x, hi.y, mid.x, mid.y]
+            .iter()
+            .all(|c| c.is_finite())
+            || !(lo.x < mid.x && mid.x < hi.x && lo.y < mid.y && mid.y < hi.y)
+        {
+            return Ok(false);
+        }
+        for (u0, u1) in [(lo.x, mid.x), (mid.x, hi.x)] {
+            for (v0, v1) in [(lo.y, mid.y), (mid.y, hi.y)] {
+                cells.push(Extent2d::from_bounds(u0, v0, u1, v1));
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// [`surface_clears`] for a curve over `interval`, split in two.
+fn curve_clears(
+    k: &Kernel,
+    curve: &Curve,
+    interval: &Extent1d,
+    edge_tolerance: f64,
+    point: Vec3,
+    radius: f64,
+) -> Result<bool> {
+    let zone = tol::zone_tol3d(k, edge_tolerance);
+    let mut cells = vec![*interval];
+    let mut asked = 0_usize;
+    while let Some(cell) = cells.pop() {
+        k.check_cancelled("topology::brep::validation::vertex_exclusion")?;
+        if asked >= CLEARANCE_BOXES {
+            return Ok(false);
+        }
+        asked += 1;
+        let Some(mut cell_box) = exclusion_probe(curve.calculate_bounding_box(
+            k,
+            &cell,
+            BoundingBoxRequest {
+                normal: true,
+                pseudo: false,
+                polar: false,
+            },
+            true,
+        ))?
+        .and_then(|boxes| boxes.normal)
+        .filter(Extent3d::is_defined) else {
+            return Ok(false);
+        };
+        cell_box.expand_absolute(zone);
+        if box_distance(&cell_box, point) >= radius {
+            continue;
+        }
+        let (lo, hi) = (cell.min(), cell.max());
+        let mid = 0.5 * (lo + hi);
+        if !(lo.is_finite() && hi.is_finite() && lo < mid && mid < hi) {
+            return Ok(false);
+        }
+        cells.push(Extent1d::from_min_max(lo, mid));
+        cells.push(Extent1d::from_min_max(mid, hi));
+    }
+    Ok(true)
+}
+
 enum FaceContact {
     Clear,
     Contact(f64),
@@ -1204,6 +1314,7 @@ fn face_contact(
     surface: &Surface,
     point: Vec3,
     limit: f64,
+    certify: bool,
     caches: &mut FaceCaches,
 ) -> Result<FaceContact> {
     let domain = b.face(f)?.uv_domain;
@@ -1225,8 +1336,18 @@ fn face_contact(
     }) else {
         return Ok(FaceContact::Inconclusive);
     };
+    // A drop found no contact only where it is also proven: a closest-point solve reports one
+    // minimum, so with `certify` a miss must be backed by box bounds over the whole face.
+    let proven = |k: &Kernel, b: &Brep| -> Result<FaceContact> {
+        let face = b.face(f)?;
+        if !certify || surface_clears(k, surface, &face.uv_domain, face.tolerance, point, limit)? {
+            Ok(FaceContact::Clear)
+        } else {
+            Ok(FaceContact::Inconclusive)
+        }
+    };
     if drop.gap > limit {
-        return Ok(FaceContact::Clear);
+        return proven(k, b);
     }
     let mut classification = PointClassification::<EntityRef>::new(b.face(f)?.tolerance);
     let classified = exclusion_probe(crate::query::face::p2::point_classify(
@@ -1247,14 +1368,18 @@ fn face_contact(
         PointClassType::Face | PointClassType::Edge | PointClassType::Vertex => {
             FaceContact::Contact(drop.gap)
         }
-        PointClassType::Nothing => FaceContact::Clear,
+        PointClassType::Nothing => return proven(k, b),
         _ => FaceContact::Inconclusive,
     })
 }
 
 /// A local ball may cover incident and adjacent gaps, but not separate topology (rule 7 of
 /// `docs/validity-and-tolerances.md`). Applied only to vertices at or past the ratio limit of
-/// Test #82; an inconclusive query counts as reaching. Use the same bounded-curve drop and trimmed-surface drop/classification as the
+/// Test #82; an inconclusive query counts as reaching. Clearance is proven, not sampled: for each
+/// non-incident face and edge the distance from the vertex to the entity's bounding box is a lower
+/// bound, and the ball is clear when that is at least its radius. Otherwise the global closest-point
+/// solve looks for contact, and a miss counts only once cell-by-cell boxes over the whole face or
+/// edge ([`surface_clears`], [`curve_clears`]) put every part of it at least that far away. Use the same bounded-curve drop and trimmed-surface drop/classification as the
 /// coincidence validator, with each vertex's radius rather than a body-wide ratio.
 fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Result<()> {
     // Only a vertex at or past the ratio limit is decided here; the rest pass Test #82 as before.
@@ -1304,7 +1429,8 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
             }
             let point = b.vertex(v)?.point;
             let radius = b.vertex(v)?.tolerance;
-            if bbox.is_some_and(|bbox| !bbox.contains_point(point, radius)) {
+            // Proven clear: the face's box is at least the ball's radius away.
+            if bbox.is_some_and(|bbox| box_distance(&bbox, point) >= radius) {
                 continue;
             }
             if let std::collections::btree_map::Entry::Vacant(entry) = neighbourhoods.entry(v) {
@@ -1353,7 +1479,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
                     if bbox.is_some_and(|bounds| !bounds.contains_point(anchor, limit)) {
                         continue;
                     }
-                    match face_contact(k, b, f, surface, anchor, limit, &mut caches)? {
+                    match face_contact(k, b, f, surface, anchor, limit, false, &mut caches)? {
                         FaceContact::Contact(_) => {
                             adjacent = true;
                             break;
@@ -1369,7 +1495,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
             let contact = if uncertain {
                 FaceContact::Inconclusive
             } else {
-                face_contact(k, b, f, surface, point, radius, &mut caches)?
+                face_contact(k, b, f, surface, point, radius, true, &mut caches)?
             };
             let gap = match contact {
                 FaceContact::Clear => continue,
@@ -1409,7 +1535,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
                 continue;
             }
             let vertex = b.vertex(v)?;
-            if bbox.is_some_and(|bbox| !bbox.contains_point(vertex.point, vertex.tolerance)) {
+            if bbox.is_some_and(|bbox| box_distance(&bbox, vertex.point) >= vertex.tolerance) {
                 continue;
             }
             let drop = exclusion_probe(curve.drop_point(
@@ -1442,6 +1568,17 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
                     continue;
                 }
                 report_vertex_exclusion(b, r, v, EntityRef::Edge(e), Some(drop.distance))?;
+                excluded.insert(v);
+            } else if !curve_clears(
+                k,
+                curve,
+                &data.interval,
+                data.tolerance,
+                vertex.point,
+                vertex.tolerance,
+            )? {
+                // the solve found no contact but boxes cannot prove there is none
+                report_vertex_exclusion(b, r, v, EntityRef::Edge(e), None)?;
                 excluded.insert(v);
             }
         }
