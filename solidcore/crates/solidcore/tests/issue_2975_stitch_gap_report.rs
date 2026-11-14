@@ -711,17 +711,16 @@ fn seam(k: &mut Kernel, b: &mut Brep) -> (f64, f64) {
 }
 
 #[test]
-fn a_seam_where_the_surfaces_cross_is_left_as_it_was_not_given_a_larger_tolerance() {
-    // The surfaces cross `lift` from the seam: they meet, so the seam is not recomputed and its
-    // tolerance stays the ordinary one.
+fn a_seam_where_the_surfaces_cross_is_left_unsewn_as_before_not_recomputed() {
+    // The surfaces cross `lift` from the seam: they meet, so the seam is not recomputed and the
+    // pair is refused as it was.
     let lift = 2e-4;
     let mut k = Kernel::default();
     let mut b = crossing_pair(&mut k, lift);
     solidcore::topology::brep::p4::stitch_faces(&mut k, &mut b, 1e-3, None, false).unwrap();
-    let (tolerance, _) = seam(&mut k, &mut b);
     assert!(
-        tolerance < lift / 10.0,
-        "the tolerance stayed the ordinary one, {tolerance:e}, against the offset {lift:e}"
+        !is_sewn(&b),
+        "the faces are not sewn where the surfaces cross"
     );
 }
 
