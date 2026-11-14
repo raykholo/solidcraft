@@ -1107,14 +1107,14 @@ impl Cone {
 
         let center_bot = bot.frame.origin();
 
-        // Not upstream (#16488): the frame is made from the form's own ruling, the difference
-        // of the start corners of the top and bottom arcs, which are control points a fixed
-        // extrusion apart. The arcs' centres each carry the rounding of a normal found from
-        // the legs of a short arc, amplified by its radius over its sweep (1.6e-10 rad on a
-        // 0.046 degree arc of radius 201 mm), which tilts the centres' line and the generator
-        // it starts, so that it ran 3.3e-8 mm off the form. The ruling is required: a form
-        // with none (a degenerate one, or one whose rows are not translates of each other) is
-        // no cylinder. The arcs start at angle 0 by `iso_arc_exact`'s construction.
+        // Not upstream (#16488): the form's own ruling, the difference of the start corners
+        // of the top and bottom arcs, which are control points a fixed extrusion apart. The
+        // arcs' centres each carry the rounding of a normal found from the legs of a short
+        // arc, amplified by its radius over its sweep (1.6e-10 rad on a 0.046 degree arc of
+        // radius 201 mm), which tilts the centres' line and the generator it starts, so that
+        // it ran 3.3e-8 mm off the form. The ruling is required: a form with none (a
+        // degenerate one, or one whose rows are not translates of each other) is no cylinder.
+        // The arcs start at angle 0 by `iso_arc_exact`'s construction.
         let top_start = if swap_uv {
             Point2::new(uv_domain.max().x, uv_domain.min().y)
         } else {
@@ -1132,7 +1132,7 @@ impl Cone {
 
         // The form must still be a cylinder, as before: the arcs' centres lie along their
         // planes' normal (the rounding the ruling avoids is far under `ang_tol`, which is
-        // what a form past it is refused by). This only validates; the frame is the ruling's.
+        // what a form past it is refused by).
         let centre_line = center_top - center_bot;
         if centre_line.length() < EFF_ZERO
             || !centre_line.is_parallel_to(bot.frame.z_axis(), ang_tol)
@@ -1160,13 +1160,34 @@ impl Cone {
             (center_bot, min_corner, z_axis)
         };
 
-        // The origin is the point of the axis level with the start corner: the circle's
-        // centre moved along the ruling only, since its error from a short arc's normal is
-        // along the axis, and X the unit vector from it to the corner, not the first
+        // The frame the arcs' circles give, as upstream makes it (the centres' line, the
+        // bottom or top centre, the top arc's X axis), is kept where the generator it starts
+        // runs from the form's start corner to its far corner to within the rounding of the
+        // points' size: it is then the form's own frame, to the last bits, and the recovery
+        // changes nothing for the cylinders it already placed well. Where it does not (a
+        // short arc's normal rounded by its radius over its sweep), the frame is the ruling's:
+        // the origin the point of the axis level with the start corner, since the centre's
+        // error is along the axis, and X the unit vector from it to the corner, not the first
         // segment's tangent, which a very short first segment rounds.
-        let origin = centre + (corner - centre).dot(z_axis) * z_axis;
-        let Ok(x_axis) = (corner - origin).unitize() else {
-            return Ok(None);
+        let (far, circle_z) = if flip {
+            (min_corner, -centre_line.unitize_or_z())
+        } else {
+            (top_corner, centre_line.unitize_or_z())
+        };
+        let circles_x = top.frame.x_axis();
+        let circles_start = centre + bot.radius * circles_x;
+        let circles_far = circles_start + centre_line.length() * circle_z;
+        let rounding = f64::EPSILON * 16.0 * (1.0 + corner.max_dimension() + far.max_dimension());
+        let (origin, x_axis, z_axis, height) = if (circles_start - corner).length() <= rounding
+            && (circles_far - far).length() <= rounding
+        {
+            (centre, circles_x, circle_z, centre_line.length())
+        } else {
+            let origin = centre + (corner - centre).dot(z_axis) * z_axis;
+            let Ok(x_axis) = (corner - origin).unitize() else {
+                return Ok(None);
+            };
+            (origin, x_axis, z_axis, height)
         };
 
         let y_axis = z_axis.cross(x_axis);
