@@ -553,7 +553,24 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
             // where it was, rather than clamped to the end of the interval)
             let behind =
                 EFF_ZERO * (1.0 + self.line_point.max_dimension()) + 2.0 * self.base.tolerance_3d;
-            if bound_ivl.min() < -behind {
+            // A ray that starts on the surface has its root at the start, which the
+            // classification of a point on a face leaves to the leaf solve as it was: the
+            // interval is kept whole there.
+            let on_surface = bound_ivl.min() < -behind && {
+                let natural = srf_eval.natural_uv_domain_with_nurb(k)?;
+                ignored(surface_local_point_solve::<O>(
+                    k,
+                    srf_eval,
+                    &natural,
+                    SolverOperation::Minimize,
+                    self.line_point,
+                    uv_domain.evaluate(0.5, 0.5),
+                ))?
+                .is_some_and(|(found, near)| {
+                    found && near.start.solution_value < self.base.tolerance_3d
+                })
+            };
+            if bound_ivl.min() < -behind && !on_surface {
                 bound_ivl = Extent1d::from_min_max(-behind, bound_ivl.max());
                 clipped = true;
             }
