@@ -321,6 +321,26 @@ fn cut_to_a_curved_face_from_inside_the_material_takes_the_material_between() {
     assert!((removed - want).abs() < want * 1e-2, "removed {removed}, want {want}");
 }
 
+/// #16713: a Join To Object from the air up to a curved face, the underside of a bar, adds the
+/// post between the profile and that surface: the bar and the post make one body.
+#[test]
+fn join_up_to_a_curved_face_adds_the_material_between() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"base": [-20, 0, 30], "axis": [1, 0, 0], "radius": 10, "height": 40, "body_name": "Bar"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "P"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-4, -5], "p1": [4, 5]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "P", "to": [0, 0, 20], "operation": "join"}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let joined = body(&mut s, "Bar")["volume_mm3"].as_f64().unwrap_or(0.0);
+    // The bar is 100 pi * 40 = 4000 pi. The post over x in [-4, 4], y in [-5, 5] runs from z = 0 up
+    // to the bar's underside z = 30 - sqrt(100 - y^2): its section is
+    // 300 - (25 sqrt(3) + 50 pi / 3) over y, so 8 * that = 2400 - 200 sqrt(3) - 400 pi / 3 =
+    // 1634.7108 in volume. It lies wholly outside the bar, so the volumes add.
+    let want = 4000.0 * PI + 1634.7108;
+    assert!((joined - want).abs() < want * 1e-3, "joined {joined}, want {want}");
+}
+
 /// #16713: a profile that only partly lies over the To face is refused, not run on past it.
 #[test]
 fn cut_to_a_curved_face_the_profile_partly_misses_is_refused() {
