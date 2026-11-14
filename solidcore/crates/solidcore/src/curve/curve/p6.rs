@@ -618,10 +618,9 @@ impl Curve {
                 c.calculate_bounding_box(Some(&mut normal), None, None)?;
                 Some(normal)
             }
-            // their approximation's gap is measured at sample points, so no box of theirs
-            // bounds the curve
-            CurveKind::CrvOnSurf(_) | CurveKind::TangentField(_) => None,
             CurveKind::Composite(c) => c.certified_bounding_box(k, interval)?,
+            // a curve on a surface and a tangent-field curve: their approximation's gap is
+            // measured at sample points; every other kind: the base class's sampled box
             _ => None,
         }
         .filter(Extent3d::is_defined))
