@@ -580,7 +580,7 @@ pub fn split_prism_to_face(tool: &Body, target: &Body, face: usize, plane: &Plan
         let cap_at = |height: f64| {
             (0..part.face_count())
                 .filter_map(|i| part.planar_face(i))
-                .any(|p| p.normal().cross(n).len() < 1e-9 && ((p.origin - plane.origin).dot(n) - height).abs() <= tol)
+                .any(|p| solidcore_ops::cap::is_square_plane_at_height(a3(p.origin), a3(p.normal()), a3(plane.origin), a3(n), height, tol))
         };
         if !cap_at(start) {
             continue;
