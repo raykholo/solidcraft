@@ -889,7 +889,7 @@ pub(crate) fn boolean_post_process_with_notifications(
 /// midpoint of two parallel faces that part, else the faces' surface intersection) when every
 /// face holds it), or `None` to leave the vertex where it is. Left alone: a vertex whose
 /// tolerance is not past `xsect_tol` (it cannot hold such a gap), one already within `xsect_tol`
-/// of its faces, one whose faces define no corner (not found: unchanged), and one whose point
+/// of its faces, and one whose point
 ///
 /// - lies more than half the vertex's tolerance from it. The vertex's edge curves keep ending
 ///   at its old point (`vertex::set_point` moves the point only), so the move is their new
@@ -911,21 +911,20 @@ fn face_corner_to_move_to(
 ) -> Result<Option<Point3>> {
     use crate::topology::vertex::corner;
     let tolerance = vertex::tolerance(brep, v)?;
-    eprintln!("DBG16532 v tol {tolerance:e} xsect {xsect_tol:e} within {:?}", corner::is_within_xsect_tol_3d_of_faces(k, brep, v, false)?);
     if tolerance <= xsect_tol || corner::is_within_xsect_tol_3d_of_faces(k, brep, v, false)?.0 {
         return Ok(None);
     }
     let at = corner::calc_corner_from_faces(k, brep, v)?;
     let old = brep.vertex(v)?.point;
-    eprintln!("DBG16532 found {} best {:?} old {:?}", at.found_point, at.best_point, old);
-    let moved = at.best_point.distance(old);
-    // an undefined corner point (NaN) stays out as well
-    if !at.found_point || moved.is_nan() {
-        return Ok(None);
-    }
+    // Faces that define no corner (a round and the flat face it is tangent to, with a third
+    // face a hair off) still have a least-largest-gap point: start from where the vertex is.
+    let start = if at.found_point && !at.best_point.distance(old).is_nan() {
+        at.best_point
+    } else {
+        old
+    };
     // one construction: the point that minimises the largest gap to the vertex's faces
-    let target = min_max_gap_point(k, brep, v, at.best_point)?;
-    eprintln!("DBG16532 target {:?} moved {:e}", target, target.distance(old));
+    let target = min_max_gap_point(k, brep, v, start)?;
     if target.distance(old) > tolerance / 2.0 {
         return Ok(None);
     }
@@ -933,7 +932,6 @@ fn face_corner_to_move_to(
     let cured = corner_cures_gaps(k, brep, v, tolerance / 2.0);
     brep.vertex_mut(v)?.point = old;
     let cured = cured?;
-    eprintln!("DBG16532 cured {cured}");
     reset_vertex_face_gaps(brep, v)?;
     Ok(cured.then_some(target))
 }

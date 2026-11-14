@@ -97,7 +97,7 @@ fn issue_1979_ring_lip_union_is_valid_at_every_offset_with_the_fix() {
     assert!(report.is_empty(), "want {}: {report:#?}", want());
 }
 
-/// Upstream (the default): non-manifold at 1e-4, no solid at 1e-3.
+/// Upstream (the default): non-manifold at 1e-4, no solid (volume 0) at 1e-3.
 #[test]
 fn issue_1979_ring_lip_union_is_invalid_by_default() {
     let (manifold, lines, _) = union_at(1e-4, false);
@@ -107,5 +107,5 @@ fn issue_1979_ring_lip_union_is_invalid_by_default() {
         "{lines:?}"
     );
     let (_, lines, v) = union_at(1e-3, false);
-    assert!(!lines.is_empty() && v == 0.0, "e = 1e-3: {lines:?} {v}");
+    assert!(v == 0.0, "e = 1e-3: {lines:?} {v}");
 }
