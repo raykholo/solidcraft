@@ -96,7 +96,7 @@ pub(crate) mod form {
     }
 
     pub(crate) use solidcore::eval::form::MORE_THAN_A_TURN;
-    pub(crate) use solidcore::eval::form::{angle, param};
+    pub(crate) use solidcore::eval::form::param;
 
     pub(crate) fn frame_of(s: &Surface) -> Option<Frame> {
         k::form::frame_of(&surface_in(s)?).map(|f| c::record_frame(&f))
