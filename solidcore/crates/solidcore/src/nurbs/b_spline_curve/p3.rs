@@ -16,7 +16,6 @@
 //! | [`BSplineCurve::subdivide_at_discontinuity`]      | `SubdivideAtDiscontinuity`             |
 //! | [`BSplineCurve::trim_gap`], [`GapFix`]            | `TrimGap`                              |
 //! | [`BSplineCurve::assert_valid`]                    | `AssertValid`                          |
-//! | [`kink_tolerance`]                                | `AvgSpeed/10000` in `AssertValid`      |
 //! | [`BSplineCurve::assert_no_periodic_jump`], [`assert_no_periodic_jump_of`] | `AssertNoPeriodicJump` |
 //! | `is_zero_speed_tangent_end`, `zero_speed_radius_stretch` (private; fork, WR-668) | `sm_IsZeroSpeedTangentEnd`, `sm_ZeroSpeedRadiusStretch` |
 //!
@@ -184,16 +183,6 @@ pub enum GapFix {
     ToThis = 1,
     /// `2`: both curves to the other curve's initial end point.
     ToOther = 2,
-}
-
-/// The tolerance of the speed and curvature tests of [`BSplineCurve::assert_valid`] (11 to 14)
-/// on a bounded curve: its average speed over its natural interval, the diagonal of its
-/// control-point box (`size_xyz`) over the interval's length (`size_t`), divided by 10000. An
-/// interior first derivative or a radius of curvature below it fails the check (upstream's
-/// "less than AvgSpeed/10000" and "extremely small radius of curvature").
-#[must_use]
-pub fn kink_tolerance(size_xyz: f64, size_t: f64) -> f64 {
-    (size_xyz / size_t) / 10000.0
 }
 
 // ---- back-edges -------------------------------------------------------------------
@@ -1927,7 +1916,7 @@ impl BSplineCurve {
             // finite curves: proportional to the average curve speed; else absolute
             let bounded = ovr.bounded;
             let tol = if bounded {
-                kink_tolerance(size_xyz, size_t)
+                (size_xyz / size_t) / 10000.0
             } else {
                 1e-03
             };
@@ -2041,7 +2030,7 @@ impl BSplineCurve {
                     rtn &= bool_report(&mut list, key, 13, radius_sized)?;
                     if let Some(mapped_box) = mapped_box {
                         let mapped_size = mapped_box.size().length();
-                        radius_tol = kink_tolerance(mapped_size, size_t);
+                        radius_tol = (mapped_size / size_t) / 10000.0;
                         radius_sep = mapped_size / max2(20., size_t);
                     }
                 }

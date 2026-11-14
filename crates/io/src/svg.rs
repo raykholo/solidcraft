@@ -5,6 +5,7 @@
 
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use solidcore_ops::curve::CubicStanding;
 use solidcore_record::Vec2;
 use solidcraft_geom::prelude::*;
 
@@ -196,12 +197,15 @@ impl Out {
         if !p.iter().all(|q| q.is_finite()) {
             return Err(IoError::Invalid(OUT_OF_RANGE.into()));
         }
-        // A cubic the kernel's curve check cannot tell from its chord (within the check's own
-        // tolerance, measured after the SVG transform) is that chord: kept as a spline, its
-        // slow, nearly straight spans fail the check's speed and curvature tests (#16190). If
-        // the kernel cannot measure these coordinates, the curve stays.
-        if solidcore_ops::curve::cubic_within_kink_tolerance_of_chord(p.map(|q| [q.x, q.y, 0.0])).unwrap_or(false) {
-            return self.line(Tf::ID, p[0], p[3]);
+        // The whole cubic lies within the model's zone tolerance of its chord (measured after the
+        // SVG transform): the model cannot tell it from that line. Otherwise it stays a curve,
+        // unless the kernel's curve check refuses it, which is an error that names it (#16190).
+        let number = self.g.len() + 1;
+        match solidcore_ops::curve::classify_cubic(p.map(|q| [q.x, q.y, 0.0])) {
+            Ok(CubicStanding::Chord) => return self.line(Tf::ID, p[0], p[3]),
+            Ok(CubicStanding::Curve) => {}
+            Ok(CubicStanding::Refused) => return Err(IoError::CurveRefused { number, from: p[0], to: p[3] }),
+            Err(e) => return Err(IoError::CurveUnchecked { number, reason: e.to_string() }),
         }
         self.push(Geom2::Spline { pts: p.to_vec(), control: true, degree: 3 })
     }
@@ -763,89 +767,75 @@ mod tests {
     }
 
     #[test]
-    fn a_cubic_within_the_curve_check_tolerance_of_its_chord_is_a_line() {
+    fn a_cubic_within_the_zone_tolerance_of_its_chord_is_a_line() {
         let read = |path, transform| {
-            read_svg(&format!(r#"<svg width="10mm" height="10mm" viewBox="0 0 10 10"><path transform="{transform}" d="{path}"/></svg>"#)).unwrap()
+            read_svg(&format!(r#"<svg width="10mm" height="10mm" viewBox="0 0 10 10"><path transform="{transform}" d="{path}"/></svg>"#))
         };
         let spline = |g: &[Geom2]| matches!(g, [Geom2::Spline { pts, control: true, degree: 3 }] if pts.len() == 4);
-        assert!(read("M1 1 C1 1 1 1 1 1", "").is_empty());
-        // Chord 3 mm: the check's tolerance is about 0.0003 mm, whatever the scale.
-        let path = "M0 0 C1 0.0002 2 0.0002 3 0";
-        assert!(matches!(read(path, "").as_slice(), [Geom2::Line(_, _)]));
-        assert!(matches!(read(path, "scale(10)").as_slice(), [Geom2::Line(_, _)]));
-        // Measured after the transform: stretched across the chord, it is a curve.
-        assert!(spline(&read(path, "scale(1 10)")));
-        assert!(spline(&read("M0 0 C1 0.0005 2 0.0005 3 0", "")));
-        // Equal endpoints and collinearity alone do not make a curve degenerate.
-        for path in ["M0 0 C10 10 -10 10 0 0", "M0 0 C-10 0 20 0 1 0"] {
-            assert!(spline(&read(path, "")));
-        }
+        assert!(read("M1 1 C1 1 1 1 1 1", "").unwrap().is_empty());
+        // 0.000005 mm off its chord, within the zone tolerance (0.00001 mm): a line. Measured
+        // after the transform, ten times that is a curve.
+        let path = "M0 0 C1 0.000005 2 0.000005 3 0";
+        assert!(matches!(read(path, "").unwrap().as_slice(), [Geom2::Line(_, _)]));
+        assert!(spline(&read(path, "scale(10)").unwrap()));
+        assert!(spline(&read("M0 0 C1 0.0005 2 0.0005 3 0", "").unwrap()));
+        // Equal endpoints do not make a curve degenerate.
+        assert!(spline(&read("M0 0 C10 10 -10 10 0 0", "").unwrap()));
+        // Collinear, overshooting both ends: it stops and turns back twice, which the curve
+        // check refuses, so the import names it.
+        assert!(matches!(read("M0 0 L0 5 M0 0 C-10 0 20 0 1 0", ""), Err(IoError::CurveRefused { number: 2, .. })));
     }
 
-    /// Synthetic outlines: e/f used to fail the extrusion check; h already worked.
+    /// Synthetic outlines. e and f each have a cubic whose inner control points almost meet its
+    /// start (#16190): about 0.00053 mm off its chord, above the zone tolerance, so it stays a
+    /// curve, and the curve check refuses it, so the import names it instead of the extrusion
+    /// failing later. h's curves are regular and extrude.
     #[test]
-    fn imported_cubic_outlines_extrude() {
+    fn imported_cubic_outlines_extrude_or_are_refused_by_name() {
         use solidcore_record::{Loop2, Plane, Region2, Seg2};
+        let svg = |path: &str| format!(r#"<svg width="2480px" height="3508px" viewBox="0 0 2480 3508"><path d="{path}"/></svg>"#);
 
-        // g: a hook about 0.00007 mm across bends as far from its chord as half its size, far
-        // above the check's tolerance for it (its size over 10000), so it stays a curve.
-        let g = r#"<svg width="2480px" height="3508px" viewBox="0 0 2480 3508"><path d="M200 200 L2000 200 L2000 1500 L1000.0001 1500 C 1000.0002 1500.0001, 1000.0001 1500.0002, 1000 1500.0001 L200 1500 Z"/></svg>"#;
-        assert_eq!(read_svg(g).unwrap().iter().filter(|g| matches!(g, Geom2::Spline { .. })).count(), 1);
-
-        let cases = [
-            (
-                "e",
-                327620.806030599,
-                1,
-                "M200 200 L2000 200 L2000 1500 C 1990 1500.01, 1980 1500.02, 1900 1500.03 C 1899.99 1500.031, 1899.98 1500.032, 1800 1500 L200 1500 Z",
-            ),
-            (
-                "f",
-                348691.6189236112,
-                1,
-                "M200 200 L2000 200 C 2100 200, 2200 300, 2200 400 C 2200.001 400.002, 2200.002 400.001, 2200 500 L2000 1500 L200 1500 Z",
-            ),
-            (
-                "h",
-                330664.92026605905,
-                2,
-                "M200 200 L2000 200 L2000 1500 C 1500 1500, 1200 1600, 1000 1500 C 900 1450, 1100 1600, 1000 1499.99 L200 1500 Z",
-            ),
-        ];
-        let mut failures = Vec::new();
-        // Expected volumes: integrate (x dy - y dx)/2 over the line/cubic
-        // polynomials, multiply by (25.4/96)^2 and the 2 mm extrusion depth.
-        for (name, expected_volume, splines, path) in cases {
-            let svg = format!(r#"<svg width="2480px" height="3508px" viewBox="0 0 2480 3508"><path d="{path}"/></svg>"#);
-            let geometry = read_svg(&svg).unwrap();
-            assert_eq!(geometry.iter().filter(|g| matches!(g, Geom2::Spline { .. })).count(), splines, "{name}");
-            let segs = geometry
-                .iter()
-                .map(|g| match g {
-                    Geom2::Line(a, b) => Seg2::Line { a: *a, b: *b },
-                    Geom2::Spline { pts, control: true, degree: 3 } => {
-                        let [p0, p1, p2, p3] = pts.as_slice() else { panic!("four cubic controls") };
-                        Seg2::Cubic { p0: *p0, p1: *p1, p2: *p2, p3: *p3 }
-                    }
-                    other => panic!("unexpected imported geometry: {other:?}"),
-                })
-                .collect();
-            let region = Region2 { outer: Loop2 { segs }, holes: Vec::new() };
-            match solidcraft_kernel::extrude(&Plane::XY, &[region], 0.0, 2.0) {
-                Ok(bodies) => {
-                    assert_eq!(bodies.len(), 1, "{name}");
-                    let measured = solidcraft_kernel::measure_mass(&bodies[0]).unwrap();
-                    println!("{name}: expected {expected_volume:.9} mm3, measured {:.9} mm3", measured.volume);
-                    assert!((measured.volume - expected_volume).abs() < 0.005, "{name}: {measured:?}");
-                    let check = solidcraft_kernel::validity(&bodies[0]);
-                    if !check.ok() || !matches!(check.smlib, Some(solidcraft_kernel::SmlibCheck::Valid)) {
-                        failures.push(format!("{name}: {check:?}"));
-                    }
+        let e =
+            "M200 200 L2000 200 L2000 1500 C 1990 1500.01, 1980 1500.02, 1900 1500.03 C 1899.99 1500.031, 1899.98 1500.032, 1800 1500 L200 1500 Z";
+        let f = "M200 200 L2000 200 C 2100 200, 2200 300, 2200 400 C 2200.001 400.002, 2200.002 400.001, 2200 500 L2000 1500 L200 1500 Z";
+        for (name, path, number) in [("e", e, 4), ("f", f, 3)] {
+            match read_svg(&svg(path)) {
+                Err(err @ IoError::CurveRefused { number: n, .. }) => {
+                    assert_eq!(n, number, "{name}");
+                    assert!(err.to_string().starts_with(&format!("curve {number} of the drawing, from (")), "{name}: {err}");
                 }
-                Err(e) => failures.push(format!("{name}: {e}")),
+                other => panic!("{name}: {other:?}"),
             }
         }
-        assert!(failures.is_empty(), "{}", failures.join("\n"));
+
+        // g: a hook about 0.00007 mm across bends as far from its chord as half its size, above
+        // the zone tolerance, and the check passes it: it stays a curve.
+        let g = "M200 200 L2000 200 L2000 1500 L1000.0001 1500 C 1000.0002 1500.0001, 1000.0001 1500.0002, 1000 1500.0001 L200 1500 Z";
+        assert_eq!(read_svg(&svg(g)).unwrap().iter().filter(|g| matches!(g, Geom2::Spline { .. })).count(), 1);
+
+        // h: expected volume from integrating (x dy - y dx)/2 over the line and cubic
+        // polynomials, times (25.4/96)^2 and the 2 mm depth.
+        let h = "M200 200 L2000 200 L2000 1500 C 1500 1500, 1200 1600, 1000 1500 C 900 1450, 1100 1600, 1000 1499.99 L200 1500 Z";
+        let geometry = read_svg(&svg(h)).unwrap();
+        assert_eq!(geometry.iter().filter(|g| matches!(g, Geom2::Spline { .. })).count(), 2);
+        let segs = geometry
+            .iter()
+            .map(|g| match g {
+                Geom2::Line(a, b) => Seg2::Line { a: *a, b: *b },
+                Geom2::Spline { pts, control: true, degree: 3 } => {
+                    let [p0, p1, p2, p3] = pts.as_slice() else { panic!("four cubic controls") };
+                    Seg2::Cubic { p0: *p0, p1: *p1, p2: *p2, p3: *p3 }
+                }
+                other => panic!("unexpected imported geometry: {other:?}"),
+            })
+            .collect();
+        let region = Region2 { outer: Loop2 { segs }, holes: Vec::new() };
+        let bodies = solidcraft_kernel::extrude(&Plane::XY, &[region], 0.0, 2.0).unwrap();
+        assert_eq!(bodies.len(), 1);
+        let measured = solidcraft_kernel::measure_mass(&bodies[0]).unwrap();
+        assert!((measured.volume - 330664.92026605905).abs() < 0.005, "{measured:?}");
+        let check = solidcraft_kernel::validity(&bodies[0]);
+        assert!(check.ok() && matches!(check.smlib, Some(solidcraft_kernel::SmlibCheck::Valid)), "{check:?}");
     }
 
     /// #9641: a file with nothing to import says why (an embedded picture, shapes from another

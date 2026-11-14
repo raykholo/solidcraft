@@ -62,17 +62,21 @@
 
 use crate::curve::curve::p2::HERMITE_CURVE_TYPE;
 use crate::error::Result;
+use crate::geom::assert_array::ObjectKey;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::geom_utility::p1::segment_point_distance;
 use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::polar_box::PolarBox;
 use crate::geom::pseudo_box::PseudoBox;
-use crate::geom::tol::is_zero;
+use crate::geom::tol::{context_zone_tol_3d, is_zero, SmallTopoType};
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
+use crate::kernel::Kernel;
 use crate::math::{max2, EFF_ZERO, EFF_ZERO_SQ};
-use crate::nurbs::b_spline_curve::p3::kink_tolerance;
+use crate::nurbs::b_spline_curve::p1::BSplineCurve;
+use crate::nurbs::crv_basic::Curve as NurbCurve;
+use crate::nurbs::math::{CPoint, NOW};
 use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 
 /// Bound the distance of an entire cubic Bezier from its finite endpoint segment.
@@ -87,18 +91,43 @@ pub fn cubic_chord_bound([a, c, d, b]: [Point3; 4]) -> f64 {
     max2(c_distance, d_distance)
 }
 
-/// Whether a cubic Bezier curve on `[0, 1]` lies, whole, within the B-spline check's
-/// [`kink_tolerance`] of the segment between its ends, so the check cannot tell it from that
-/// segment. The tolerance is the curve's average speed over 10000: the diagonal of its
-/// control-point box over the interval's length, 1. The distance is [`cubic_chord_bound`].
-#[must_use]
-pub fn cubic_within_kink_tolerance_of_chord(points: [Point3; 4]) -> bool {
-    let [a, c, d, b] = points;
-    let mut extent = Extent3d::from_point(a);
-    for p in [c, d, b] {
-        extent.add_point(p);
+/// What a cubic Bezier curve on `[0, 1]`, the curve a profile cubic is built as, stands as in
+/// the model ([`classify_cubic`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CubicStanding {
+    /// The whole curve lies within the model's zone tolerance of the segment between its ends:
+    /// the model cannot tell it from that segment.
+    Chord,
+    /// A curve that passes the B-spline curve check.
+    Curve,
+    /// A curve the B-spline curve check refuses (a speed or a radius of curvature below its
+    /// tolerance, for example), which no body could keep.
+    Refused,
+}
+
+/// [`CubicStanding`] of the cubic Bezier curve through `points` on `[0, 1]`: its chord where
+/// [`cubic_chord_bound`] is at most the model's zone tolerance (the kernel's absolute linear
+/// tolerance, [`ZONE_TOL_3D`](crate::geom::tol::ZONE_TOL_3D) unless the session sets another),
+/// else the verdict of [`BSplineCurve::assert_valid`] on the curve.
+///
+/// # Errors
+///
+/// Those of building the curve and of its check's analyses.
+pub fn classify_cubic(k: &Kernel, points: [Point3; 4]) -> Result<CubicStanding> {
+    if cubic_chord_bound(points) <= context_zone_tol_3d(k, None, SmallTopoType::NormalSize) {
+        return Ok(CubicStanding::Chord);
     }
-    cubic_chord_bound(points) <= kink_tolerance(extent.size().length(), 1.0)
+    let poles = points
+        .iter()
+        .map(|p| CPoint::new(p.x, p.y, p.z, NOW))
+        .collect();
+    let nurb = NurbCurve::new(poles, 3, vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])?;
+    let curve = BSplineCurve::from_nurb(nurb, 3, false);
+    Ok(if curve.assert_valid(k, None, false, ObjectKey(0))? {
+        CubicStanding::Curve
+    } else {
+        CubicStanding::Refused
+    })
 }
 
 /// A cubic Hermite curve on `[0, 1]` (`SmHermiteCurve`):

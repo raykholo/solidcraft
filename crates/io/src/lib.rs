@@ -121,6 +121,17 @@ pub enum IoError {
     Empty,
     #[error("{0}")]
     Invalid(String),
+    /// A curve of an imported drawing that SolidCraft's curve check refuses, so no sketch or body
+    /// could keep it (#16190): its number among the drawing's curves and lines (from 1) and its
+    /// ends, in millimetres.
+    #[error(
+        "curve {number} of the drawing, from ({:.4}, {:.4}) to ({:.4}, {:.4}) mm, bends too sharply or slows almost to a stop near an end, and SolidCraft's curve check refuses it. Move its handles away from its ends, or draw it as a line",
+        .from.x, .from.y, .to.x, .to.y
+    )]
+    CurveRefused { number: usize, from: solidcore_record::Vec2, to: solidcore_record::Vec2 },
+    /// The kernel could not check a curve of an imported drawing ([`IoError::CurveRefused`]).
+    #[error("curve {number} of the drawing could not be checked: {reason}")]
+    CurveUnchecked { number: usize, reason: String },
     #[error(transparent)]
     Kernel(#[from] solidcraft_kernel::KernelError),
     #[error(transparent)]
