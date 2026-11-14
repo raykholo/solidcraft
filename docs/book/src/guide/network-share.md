@@ -50,3 +50,14 @@ Linux. Once mounted, SolidCraft sees an ordinary folder.
 A sync client keeps a local copy of the folder, so you can open and save designs offline and the
 client uploads your changes when you are back online. A live mount has no local copy and needs the
 network while you open and save.
+
+## In the browser
+
+The web app reaches a mounted share through the browser's file picker, so what works depends on the
+browser:
+
+- **Chrome, Edge and other Chromium browsers** let the page open a design from any folder you pick,
+  the mounted share included, and save it back to the same file.
+- **Firefox and Safari** have no such picker: the web app keeps designs in the browser's own storage,
+  so you open a design from the share with **File → Open** (an upload) and save it by downloading it
+  into the share's folder.
