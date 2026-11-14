@@ -46,20 +46,22 @@ use crate::session::run;
 use crate::sweep::{coord_ok, CURVE_MAX_POINTS};
 use crate::{Error, Result};
 
-/// A whole-curve bound on the distance of a cubic Bezier from its endpoint segment.
-/// The kernel measures each inner control point against the finite segment. The
-/// convex hull property bounds the entire cubic by the larger distance, including
-/// control points beyond the endpoints and curves whose endpoints coincide.
+/// Whether the whole cubic Bezier curve on `[0, 1]` through `points` lies within the B-spline
+/// check's own tolerance of the segment between its ends, so that segment can stand in for it.
+/// The tolerance is the check's
+/// [`kink_tolerance`](solidcore::nurbs::b_spline_curve::p3::kink_tolerance) for the curve: its
+/// average speed (the diagonal of its control-point box) over 10000. A speed or a radius of
+/// curvature below it fails the check. The distance is the larger distance of the two inner
+/// control points from the finite segment, which bounds the whole curve (the convex hull
+/// property), overshoot and coincident ends included.
 ///
 /// # Errors
 /// [`Error::Argument`] if a coordinate is not finite or exceeds the coordinate bound.
-pub fn cubic_chord_bound(points: [[f64; 3]; 4]) -> Result<f64> {
+pub fn cubic_within_kink_tolerance_of_chord(points: [[f64; 3]; 4]) -> Result<bool> {
     if !points.iter().all(|p| coord_ok(p)) {
         return Err(Error::Argument);
     }
-    Ok(solidcore::curve::hermite_curve::cubic_chord_bound(
-        points.map(point),
-    ))
+    Ok(solidcore::curve::hermite_curve::cubic_within_kink_tolerance_of_chord(points.map(point)))
 }
 
 /// Which end of a curve a blend meets, and how ([`blend_curve`]).
@@ -942,27 +944,31 @@ mod tests {
     ];
 
     #[test]
-    fn cubic_chord_bound_covers_control_points_beyond_and_between_endpoints() {
-        let bound = |p| cubic_chord_bound(p).unwrap();
-        assert_eq!(
-            bound([[0., 0., 0.], [1., 0., 0.], [2., 0., 0.], [3., 0., 0.]]),
-            0.
-        );
-        assert_eq!(
-            bound([[0., 0., 0.], [1., 2., 0.], [2., -1., 0.], [3., 0., 0.]]),
-            2.
-        );
-        assert_eq!(
-            bound([[0., 0., 0.], [-2., 0., 0.], [4., 0., 0.], [3., 0., 0.]]),
-            2.
-        );
-        assert_eq!(
-            bound([[0., 0., 0.], [0., 3., 0.], [0., 0., 4.], [0., 0., 0.]]),
-            4.
-        );
-        assert_eq!(bound([[1., 2., 3.]; 4]), 0.);
-        assert!(cubic_chord_bound([[f64::NAN, 0., 0.]; 4]).is_err());
-        assert!(cubic_chord_bound([[f64::INFINITY, 0., 0.]; 4]).is_err());
+    fn a_cubic_is_its_chord_within_the_check_tolerance() {
+        // Chord 10 along x: the check's tolerance is about 10 / 10000 = 0.001.
+        let off = |y: f64, z: f64| [[0., 0., 0.], [3., y, 0.], [7., 0., z], [10., 0., 0.]];
+        let straight = |p| cubic_within_kink_tolerance_of_chord(p).unwrap();
+        assert!(straight(off(0., 0.)));
+        assert!(straight(off(0.0009, -0.0009)));
+        assert!(!straight(off(0.0011, 0.)));
+        assert!(!straight(off(0., 0.0011)));
+        // Collinear overshoot past an end and a closed loop are not their chords.
+        assert!(!straight([
+            [0., 0., 0.],
+            [-2., 0., 0.],
+            [4., 0., 0.],
+            [3., 0., 0.]
+        ]));
+        assert!(!straight([
+            [0., 0., 0.],
+            [0., 3., 0.],
+            [0., 0., 4.],
+            [0., 0., 0.]
+        ]));
+        // A point is its own chord.
+        assert!(straight([[1., 2., 3.]; 4]));
+        assert!(cubic_within_kink_tolerance_of_chord([[f64::NAN, 0., 0.]; 4]).is_err());
+        assert!(cubic_within_kink_tolerance_of_chord([[f64::INFINITY, 0., 0.]; 4]).is_err());
     }
 
     #[test]

@@ -13,9 +13,6 @@ use crate::{IoError, Result};
 
 const MAX_DEPTH: usize = 256;
 const PX_MM: f64 = 25.4 / 96.0;
-// One micrometre in sketch coordinates. The control hull bounds the whole
-// replacement, including poorly parameterised, nearly straight cubics.
-const CUBIC_LINE_TOL_MM: f64 = 1e-3;
 
 /// Affine map [a c e; b d f].
 #[derive(Clone, Copy, Debug)]
@@ -199,10 +196,11 @@ impl Out {
         if !p.iter().all(|q| q.is_finite()) {
             return Err(IoError::Invalid(OUT_OF_RANGE.into()));
         }
-        // Measure after the SVG transform, so the bound is in millimetres. Use
-        // the finite chord: a collinear curve can still overshoot its endpoints.
-        // If the kernel cannot bound these coordinates, retain the original curve.
-        if solidcore_ops::curve::cubic_chord_bound(p.map(|q| [q.x, q.y, 0.0])).is_ok_and(|bound| bound <= CUBIC_LINE_TOL_MM) {
+        // A cubic the kernel's curve check cannot tell from its chord (within the check's own
+        // tolerance, measured after the SVG transform) is that chord: kept as a spline, its
+        // slow, nearly straight spans fail the check's speed and curvature tests (#16190). If
+        // the kernel cannot measure these coordinates, the curve stays.
+        if solidcore_ops::curve::cubic_within_kink_tolerance_of_chord(p.map(|q| [q.x, q.y, 0.0])).unwrap_or(false) {
             return self.line(Tf::ID, p[0], p[3]);
         }
         self.push(Geom2::Spline { pts: p.to_vec(), control: true, degree: 3 })
@@ -765,26 +763,34 @@ mod tests {
     }
 
     #[test]
-    fn cubic_simplification_is_bounded_in_transformed_millimetres() {
+    fn a_cubic_within_the_curve_check_tolerance_of_its_chord_is_a_line() {
         let read = |path, transform| {
             read_svg(&format!(r#"<svg width="10mm" height="10mm" viewBox="0 0 10 10"><path transform="{transform}" d="{path}"/></svg>"#)).unwrap()
         };
+        let spline = |g: &[Geom2]| matches!(g, [Geom2::Spline { pts, control: true, degree: 3 }] if pts.len() == 4);
         assert!(read("M1 1 C1 1 1 1 1 1", "").is_empty());
-        assert!(matches!(read("M0 0 C1 0.0005 2 0.0005 3 0", "").as_slice(), [Geom2::Line(_, _)]));
-        let path = "M0 0 C1 0.0005 2 0.0005 3 0";
-        let large = read(path, "scale(10)");
-        assert!(matches!(&large[..], [Geom2::Spline { pts, control: true, degree: 3 }] if
-            pts == &vec![Vec2::new(0., 0.), Vec2::new(10., -0.005), Vec2::new(20., -0.005), Vec2::new(30., 0.)]));
+        // Chord 3 mm: the check's tolerance is about 0.0003 mm, whatever the scale.
+        let path = "M0 0 C1 0.0002 2 0.0002 3 0";
+        assert!(matches!(read(path, "").as_slice(), [Geom2::Line(_, _)]));
+        assert!(matches!(read(path, "scale(10)").as_slice(), [Geom2::Line(_, _)]));
+        // Measured after the transform: stretched across the chord, it is a curve.
+        assert!(spline(&read(path, "scale(1 10)")));
+        assert!(spline(&read("M0 0 C1 0.0005 2 0.0005 3 0", "")));
         // Equal endpoints and collinearity alone do not make a curve degenerate.
         for path in ["M0 0 C10 10 -10 10 0 0", "M0 0 C-10 0 20 0 1 0"] {
-            assert!(matches!(read(path, "").as_slice(), [Geom2::Spline { .. }]));
+            assert!(spline(&read(path, "")));
         }
     }
 
-    /// Synthetic outlines: e/f used to fail the extrusion check; g/h already worked.
+    /// Synthetic outlines: e/f used to fail the extrusion check; h already worked.
     #[test]
     fn imported_cubic_outlines_extrude() {
         use solidcore_record::{Loop2, Plane, Region2, Seg2};
+
+        // g: a hook about 0.00007 mm across bends as far from its chord as half its size, far
+        // above the check's tolerance for it (its size over 10000), so it stays a curve.
+        let g = r#"<svg width="2480px" height="3508px" viewBox="0 0 2480 3508"><path d="M200 200 L2000 200 L2000 1500 L1000.0001 1500 C 1000.0002 1500.0001, 1000.0001 1500.0002, 1000 1500.0001 L200 1500 Z"/></svg>"#;
+        assert_eq!(read_svg(g).unwrap().iter().filter(|g| matches!(g, Geom2::Spline { .. })).count(), 1);
 
         let cases = [
             (
@@ -798,12 +804,6 @@ mod tests {
                 348691.6189236112,
                 1,
                 "M200 200 L2000 200 C 2100 200, 2200 300, 2200 400 C 2200.001 400.002, 2200.002 400.001, 2200 500 L2000 1500 L200 1500 Z",
-            ),
-            (
-                "g",
-                327620.3181003479,
-                0,
-                "M200 200 L2000 200 L2000 1500 L1000.0001 1500 C 1000.0002 1500.0001, 1000.0001 1500.0002, 1000 1500.0001 L200 1500 Z",
             ),
             (
                 "h",

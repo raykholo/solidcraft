@@ -72,6 +72,7 @@ use crate::geom::tol::is_zero;
 use crate::geom::vector2d::{Point2, Vec2};
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::math::{max2, EFF_ZERO, EFF_ZERO_SQ};
+use crate::nurbs::b_spline_curve::p3::kink_tolerance;
 use crate::topology::database_io::{DatabaseReader, DatabaseWriter, FileType};
 
 /// Bound the distance of an entire cubic Bezier from its finite endpoint segment.
@@ -84,6 +85,20 @@ pub fn cubic_chord_bound([a, c, d, b]: [Point3; 4]) -> f64 {
     let (c_distance, _) = segment_point_distance(a, b, c);
     let (d_distance, _) = segment_point_distance(a, b, d);
     max2(c_distance, d_distance)
+}
+
+/// Whether a cubic Bezier curve on `[0, 1]` lies, whole, within the B-spline check's
+/// [`kink_tolerance`] of the segment between its ends, so the check cannot tell it from that
+/// segment. The tolerance is the curve's average speed over 10000: the diagonal of its
+/// control-point box over the interval's length, 1. The distance is [`cubic_chord_bound`].
+#[must_use]
+pub fn cubic_within_kink_tolerance_of_chord(points: [Point3; 4]) -> bool {
+    let [a, c, d, b] = points;
+    let mut extent = Extent3d::from_point(a);
+    for p in [c, d, b] {
+        extent.add_point(p);
+    }
+    cubic_chord_bound(points) <= kink_tolerance(extent.size().length(), 1.0)
 }
 
 /// A cubic Hermite curve on `[0, 1]` (`SmHermiteCurve`):
