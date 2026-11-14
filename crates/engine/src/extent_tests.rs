@@ -293,6 +293,46 @@ fn a_to_offset_back_across_the_start_from_a_curved_face_ends_at_its_level() {
     assert!((added - expected).abs() / expected < 1e-3, "added {added}, expected {expected}");
 }
 
+/// #16713: a Cut To Object from a face of the body (the profile starts inside its material) up to
+/// a curved face the body also has, a bore here, was refused with "nothing lies between the
+/// profile and the To object": the tool less the body kept only the air beyond. It takes the
+/// material between the profile and the bore's surface, as the preview shows.
+#[test]
+fn cut_to_a_curved_face_from_inside_the_material_takes_the_material_between() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"corner": [-10, -10, 0], "length": 20, "width": 20, "height": 10, "body_name": "Block"}));
+    // A bore along y, radius 2, its axis at z 6: its underside is 4 mm above the bottom.
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, -10, 0], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1]}, "name": "Bore"}));
+    run(&mut s, "sketch.circle.center", json!({"center": [0, 6], "radius": 2}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Bore", "distance": -20, "operation": "cut"}));
+    let before = body(&mut s, "Block")["volume_mm3"].as_f64().unwrap_or(0.0);
+    // A slot on the bottom face, 2 wide and 10 long, up to the bore's underside.
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Slot"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-1, -5], "p1": [1, 5]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Slot", "to": [0, 0, 4], "operation": "cut"}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let removed = before - body(&mut s, "Block")["volume_mm3"].as_f64().unwrap_or(0.0);
+    // Under the bore over x in [-1, 1]: the area between z = 0 and z = 6 - sqrt(4 - x^2), times 10.
+    let arc = 2.0 * (0.5 * 3.0_f64.sqrt() + 2.0 * (0.5_f64).asin());
+    let want = (12.0 - arc) * 10.0;
+    assert!((removed - want).abs() < want * 1e-2, "removed {removed}, want {want}");
+}
+
+/// #16713: a profile that only partly lies over the To face is refused, not run on past it.
+#[test]
+fn cut_to_a_curved_face_the_profile_partly_misses_is_refused() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"base": [-20, 0, 30], "axis": [1, 0, 0], "radius": 10, "height": 40, "body_name": "Bar"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "P"}));
+    // 24 across the bar's 20: the profile reaches past its side.
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-4, -12], "p1": [4, 12]}));
+    run(&mut s, "sketch.finish", json!({}));
+    let err = s.execute("solid.extrude", &json!({"sketch": "P", "to": [0, 0, 20], "body_name": "Post"})).expect_err("refused");
+    assert!(err.to_string().contains("reaches past the To face"), "{err}");
+}
+
 /// #13188: a stored taper of 0 is a straight extrusion, also for a profile with a hole.
 #[test]
 fn extrude_with_a_taper_of_zero_on_a_profile_with_a_hole_is_straight() {
