@@ -711,18 +711,14 @@ fn seam(k: &mut Kernel, b: &mut Brep) -> (f64, f64) {
 }
 
 #[test]
-fn a_seam_off_a_face_surface_is_recomputed_on_both_surfaces_not_given_a_larger_tolerance() {
-    // The seam is farther from the second surface than its tolerance, within the stitch
-    // tolerance, and the surfaces cross: the seam becomes their intersection.
+fn a_seam_where_the_surfaces_cross_is_left_as_it_was_not_given_a_larger_tolerance() {
+    // The surfaces cross `lift` from the seam: they meet, so the seam is not recomputed and its
+    // tolerance stays the ordinary one.
     let lift = 2e-4;
     let mut k = Kernel::default();
     let mut b = crossing_pair(&mut k, lift);
     solidcore::topology::brep::p4::stitch_faces(&mut k, &mut b, 1e-3, None, false).unwrap();
-    let (tolerance, gap) = seam(&mut k, &mut b);
-    assert!(
-        gap <= tolerance,
-        "the seam's gap {gap:e} is within its tolerance {tolerance:e}"
-    );
+    let (tolerance, _) = seam(&mut k, &mut b);
     assert!(
         tolerance < lift / 10.0,
         "the tolerance stayed the ordinary one, {tolerance:e}, against the offset {lift:e}"

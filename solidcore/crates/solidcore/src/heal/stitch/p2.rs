@@ -1214,6 +1214,13 @@ impl Stitch<'_> {
                         continue;
                     }
 
+                    // (not upstream) a seam is recomputed only for a pair whose edges are each
+                    // exact on their own face's surface, whose curves differ, and whose faces
+                    // stay apart: tested here, before the glue merges the two
+                    let separately_fitted = choice.max_distance > 0.0
+                        && edge_exact_on_faces(k, b, e)?
+                        && edge_exact_on_faces(k, b, test_e)?;
+
                     // branch on which edge to keep
                     let (keep, delete, deleted_slot) = if choice.keep_first {
                         (e, test_e, kk)
@@ -1266,7 +1273,12 @@ impl Stitch<'_> {
                             // the edge's tolerance as the glue left it: the edge closure's
                             let glued = edge::tolerance(b, e)?;
                             let mut seam_report = None;
-                            if let Some(seam) = recomputed_seam_curve(k, b, e, this_tol)? {
+                            let seam_found = if separately_fitted {
+                                recomputed_seam_curve(k, b, e, this_tol)?
+                            } else {
+                                None
+                            };
+                            if let Some(seam) = seam_found {
                                 let mut trimmed = Vec::new();
                                 for eu in edge::edgeuses(b, e, None, None)? {
                                     if crate::topology::edgeuse::p1::uv_trim_curve_pointer(b, eu)?
@@ -1776,6 +1788,30 @@ fn nearest_on_surface(
     Ok(Some((on, drop.result_uv, point.distance(on))))
 }
 
+/// (Not upstream.) Whether the curve of `e` lies within the edge's own tolerance of every face
+/// it borders, measured on the faces' surfaces without caching; `false` when any use cannot be
+/// measured.
+fn edge_exact_on_faces(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<bool> {
+    let tol = edge::tolerance(b, e)?;
+    let mut any = false;
+    for eu in edge::edgeuses(b, e, None, None)? {
+        if !crate::topology::edgeuse::p1::has_edge_face_gap(b, eu)? {
+            continue;
+        }
+        let Some(gap) = ignored(crate::topology::edgeuse::p1::calc_max_edge_face_gap(
+            k, b, eu, false,
+        ))?
+        else {
+            return Ok(false);
+        };
+        if !(gap.gap_3d.is_finite() && gap.gap_3d <= tol) {
+            return Ok(false);
+        }
+        any = true;
+    }
+    Ok(any)
+}
+
 /// A seam's recomputed curve and the proved bound on its distance from every face's surface.
 struct RecomputedSeam {
     curve: Curve,
@@ -1788,14 +1824,12 @@ struct RecomputedSeam {
 /// faces' surfaces, with the proved bound on its distance from them; `None` when `e` needs
 /// none, no such curve exists, or the gap cannot be proved to be within `limit`.
 ///
-/// The glued edges' curves coincide, but each face's surface may sit off that curve by more than
-/// the edge's tolerance (a gap the enclosure below may still bring within `limit`, the stitch tolerance). Each of [`SEAM_SAMPLES`]
-/// points of the old curve is projected onto the surfaces in turn until it lies on all of them
-/// (their intersection near the old curve); where the surfaces do not meet, the point halfway
-/// between the nearest points on them, which makes the larger of the deviations as small as it
-/// can be. A cubic is interpolated through the points. Where the surfaces meet, the curve lies on
-/// them and the edge keeps its own tolerance. Where they stay apart (two surfaces fitted to one
-/// curve), the gap between the curve and each surface is enclosed over the whole curve
+/// The caller asks for it only where both sewn edges were exact on their own face's surface and
+/// their curves differ. Each of [`SEAM_SAMPLES`] points of the old curve is projected onto the
+/// surfaces in turn; where they meet at the point (a T-junction, a corner) the edge stays as it
+/// was, and where they stay apart, the point halfway between the nearest points on them makes the
+/// larger of the deviations as small as it can be. A cubic is interpolated through the points.
+/// The gap between the curve and each surface is enclosed over the whole curve
 /// ([`super::seam_bound`], interval arithmetic, no sample) and the caller grows the edge's
 /// tolerance to that enclosure, recorded on the edge and its vertices; an enclosure above `limit`,
 /// or none, leaves the edge as it was and the validity check keeps refusing it.
@@ -1963,9 +1997,9 @@ fn recomputed_seam_curve(
     }))
 }
 
-/// The point near `start` that lies on every surface, or, where they do not meet, the centre of
-/// their nearest points: `None` when the surfaces stay farther apart than `4 * limit` there (a
-/// screen only; the enclosure decides).
+/// The centre of the nearest points on every surface near `start`, where the surfaces stay apart;
+/// `None` where they meet there, or stay farther apart than `4 * limit` (a screen only; the
+/// enclosure decides).
 fn seam_point(
     k: &Kernel,
     surfaces: &[(
@@ -1996,7 +2030,9 @@ fn seam_point(
             .map(|p| p.distance(centre))
             .fold(0.0_f64, f64::max);
         if spread <= 0.01 * tol {
-            return Ok(Some(centre));
+            // the surfaces meet here: the seam is theirs to share as it stands (a T-junction,
+            // a corner), and the stitch keeps the edge as it was
+            return Ok(None);
         }
         // project the next round from the nearest point on the last surface
         q = centre;
@@ -2009,7 +2045,8 @@ fn seam_point(
             None => return Ok(None),
         }
     }
-    Ok((worst <= 2.0 * limit).then_some(centre))
+    // and the faces stay apart: the centre is farther than the edge's tolerance from a surface
+    Ok((worst > tol && worst <= 2.0 * limit).then_some(centre))
 }
 
 /// The squeeze/glue decision of `DoStitching` and `StitchVertexPairs` for two
