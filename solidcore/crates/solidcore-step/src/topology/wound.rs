@@ -99,7 +99,7 @@ impl Axis {
 /// The form parameter at the angle `theta` and its derivative in the angle.
 fn along(theta: f64) -> (f64, f64) {
     let q = (theta / FRAC_PI_2).floor();
-    let psi = (theta - q * FRAC_PI_2).max(0.0).min(FRAC_PI_2);
+    let psi = (theta - q * FRAC_PI_2).clamp(0.0, FRAC_PI_2);
     let eighth = FRAC_PI_8;
     let t = (0.5 * psi - eighth).tan();
     (form::param(theta), 0.25 * (1.0 + t * t) / eighth.tan())
@@ -163,7 +163,7 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
         total += 0.5 * (last.abs() + now.abs()) * (b - a) / 64.0;
         last = now;
     }
-    let n = ((total / FRAC_PI_8).ceil() as usize).max(16).min(MAX_PIECES / 4);
+    let n = ((total / FRAC_PI_8).ceil() as usize).clamp(16, MAX_PIECES / 4);
     // ... and each knot span of the edge's curve its own pieces (a short span between two grid
     // points would otherwise lie wholly between a piece's probes).
     let mut stops: Vec<f64> = (1..=n).map(|i| a + (b - a) * i as f64 / n as f64).collect();
