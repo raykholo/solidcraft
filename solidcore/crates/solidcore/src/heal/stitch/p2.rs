@@ -1296,7 +1296,7 @@ impl Stitch<'_> {
                                 // the proved gap is the edge's tolerance (and its vertices'),
                                 // stored as it is and never above the stitch tolerance; the
                                 // edge is recorded with it below
-                                edge::set_tolerance(b, e, seam.gap, true, true)?;
+                                // EXPERIMENT 16510 c: no tolerance growth
                                 seam_report = Some((seam.gap, edge::tolerance(b, e)?));
                             }
                             if let Some((pre, bound)) = edge_report {
@@ -1874,9 +1874,6 @@ fn recomputed_seam_curve(
     // other's: a curve that is off every face is not a seam between two fitted surfaces.
     if widest <= tol || narrowest > tol {
         return Ok(None);
-    }
-    if limit >= 0.0 {
-        return Ok(None); // EXPERIMENT 16510 b
     }
     let surfaces = seam_surfaces(b, e)?;
     if surfaces.len() < 2 {
