@@ -1719,18 +1719,17 @@ impl<'b, 'a> Builder<'b, 'a> {
                 };
                 let extent = extent.ok_or_else(|| unsupported("a face whose boundary does not lie on its surface"))?;
                 let turns = (extent[0][1] - extent[0][0]) / TAU;
-                if turns > 1.0 + crate::kernel::form::MORE_THAN_A_TURN && !matches!(label, BSurface::Cylinder { .. } | BSurface::Cone { .. }) {
-                    return Err(unsupported(format!(
-                        "a face that winds {turns:.1} turns about its axis on a surface that is not a cylinder or a cone"
-                    )));
-                }
-                let (f, d) = crate::kernel::form::surface_within(&label, extent, tol).ok_or_else(|| {
-                    if turns > 1.0 {
-                        unsupported(format!("a face that winds {turns:.1} turns about its axis, past the 64 a form takes"))
-                    } else {
-                        unsupported("a face of more than one turn")
+                let (f, d) = if crate::kernel::form::winds(extent) {
+                    if !matches!(label, BSurface::Cylinder { .. } | BSurface::Cone { .. }) {
+                        return Err(unsupported(format!(
+                            "a face that winds {turns:.1} turns about its axis on a surface that is not a cylinder or a cone"
+                        )));
                     }
-                })?;
+                    crate::kernel::form::wound_surface(&label, extent, tol)
+                        .ok_or_else(|| unsupported(format!("a face that winds {turns:.1} turns about its axis, past the 64 a form takes")))?
+                } else {
+                    crate::kernel::form::surface_within(&label, extent, tol).ok_or_else(|| unsupported("a face of more than one turn"))?
+                };
                 Some((f, d, extent))
             }
             None => None,
@@ -1742,7 +1741,7 @@ impl<'b, 'a> Builder<'b, 'a> {
         let surface = form.clone().unwrap_or_else(|| label.clone());
         // A face that winds round its axis more than a turn is on a form that does not close:
         // no analytic surface has it (SMLib's cylinder is one turn), so it is a spline face.
-        let wound = extent.is_some_and(|e| e[0][1] - e[0][0] > TAU * (1.0 + crate::kernel::form::MORE_THAN_A_TURN));
+        let wound = extent.is_some_and(crate::kernel::form::winds);
         // How far each edge lies off this surface, so its closed form is checked at that.
         self.measure_edges(&label, &edge_loops)?;
         // Closed forms where the geometry has them; the kernel makes the rest (`trims`).

@@ -95,7 +95,13 @@ pub(crate) mod form {
         c::record_curve(cv).ok()
     }
 
-    pub(crate) use solidcore::eval::form::MORE_THAN_A_TURN;
+    pub(crate) fn winds(domain: [[f64; 2]; 2]) -> bool {
+        k::form::winds(domain)
+    }
+    pub(crate) fn wound_surface(s: &Surface, domain: [[f64; 2]; 2], tolerance: f64) -> Option<(Surface, [[f64; 2]; 2])> {
+        let (form, d) = k::form::wound_surface(&surface_in(s)?, domain, tolerance)?;
+        Some((surface_out(form)?, d))
+    }
     pub(crate) use solidcore::eval::form::param;
 
     pub(crate) fn frame_of(s: &Surface) -> Option<Frame> {

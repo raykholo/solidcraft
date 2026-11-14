@@ -34,10 +34,17 @@ use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, FRAC_PI_8, TAU};
 /// Rounding room on an angle at a quarter's end.
 const SLACK: f64 = 1e-12;
 
-/// How far past one turn (as a fraction of it) a boundary's box may run and still be one turn:
-/// rounding and an edge's distance off its surface ([`extent`]); a wider one is a face that
-/// winds.
-pub const MORE_THAN_A_TURN: f64 = 0.01;
+/// Rounding room on a turn, as a fraction of it: the one [`extent`] and [`face_arcs`] already
+/// use to tell a whole turn from less.
+const TURN_ROUNDING: f64 = 1e-9;
+
+/// Whether a face's box ([`extent`]) goes round its axis more than a turn. [`extent`] clamps a
+/// box to one turn unless its angle runs past a turn by more than rounding and the angle the
+/// edges' distance off the surface makes, so a box wider than a turn and rounding is a face that
+/// winds ([`wound_surface`]).
+pub fn winds([u, _]: [[f64; 2]; 2]) -> bool {
+    u[1] - u[0] > TAU * (1.0 + TURN_ROUNDING)
+}
 
 /// The quarter arc's parameter `u` in `[0, 1]` at angle `ψ` in `[0, π/2]` from its start: the
 /// arc with ends `±π/4` from its bisector and middle weight `cos π/4` has
@@ -191,8 +198,8 @@ fn face_arcs(
     own: bool,
     winds: bool,
 ) -> Option<((Vec<f64>, Vec<([f64; 2], f64)>), [f64; 2])> {
-    // Only a cylinder's or cone's angle may wind: every other angle is refused past one turn.
-    if winds && a[1] - a[0] > TAU * (1.0 + MORE_THAN_A_TURN) {
+    // Only [`wound_surface`] lets an angle wind; every other form refuses more than a turn.
+    if winds && a[1] - a[0] > TAU * (1.0 + TURN_ROUNDING) {
         let (grid, d) = wound_quarters(a, reach)?;
         return Some((arcs(grid.0, grid.1), d));
     }
@@ -461,7 +468,26 @@ pub fn surface_within(
     domain: [[f64; 2]; 2],
     tolerance: f64,
 ) -> Option<(Surface, [[f64; 2]; 2])> {
-    surface_on(s, domain, tolerance, false)
+    surface_on(s, domain, tolerance, false, false)
+}
+
+/// The NURBS form of a cylinder or cone face over `domain` (as [`surface_within`]) that winds
+/// round its axis more than a turn (a thread's flank, up to 64 turns): a form that does not
+/// close on itself, as many quarters as the face winds. `None` for any other surface, and for a
+/// domain of a turn or less ([`winds`]: use [`surface_within`]). Only the STEP reader's winding
+/// path takes this: [`surface`], [`surface_within`] and [`surface_on_own_arcs`] refuse more than
+/// a turn for every form.
+pub fn wound_surface(
+    s: &Surface,
+    domain: [[f64; 2]; 2],
+    tolerance: f64,
+) -> Option<(Surface, [[f64; 2]; 2])> {
+    match s {
+        Surface::Cylinder { .. } | Surface::Cone { .. } if winds(domain) => {
+            surface_on(s, domain, tolerance, false, true)
+        }
+        _ => None,
+    }
 }
 
 /// The NURBS form of a cylinder, cone, sphere or torus face over `domain` (as [`surface`]) whose
@@ -482,7 +508,7 @@ pub fn surface_on_own_arcs(
         Surface::Cylinder { .. }
         | Surface::Cone { .. }
         | Surface::Sphere { .. }
-        | Surface::Torus { .. } => surface_on(s, domain, tolerance, true),
+        | Surface::Torus { .. } => surface_on(s, domain, tolerance, true, false),
         _ => None,
     }
 }
@@ -492,6 +518,7 @@ fn surface_on(
     [u, v]: [[f64; 2]; 2],
     tolerance: f64,
     own: bool,
+    wound: bool,
 ) -> Option<(Surface, [[f64; 2]; 2])> {
     if let Surface::PlacedRevolution {
         profile,
@@ -555,12 +582,7 @@ fn surface_on(
         };
     }
     let (reach_u, reach_v) = reaches(s, v, tolerance);
-    let ((u_knots, ring), fu) = face_arcs(
-        u,
-        reach_u,
-        own,
-        matches!(s, Surface::Cylinder { .. } | Surface::Cone { .. }),
-    )?;
+    let ((u_knots, ring), fu) = face_arcs(u, reach_u, own, wound)?;
     // The ring of arcs times a profile `(control, weight)` mapped to (radial, axial) about the
     // frame: a rational tensor product, its weights the products.
     let net = |f: &Frame,
@@ -1191,15 +1213,21 @@ fn extent_in(
         }
     }
     // At most one turn round a periodic direction, to rounding; a boundary that never goes round
-    // it (a face bounded by its seam alone) covers the whole turn from there. A boundary that
-    // goes round it more than a turn and a hundredth (a thread's flank winds several) keeps its
-    // box: clamped to a turn, the face's edges would lie off any form made over it.
+    // it (a face bounded by its seam alone) covers the whole turn from there. On a cylinder or
+    // cone, a boundary that goes round the axis more than a turn keeps its box (a thread's flank
+    // winds several): clamped to a turn, the face's edges would lie off any form made over it.
+    // "More than a turn" allows what a turn's box can come to: rounding, and twice the angle
+    // `reach` makes at the face's widest circle (its edges lie off the surface by up to `reach`,
+    // so each end of the box may be that far out). No other constant is chosen.
+    let may_wind = matches!(label, Surface::Cylinder { .. } | Surface::Cone { .. });
+    let (reach_angle, _) = reaches(label, [lo[1], hi[1]], reach);
     for d in 0..2 {
         if let Some(Some(per)) = period.get(d) {
             let span = ix(&hi, d) - ix(&lo, d);
+            let room = per * TURN_ROUNDING + 2.0 * reach_angle;
             *ixm(&mut hi, d) = if span <= 1e-9 * per {
                 ix(&lo, d) + per
-            } else if span <= per * (1.0 + MORE_THAN_A_TURN) {
+            } else if !may_wind || d != 0 || span <= per + room {
                 ix(&hi, d).min(ix(&lo, d) + per)
             } else {
                 ix(&hi, d)
