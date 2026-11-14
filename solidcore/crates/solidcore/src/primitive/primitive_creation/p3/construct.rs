@@ -1123,6 +1123,7 @@ fn sweep_ends_coincide(
     tol: f64,
 ) -> Result<bool> {
     use crate::nurbs::b_spline_surface::p2::IsoCurveOptions;
+    use crate::nurbs::math::gamma;
 
     let domain = surface.natural_uv_domain();
     let (direction, interval) = if translational {
@@ -1192,7 +1193,6 @@ fn sweep_ends_coincide(
     // distance carries at most gamma(4) relative error, and the subtraction,
     // division, product and sum here at most gamma(4) more: the computed bound
     // times (1 + gamma(8)) encloses the exact one.
-    use crate::nurbs::math::gamma;
     let lo = ratio_min * (1.0 - gamma(1));
     let hi = ratio_max * (1.0 + gamma(1));
     let weight_gap = (hi - lo) / lo;
