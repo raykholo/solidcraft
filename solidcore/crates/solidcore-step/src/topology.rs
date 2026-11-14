@@ -1909,9 +1909,9 @@ impl Builder<'_, '_> {
     /// The pcurve of every use of a face that winds round its axis: the closed form where `exact`
     /// has one, else the edge's own ([`wound::pcurve`]).
     fn wound_pcurves(&self, label: &BSurface, edge_loops: &[Vec<(u32, bool)>], exact: &[Vec<Option<Curve2>>]) -> R<Vec<Vec<Curve2>>> {
-        let mut out = Vec::with_capacity(edge_loops.len());
+        let mut out = Vec::new();
         for (l, given) in edge_loops.iter().zip(exact) {
-            let mut pcs = Vec::with_capacity(l.len());
+            let mut pcs = Vec::new();
             for (&(e, _), pc) in l.iter().zip(given) {
                 pcs.push(match pc {
                     Some(c) => c.clone(),

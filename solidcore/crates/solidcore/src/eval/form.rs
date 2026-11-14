@@ -1034,8 +1034,7 @@ fn extent_in(
                 }
                 points = points.max(needed as usize);
             }
-            let mut samples: Vec<(f64, [f64; 2], [bool; 2], usize)> =
-                Vec::with_capacity(points + 1);
+            let mut samples: Vec<(f64, [f64; 2], [bool; 2], usize)> = Vec::new();
             for k in 0..=points {
                 let f = k as f64 / points as f64;
                 let t = if *forward {
