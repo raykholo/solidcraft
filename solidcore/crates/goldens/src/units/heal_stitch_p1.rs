@@ -1025,6 +1025,16 @@ fn run_rust_op(k: &mut Kernel, b: &mut Brep, op: &Resolved) -> solidcore::Result
 }
 
 fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
+    let first = run_rust_inner(i);
+    if std::env::var_os("SEAM16510_OFF").is_none() {
+        std::env::set_var("SEAM16510_OFF", "1");
+        let _ = run_rust_inner(i);
+        std::env::remove_var("SEAM16510_OFF");
+    }
+    first
+}
+
+fn run_rust_inner(i: &Inputs) -> Result<Output, HarnessError> {
     // one context for the build, the resolution and the op, as the shim's
     let mut k = Kernel::default();
     let mut b = match own_brep(&mut k, &i.brep)? {
@@ -1044,6 +1054,14 @@ fn run_rust(i: &Inputs) -> Result<Output, HarnessError> {
         Ok(mut o) => {
             if i.attributed {
                 put_tags(&mut o, &b).map_err(|e| harness(format!("rust tags: {e}")))?;
+            }
+            if o.len() >= 80 && o.len() <= 100 && o.first() == Some(&0.0) {
+                eprintln!(
+                    "DBG16510 {} len={} {:?}",
+                    if std::env::var_os("SEAM16510_OFF").is_some() { "OFF" } else { "ON" },
+                    o.len(),
+                    o
+                );
             }
             Ok(guarded_output(o))
         }

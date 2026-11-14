@@ -1853,6 +1853,9 @@ fn recomputed_seam_curve(
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::nurbs::crv_fit::p1::ParamMethod;
 
+    if std::env::var_os("SEAM16510_OFF").is_some() {
+        return Ok(None);
+    }
     let tol = edge::tolerance(b, e)?;
     // Only an edge whose curve is farther from a face than its tolerance needs a new curve.
     let mut widest = 0.0_f64;
