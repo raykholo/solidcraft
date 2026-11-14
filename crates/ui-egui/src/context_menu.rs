@@ -2737,7 +2737,6 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         app.menu.pending = None;
         if target == Target::Viewport { open(app, at, crate::tool_modifiers::Held::default()) } else { open_for(app, at, target) }
     }
-    crate::browser::dims_overlay(app, ctx);
     track_hold(app, ctx);
     show_rename(app, ctx);
     crate::design_properties::show_object(app, ctx);
