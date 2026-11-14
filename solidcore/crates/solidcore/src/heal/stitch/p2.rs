@@ -1841,7 +1841,7 @@ fn recomputed_seam_curve(
 
     // The point of each sample on every surface at once, or as near as they come.
     let mut guesses: Vec<Option<crate::math::Point2>> = vec![None; surfaces.len()];
-    let mut centres = Vec::with_capacity(SEAM_SAMPLES);
+    let mut centres = Vec::new();
     for i in 0..SEAM_SAMPLES {
         let t = lo + (hi - lo) * (i as f64) / ((SEAM_SAMPLES - 1) as f64);
         let Some(start) =
@@ -1909,7 +1909,7 @@ fn recomputed_seam_curve(
             }
         })
         .collect();
-    let mut along = Vec::with_capacity(dense.len());
+    let mut along = Vec::new();
     for &t in &dense {
         let Some(p) =
             ignored(curve_now.evaluate(k, t, 0, true, false))?.and_then(|d| d.into_iter().next())
@@ -1919,7 +1919,7 @@ fn recomputed_seam_curve(
         along.push(p);
     }
     for (surface, domain) in &surfaces {
-        let mut uvs = Vec::with_capacity(along.len());
+        let mut uvs = Vec::new();
         let mut guess = None;
         for point in &along {
             let Some((_, uv, _)) = nearest_on_surface(k, surface, domain, *point, guess)? else {
@@ -1976,7 +1976,7 @@ fn seam_point(
     let mut centre = start;
     for _ in 0..SEAM_ROUNDS {
         let mut sum = Vec3::new(0.0, 0.0, 0.0);
-        let mut nearest = Vec::with_capacity(surfaces.len());
+        let mut nearest = Vec::new();
         for ((surface, domain), guess) in surfaces.iter().zip(guesses.iter_mut()) {
             let Some((on, uv, _)) = nearest_on_surface(k, surface, domain, q, *guess)? else {
                 return Ok(None);
