@@ -23,7 +23,7 @@ pub fn service() -> solidcraft_ui_egui::webdav::Http {
             let _slot = slot;
             let _language = solidcraft_ui_text::scope(language);
             let result = (|| {
-                solidcraft_ui_egui::webdav::connection(&request.url)?;
+                solidcraft_ui_egui::webdav::connection(&request.url, request.insecure)?;
                 if request.user.contains(':') || request.user.len() > 1024 || request.password.len() > 4096 {
                     return Err(tr("webdav.error.credentials").into());
                 }
@@ -63,7 +63,7 @@ pub fn service() -> solidcraft_ui_egui::webdav::Http {
 }
 
 pub fn send(r: Request) -> Result<Response, String> {
-    solidcraft_ui_egui::webdav::connection(&r.url)?;
+    solidcraft_ui_egui::webdav::connection(&r.url, r.insecure)?;
     if r.user.contains(':') || r.user.len() > 1024 || r.password.len() > 4096 || r.body.len() > solidcraft_engine::io::MAX_DESIGN_BYTES {
         return Err(tr("webdav.error.credentials").into());
     }

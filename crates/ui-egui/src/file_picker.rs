@@ -211,12 +211,46 @@ mod tests {
             "https://user:password@solidcraft.io/dav/",
             "https://solidcraft.io/dav/?token=secret",
             "http://localhost.solidcraft.io/",
+            "https://solidcraft.io/dav/%2e%2e/",
+            "https://solidcraft.io/dav/%2E%2E%2Fprivate/",
+            "https://solidcraft.io/dav/a%2fb/",
+            "https://solidcraft.io/dav/a%5cb/",
+            "https://solidcraft.io/dav/a%00b/",
+            "https://solidcraft.io/dav/a\\b/",
         ] {
-            assert!(connection(value).is_err(), "{value}");
+            assert!(connection(value, false).is_err(), "{value}");
+            assert!(connection(value, true).is_err(), "{value}");
         }
-        for value in ["http://localhost:8080/dav/", "http://127.0.0.1/dav/", "http://[::1]:8080/dav/", "https://solidcraft.io/dav/"] {
-            assert!(connection(value).is_ok(), "{value}");
+        for value in ["http://localhost:8080/dav/", "http://127.0.0.1/dav/", "http://[::1]:8080/dav/"] {
+            assert!(connection(value, false).is_err(), "unencrypted needs the share's toggle: {value}");
+            assert!(connection(value, true).is_ok(), "{value}");
         }
+        assert!(connection("https://solidcraft.io/dav/", false).is_ok());
+        assert!(connection("https://solidcraft.io/dav/../", false).map(|u| u.path().to_string()).is_ok_and(|p| p == "/"));
+        assert!(!crate::prefs::Prefs::default().webdav_enabled, "nothing contacts a server until a share is added");
+        assert!(!crate::prefs::Prefs::default().webdav_allow_http);
+    }
+
+    #[test]
+    fn webdav_picker_contacts_nothing_until_a_share_is_added_and_refuses_unencrypted_without_the_toggle() {
+        let sent = Rc::new(Cell::new(0));
+        let mut h = crate::scenario::Harness::new();
+        let count = sent.clone();
+        h.app.services.webdav_http = Some(Rc::new(move |_| {
+            count.set(count.get() + 1);
+            Box::pin(std::future::pending())
+        }));
+        h.app.pick_open_for(&["sc"], |_, _| {});
+        assert!(!crate::webdav::busy(&h.app));
+        h.app.preferences.webdav_enabled = true;
+        h.app.preferences.webdav_url = "http://localhost:8080/dav/".into();
+        h.app.pick_open_for(&["sc"], |_, _| {});
+        assert!(!crate::webdav::busy(&h.app), "plain http needs the share's toggle");
+        assert_eq!(sent.get(), 0);
+        h.app.preferences.webdav_allow_http = true;
+        h.app.pick_open_for(&["sc"], |_, _| {});
+        assert!(crate::webdav::busy(&h.app));
+        assert_eq!(sent.get(), 1);
     }
 
     #[test]

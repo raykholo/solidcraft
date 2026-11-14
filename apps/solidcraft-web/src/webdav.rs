@@ -15,7 +15,7 @@ impl Drop for Abort {
 }
 
 async fn send(r: Request) -> Result<Response, String> {
-    solidcraft_ui_egui::webdav::connection(&r.url)?;
+    solidcraft_ui_egui::webdav::connection(&r.url, r.insecure)?;
     if r.user.contains(':') || r.user.len() > 1024 || r.password.len() > 4096 || r.body.len() > solidcraft_engine::io::MAX_DESIGN_BYTES {
         return Err(tr("webdav.error.credentials").into());
     }

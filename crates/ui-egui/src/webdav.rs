@@ -27,6 +27,8 @@ pub struct Request {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub cap: usize,
+    /// The share's own "allow unencrypted (local network)" choice; the transport re-checks it.
+    pub insecure: bool,
 }
 pub struct Response {
     pub status: u16,
@@ -63,14 +65,22 @@ fn work<T: Send + 'static>(run: impl FnOnce() -> Result<T, String> + Send + 'sta
 }
 
 /// Refuse insecure remote authentication, URL credentials, and ambiguous paths before parsing.
-pub fn connection(value: &str) -> Result<Url, String> {
+/// Plain `http` needs the share's own `allow_http` choice and a loopback host.
+pub fn connection(value: &str, allow_http: bool) -> Result<Url, String> {
     if value.len() > 4096 || value.chars().any(|c| c.is_control() || c == '\\') {
+        return Err(tr("webdav.error.url").into());
+    }
+    let lower = value.to_ascii_lowercase();
+    if ["%2e", "%2f", "%5c", "%00"].iter().any(|encoded| lower.contains(encoded)) {
         return Err(tr("webdav.error.url").into());
     }
     let mut url = Url::parse(value).map_err(|_| tr("webdav.error.url"))?;
     let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-    if url.scheme() != "https" && !(url.scheme() == "http" && local) {
+    if url.scheme() != "https" && !(url.scheme() == "http" && local && allow_http) {
         return Err(tr("webdav.error.https").into());
+    }
+    if url.path_segments().is_some_and(|mut parts| parts.any(|part| matches!(part, "." | ".."))) {
+        return Err(tr("webdav.error.url").into());
     }
     if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || url.host_str().is_none() {
         return Err(tr("webdav.error.url").into());
@@ -260,10 +270,20 @@ pub(crate) struct Config {
     pub(crate) base: Url,
     pub(crate) user: String,
     pub(crate) password: String,
+    pub(crate) insecure: bool,
 }
 impl Config {
     fn request(&self, method: &'static str, url: &Url, body: Vec<u8>, headers: Vec<(String, String)>, cap: usize) -> Request {
-        Request { method, url: url.to_string(), user: self.user.clone(), password: self.password.clone(), headers, body, cap }
+        Request {
+            method,
+            url: url.to_string(),
+            user: self.user.clone(),
+            password: self.password.clone(),
+            headers,
+            body,
+            cap,
+            insecure: self.insecure,
+        }
     }
 }
 #[derive(Clone)]
@@ -316,6 +336,7 @@ pub fn settings(app: &mut SolveApp, ui: &mut egui::Ui) {
         ui_kit::row(ui, tr("webdav.password"), |ui| {
             ui_kit::password_field(ui, ui.scope_id().with("webdav_password"), &mut app.webdav.password, tr("webdav.password"));
         });
+        ui_kit::checkbox(ui, tr("webdav.allow_http"), &mut app.preferences.webdav_allow_http);
         ui_kit::text(ui, tr("webdav.credentials"), ui_kit::Text::Hint("webdav_credentials"));
     });
 }
@@ -334,7 +355,7 @@ pub(crate) fn pick(app: &mut SolveApp, name: Option<&str>, extensions: &[&str], 
         complete(app, None);
         return Ok(());
     }
-    let base = match connection(&app.preferences.webdav_url) {
+    let base = match connection(&app.preferences.webdav_url, app.preferences.webdav_allow_http) {
         Ok(base) => base,
         Err(e) => {
             app.set_status(e, true);
@@ -342,7 +363,12 @@ pub(crate) fn pick(app: &mut SolveApp, name: Option<&str>, extensions: &[&str], 
             return Ok(());
         }
     };
-    let config = Config { base: base.clone(), user: app.preferences.webdav_user.clone(), password: app.webdav.password.clone() };
+    let config = Config {
+        base: base.clone(),
+        user: app.preferences.webdav_user.clone(),
+        password: app.webdav.password.clone(),
+        insecure: app.preferences.webdav_allow_http,
+    };
     app.webdav.overwrite = false;
     app.webdav.picker = Some(Picker {
         config,

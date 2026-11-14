@@ -1,5 +1,6 @@
 {
   "de": {
+    "webdav.allow_http": "Unverschlüsselte Verbindungen (lokales Netzwerk) zu dieser Adresse erlauben",
     "webdav.credentials": "Desktop-Passwörter werden beim Verbinden im Schlüsselbund gespeichert. Im Browser bleiben sie nur im Speicher dieses Ursprungs und müssen nach dem Neuladen erneut eingegeben werden.",
     "webdav.enable": "WebDAV für Serverordner verwenden",
     "webdav.error.cache": "Cannot read or write the local WebDAV working copy.",
@@ -23,6 +24,7 @@
     "webdav.user": "WebDAV-Benutzer"
   },
   "en": {
+    "webdav.allow_http": "Allow unencrypted (local network) connections to this address",
     "webdav.credentials": "Desktop passwords are stored in the OS keychain when connecting. In the browser, enter the password again after reloading; it stays in memory for this origin only.",
     "webdav.enable": "Use WebDAV for Server folder",
     "webdav.error.cache": "Cannot read or write the local WebDAV working copy.",
@@ -31,7 +33,7 @@
     "webdav.error.design_size": "WebDAV design exceeds the file size limit.",
     "webdav.error.etag": "WebDAV requires a strong ETag for safe saving.",
     "webdav.error.http": "WebDAV: HTTP {status}",
-    "webdav.error.https": "WebDAV requires HTTPS (HTTP is allowed only on localhost).",
+    "webdav.error.https": "WebDAV requires HTTPS. Plain HTTP works only for localhost, 127.0.0.1 or ::1, and only when \"allow unencrypted\" is on.",
     "webdav.error.keychain": "Cannot read or store the WebDAV password in the OS keychain.",
     "webdav.error.limit": "Too many WebDAV targets; restart before opening more.",
     "webdav.error.listing": "Invalid WebDAV multistatus listing.",
@@ -46,6 +48,7 @@
     "webdav.user": "WebDAV user"
   },
   "ja": {
+    "webdav.allow_http": "このアドレスへの暗号化されていない接続 (ローカルネットワーク) を許可",
     "webdav.credentials": "デスクトップでは接続時にパスワードを OS キーチェーンに保存します。ブラウザーではこのオリジンのメモリーにのみ保持し、再読み込み後は再入力が必要です。",
     "webdav.enable": "サーバーフォルダーに WebDAV を使用",
     "webdav.error.cache": "WebDAV のローカル作業コピーを読み書きできません。",
@@ -69,6 +72,7 @@
     "webdav.user": "WebDAV ユーザー"
   },
   "ko": {
+    "webdav.allow_http": "이 주소에 대한 암호화되지 않은 연결(로컬 네트워크) 허용",
     "webdav.credentials": "데스크톱에서는 연결할 때 암호를 OS 키체인에 저장합니다. 브라우저에서는 현재 출처의 메모리에만 보관하며 새로 고침 후 다시 입력해야 합니다.",
     "webdav.enable": "서버 폴더에 WebDAV 사용",
     "webdav.error.cache": "Cannot read or write the local WebDAV working copy.",
@@ -92,6 +96,7 @@
     "webdav.user": "WebDAV 사용자"
   },
   "zh": {
+    "webdav.allow_http": "允许到此地址的未加密连接（本地网络）",
     "webdav.credentials": "桌面端在连接时将密码存入系统钥匙串。浏览器仅在当前源的内存中保留密码，刷新后需重新输入。",
     "webdav.enable": "服务器文件夹使用 WebDAV",
     "webdav.error.cache": "无法读写 WebDAV 本地工作副本。",
@@ -115,6 +120,7 @@
     "webdav.user": "WebDAV 用户"
   },
   "ar": {
+    "webdav.allow_http": "السماح باتصالات غير مشفرة (الشبكة المحلية) بهذا العنوان",
     "webdav.credentials": "تُحفظ كلمات مرور سطح المكتب في مخزن مفاتيح النظام عند الاتصال. في المتصفح، أدخل كلمة المرور مجددًا بعد إعادة التحميل؛ فهي تبقى في الذاكرة لهذا المصدر فقط.",
     "webdav.enable": "استخدام WebDAV لمجلد الخادم",
     "webdav.error.cache": "تعذرت قراءة نسخة العمل المحلية لـ WebDAV أو كتابتها.",
@@ -138,6 +144,7 @@
     "webdav.user": "مستخدم WebDAV"
   },
   "he": {
+    "webdav.allow_http": "לאפשר חיבורים לא מוצפנים (רשת מקומית) לכתובת זו",
     "webdav.credentials": "סיסמאות ביישום שולחן העבודה נשמרות במחזיק המפתחות של מערכת ההפעלה בעת החיבור. בדפדפן יש להזין את הסיסמה שוב לאחר טעינה מחדש; היא נשמרת בזיכרון עבור מקור זה בלבד.",
     "webdav.enable": "שימוש ב־WebDAV עבור תיקיית השרת",
     "webdav.error.cache": "לא ניתן לקרוא או לכתוב את עותק העבודה המקומי של WebDAV.",
@@ -161,6 +168,7 @@
     "webdav.user": "משתמש WebDAV"
   },
   "vi": {
+    "webdav.allow_http": "Cho phép kết nối không mã hóa (mạng cục bộ) tới địa chỉ này",
     "webdav.credentials": "Mật khẩu trên máy tính được lưu trong kho khóa của hệ điều hành khi kết nối. Trong trình duyệt, hãy nhập lại mật khẩu sau khi tải lại; mật khẩu chỉ nằm trong bộ nhớ cho nguồn này.",
     "webdav.enable": "Dùng WebDAV cho thư mục máy chủ",
     "webdav.error.cache": "Không thể đọc hoặc ghi bản làm việc WebDAV cục bộ.",

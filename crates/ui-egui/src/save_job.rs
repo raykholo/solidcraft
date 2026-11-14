@@ -210,13 +210,17 @@ mod tests {
         assert!(!serde_json::to_string(&h.app.preferences).unwrap().contains("original-secret"));
         assert_eq!(condition(None, false), vec![("If-None-Match".into(), "*".into())]);
         assert_eq!(condition(Some("\"old\""), true), Vec::<(String, String)>::new());
-        let url = connection("https://solidcraft.io/dav/").unwrap();
+        let url = connection("https://solidcraft.io/dav/", false).unwrap();
         let path = h.dir.join("remote.solidcraft").to_string_lossy().into_owned();
         h.app.run("solid.box", json!({"length": 2, "width": 2, "height": 2})).unwrap();
         h.app.run("file.save_as", json!({"path": path})).unwrap();
         h.app.webdav.targets.borrow_mut().insert(
             path.clone(),
-            Target { config: Config { base: url.clone(), user: "test".into(), password: String::new() }, url, etag: Some("\"old\"".into()) },
+            Target {
+                config: Config { base: url.clone(), user: "test".into(), password: String::new(), insecure: false },
+                url,
+                etag: Some("\"old\"".into()),
+            },
         );
         h.app.services.webdav_http = Some(std::rc::Rc::new(|request| {
             assert_eq!(request.method, "PUT");

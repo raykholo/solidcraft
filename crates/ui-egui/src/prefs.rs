@@ -1596,6 +1596,8 @@ preference_settings! {
     /// Check for updates at start and once a day (docs/updates.md).
     check_updates: bool = true, 0;
     webdav_enabled: bool = false, PAGE_GENERAL;
+    /// Allow plain `http` to a loopback WebDAV address; off, only `https` is used.
+    webdav_allow_http: bool = false, PAGE_GENERAL;
     webdav_url: String = String::new(), PAGE_GENERAL;
     webdav_user: String = String::new(), PAGE_GENERAL;
     /// When the last update check ran, and the versions skipped or put off (`update::Memo`).

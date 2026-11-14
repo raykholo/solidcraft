@@ -487,8 +487,10 @@ stored under **SolidCraft WebDAV** in the OS keychain when connecting; leave the
 password field empty to reuse the saved password. To remove a saved password,
 delete its entry using the operating system's credential manager. The browser
 keeps credentials only in memory for the current SolidCraft origin: enter the
-password again after reloading. Plain HTTP is refused except for `localhost`,
-`127.0.0.1` and `::1`, for local testing.
+password again after reloading. Plain HTTP is refused unless you turn on
+"Allow unencrypted (local network)" for the share (off by default) and the address is
+`localhost`, `127.0.0.1` or `::1`. The app talks only to the address you typed and refuses
+redirects to any other host.
 
 The picker lists one folder at a time with `PROPFIND` and `Depth: 1`, opens with
 `GET`, and saves with `PUT`. Opening requires a strong `ETag`. Saving sends that
