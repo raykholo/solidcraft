@@ -287,7 +287,8 @@ fn a_boundary_surface_and_a_loft_surface_on_one_curve_stitch() {
     arc("Shared", 6.0, half.0, half.1, half.2);
     arc("Far", 60.0, half.0, half.1, half.2);
     // The issue's back arc: centre (1.5255, 0.9839), through both ends and its point farthest out.
-    let (centre, start, end) = ([1.5254923566139873, 0.9839315653407356], [0.0, -8.888970788629825], [0.0, 10.856833919298804]);
+    let (centre, start, end): ([f64; 2], [f64; 2], [f64; 2]) =
+        ([1.5254923566139873, 0.9839315653407356], [0.0, -8.888970788629825], [0.0, 10.856833919298804]);
     let r = (centre[0] - start[0]).hypot(centre[1] - start[1]);
     arc("Back", -9.0, start, end, [centre[0] - r, centre[1]]);
     // The two rails in the XZ plane (a sketch point (u, v) is the model point (u, 0, -v)).
