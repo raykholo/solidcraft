@@ -9096,14 +9096,9 @@ fn level_along(plane: &Plane, q: Vec3) -> f64 {
 }
 
 /// The level along `plane`'s normal of face `(body, face)` when it is a plane square to the
-/// normal, else `None`.
-fn square_face_level(st: &ModelState, (bi, fi): (usize, usize), plane: &Plane) -> Option<f64> {
-    let n = plane.normal();
-    let b = st.bodies.get(bi)?;
-    let tol = (b.body.size() * 1e-3).max(1e-3);
-    let faces = b.body.faces(tol).ok()?;
-    let f = faces.iter().find(|f| f.index == fi && f.plane_normal.is_some_and(|fnrm| fnrm.cross(n).len() < 1e-6))?;
-    Some(level_along(plane, f.centroid))
+/// normal, and the face's own tolerance, from solidcore ([`Body::face_square_level`]).
+fn square_face_level(st: &ModelState, (bi, fi): (usize, usize), plane: &Plane) -> Option<solidcore_ops::SquareFaceLevel> {
+    st.bodies.get(bi)?.body.face_square_level(fi, plane.normal(), plane.origin).ok()?
 }
 
 /// [`object_height`] of the point `p` on `face` (`(body index, face index)`, see [`object_face`]).
@@ -9112,8 +9107,8 @@ fn height_at(st: &ModelState, face: Option<(usize, usize)>, plane: &Plane, centr
     let h = |q: Vec3| level_along(plane, q);
     let Some((bi, fi)) = face else { return h(p) };
     let Some(b) = st.bodies.get(bi) else { return h(p) };
-    if let Some(level) = square_face_level(st, (bi, fi), plane) {
-        return level;
+    if let Some(square) = square_face_level(st, (bi, fi), plane) {
+        return square.level;
     }
     // A curved or slanted face: where the profile's middle meets it.
     let m = b.mesh();
@@ -9190,10 +9185,6 @@ fn object_face(st: &ModelState, name: Option<&str>, p: Vec3, normal: Option<Vec3
     face_at(st, p, normal)
 }
 
-/// Two levels along an extrude direction closer than this are the same level (mm). Fixed, not
-/// scaled with the body, so a plane 2 mm from a face stays another level in a large body.
-const LEVEL_TOLERANCE: f64 = 1e-6;
-
 /// The face a From / To Object point stands for ([`object_face`]), unless that face is a plane
 /// square to the extrude direction that lies at another level than the point: then the point is
 /// on a plane of its own (a construction plane near a face, within the pick tolerance of it), and
@@ -9201,7 +9192,8 @@ const LEVEL_TOLERANCE: f64 = 1e-6;
 fn object_face_at_level(st: &ModelState, name: Option<&str>, p: Vec3, plane: &Plane) -> Option<(usize, usize)> {
     let face = object_face(st, name, p, Some(plane.normal()))?;
     match square_face_level(st, face, plane) {
-        Some(level) if (level - level_along(plane, p)).abs() > LEVEL_TOLERANCE => None,
+        // At the face's own tolerance: the one the kernel takes a point for on that face.
+        Some(square) if (square.level - level_along(plane, p)).abs() > square.tolerance => None,
         _ => Some(face),
     }
 }
