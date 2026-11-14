@@ -404,7 +404,7 @@ impl Camera {
     /// fly close, in steps that shrink with the bound. Orthographic views have no eye, so are left alone.
     pub fn hold_min_distance(&mut self, min: f64) {
         if self.fov > 0.0 && min.is_finite() && min > 0.0 && self.distance.is_finite() && self.distance < min {
-            self.target = self.target - self.back() * (min - self.distance);
+            self.target -= self.back() * (min - self.distance);
             self.distance = min;
         }
     }
