@@ -94,12 +94,6 @@ impl Axis {
         }
         Ok(Spot { theta: y.atan2(x), height: r.dot(self.z), d_theta: (x * d.dot(self.y) - y * d.dot(self.x)) / round, d_height: d.dot(self.z) })
     }
-
-    /// The surface point at form parameters `u` (angle by the form's quarters) and height `h`.
-    fn lift(&self, u: f64, h: f64) -> Vec3 {
-        let (s, c) = form::angle(u).sin_cos();
-        self.origin + self.x * ((self.radius)(h) * c) + self.y * ((self.radius)(h) * s) + self.z * h
-    }
 }
 
 /// The form parameter at the angle `theta` and its derivative in the angle.
