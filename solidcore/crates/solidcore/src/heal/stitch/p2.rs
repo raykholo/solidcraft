@@ -1296,7 +1296,11 @@ impl Stitch<'_> {
                                 // the proved gap is the edge's tolerance (and its vertices'),
                                 // stored as it is and never above the stitch tolerance; the
                                 // edge is recorded with it below
-                                // EXPERIMENT 16510 c: no tolerance growth
+                                // a tolerance already at least the proved gap is kept as it is: the
+                                // recompute never lowers an edge's or its vertices' tolerance
+                                if seam.gap > edge::tolerance(b, e)? {
+                                    edge::set_tolerance(b, e, seam.gap, true, true)?;
+                                }
                                 seam_report = Some((seam.gap, edge::tolerance(b, e)?));
                             }
                             if let Some((pre, bound)) = edge_report {
