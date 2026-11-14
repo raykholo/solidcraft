@@ -36,7 +36,8 @@
 //! - `ui.window {action: minimize|maximize|restore|toggle|close}`: what the title bar's buttons do
 //! - `ui.confirm {accept?}`: the Delete confirmation (without `accept`: what it lists)
 //! - `ui.shortcut {command, key?, slot?, replace?}`: a command's keys, or bind one ("" clears)
-//! - `ui.help {item?: about|updates|shortcuts|report}`: the Help menu; returns the version and diagnostics
+//! - `ui.help {item?: about|updates|shortcuts|report, include_design?}`: the Help menu; returns the version and diagnostics
+//!   (`include_design` with `report`: the open design as a zip, replied as `design_zip`)
 //! - `ui.prefs {...}`: the preferences (default_units, nav, zoom_reverse, orbit_around, msaa,
 //!   length_decimals, angle_decimals); returns them all
 //! - `ui.capture {action?: capture|revert|cancel}`: the Capture Position question
@@ -1383,18 +1384,35 @@ fn ui_menu(app: &mut SolveApp, menu: params::Menu) -> Outcome {
     }
 }
 
-/// `ui.help {item?}`: the Help menu; the version and diagnostics.
+/// `ui.help {item?, include_design?}`: the Help menu; the version and diagnostics. With `report`,
+/// `include_design` saves the open design (and `repro.json`, its history as a script) as a zip and
+/// replies with `design_zip`, its path. Nothing opens: no folder, no file browser.
 fn ui_help(app: &mut SolveApp, ctx: &egui::Context, q: params::Help) -> Outcome {
     // The Help menu's items (the macOS menu bar sends the same); none only reports.
     const ITEMS: [&str; 8] = ["about", "updates", "shortcuts", "report", "crashes", "docs", "messages", "install_cli"];
     match q.item.as_deref() {
         Some(i) if !ITEMS.contains(&i) => return err(format!("unknown help item `{i}` ({})", ITEMS.join(", "))),
-        Some(i) => crate::help::run(app, ctx, i),
-        None => {}
+        _ => {}
     }
-    ok(
-        json!({"diagnostics": crate::help::diagnostics(app), "version": crate::help::VERSION, "commit": crate::help::COMMIT, "built": crate::help::BUILD_DATE}),
-    )
+    if q.include_design {
+        if q.item.as_deref() != Some("report") {
+            return err("`include_design` goes with the `report` item");
+        }
+        if let Some(reason) = crate::issue_report::design_unavailable(app) {
+            return err(solidcraft_ui_text::tr(reason));
+        }
+    }
+    if let Some(i) = q.item.as_deref() {
+        crate::help::run(app, ctx, i);
+    }
+    let mut reply = json!({"diagnostics": crate::help::diagnostics(app), "version": crate::help::VERSION, "commit": crate::help::COMMIT, "built": crate::help::BUILD_DATE});
+    if q.include_design {
+        match crate::issue_report::attach_design(app) {
+            Ok(path) => reply["design_zip"] = json!(path),
+            Err(e) => return err(e),
+        }
+    }
+    ok(reply)
 }
 
 /// `ui.render {path?, width?, height?, grid?, axes?}`: a headless render of the view.

@@ -371,10 +371,13 @@ impl Menu {
     }
 }
 
-/// `ui.help {item?}`.
+/// `ui.help {item?, include_design?}`: `include_design` (with `report`) saves the open design as a
+/// zip and replies with its path.
 #[derive(Deserialize)]
 pub(crate) struct Help {
     pub item: Option<String>,
+    #[serde(default)]
+    pub include_design: bool,
 }
 
 /// `ui.render {path?, width?, height?, grid?, axes?}`: `grid` and `axes` as the window shows

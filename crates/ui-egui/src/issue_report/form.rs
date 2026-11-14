@@ -69,6 +69,43 @@ fn screenshot_actions(app: &mut SolveApp, draft: &mut Draft, ui: &mut Ui) -> boo
     retake
 }
 
+/// "Include this design": off by default, with a plain line that the issue is public. Greyed out
+/// with the reason when there is no design to include.
+fn design_option(app: &SolveApp, draft: &mut Draft, ui: &mut Ui) {
+    let reason = super::design::unavailable(app);
+    if reason.is_some() {
+        draft.include_design = false;
+    }
+    let response =
+        ui.add_enabled_ui(reason.is_none(), |ui| ui_kit::checkbox(ui, solidcraft_ui_text::tr("ui.report_design"), &mut draft.include_design)).inner;
+    crate::scenario::publish_rect("report:design", response.rect);
+    crate::scenario::publish_handle("report:design", response.rect.center());
+    if response.changed() {
+        draft.opened_github = false;
+        draft.design_file = None;
+    }
+    let line = reason.unwrap_or("ui.report_design_public");
+    ui_kit::text(ui, solidcraft_ui_text::tr(line), ui_kit::Text::Note("design"));
+    if let Some(file) = draft.design_file.as_deref().filter(|_| draft.include_design) {
+        ui_kit::text(ui, &solidcraft_ui_text::format("ui.report_design_drag", &[("file", file)]), ui_kit::Text::Note("design_file"));
+    }
+}
+
+/// With "Include this design" on, save the zip and show where it is (or offer the download).
+fn deliver_design(app: &mut SolveApp, draft: &mut Draft) {
+    if !draft.include_design {
+        draft.design_file = None;
+        return;
+    }
+    match super::design::attach(app, true) {
+        Ok(attached) => draft.design_file = Some(attached.name),
+        Err(e) => {
+            draft.design_file = None;
+            draft.note = solidcraft_ui_text::format("ui.report_design_failed", &[("error", &super::limited(&e, 300))]);
+        }
+    }
+}
+
 fn screenshot(app: &mut SolveApp, draft: &mut Draft, ui: &mut Ui) -> bool {
     ui_kit::text(ui, tr_label("Screenshot (optional)"), ui_kit::Text::Heading("Screenshot (optional)"));
     let preview = draft.image.as_ref().map(|image| {
@@ -227,6 +264,7 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
                             draft.opened_github = false;
                         }
                         retake = screenshot(app, draft, ui);
+                        design_option(app, draft, ui);
                         ui_kit::text(
                             ui,
                             tr_label("App/system information and command settings are included. Review private details before sharing."),
@@ -263,6 +301,7 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
                 // Keep a local fallback even for short reports: opening the browser may fail,
                 // be blocked by the web host, or lead to an offline page. No delivery is confirmed.
                 ctx.copy_text(body);
+                deliver_design(app, draft);
                 ctx.open_url(egui::OpenUrl::new_tab(url));
                 draft.opened_github = true;
                 ctx.request_repaint();
@@ -271,6 +310,7 @@ pub(super) fn show(app: &mut SolveApp, draft: &mut Draft, ctx: &egui::Context) -
         ui_kit::Action::Apply => {
             ctx.copy_text(draft.report_body());
             draft.note = "Report copied. Keep this text to submit on GitHub when you are online.".into();
+            deliver_design(app, draft);
         }
         _ => {}
     }

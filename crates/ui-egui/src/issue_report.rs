@@ -10,6 +10,7 @@ use egui::{ColorImage, TextureHandle};
 
 use crate::{SolveApp, dialogs, help};
 
+mod design;
 mod form;
 
 /// The most an answer keeps, in characters (as `TextEdit::char_limit` counts them, not bytes).
@@ -107,6 +108,8 @@ pub struct ReportState {
     /// The report's field that had focus when a capture hid it.
     refocus: Option<egui::Id>,
     cad_focus: Option<egui::Id>,
+    /// Where the report's design zip goes instead of the app's report folder (tests).
+    pub(crate) folder: Option<std::path::PathBuf>,
 }
 
 /// How long a screenshot waits for a preview being computed before it shows it unfinished.
@@ -144,6 +147,10 @@ pub struct Draft {
     focus_requested: bool,
     missing_description: bool,
     opened_github: bool,
+    /// "Include this design": the open design goes with the report as a zip.
+    pub include_design: bool,
+    /// The zip made for this report, once it was: the file to drag into the issue.
+    design_file: Option<String>,
 }
 
 impl Draft {
@@ -165,6 +172,8 @@ impl Draft {
             focus_requested: false,
             missing_description: false,
             opened_github: false,
+            include_design: false,
+            design_file: None,
         }
     }
 
@@ -632,6 +641,23 @@ pub fn draft_url(title: &str, body: &str) -> (String, bool) {
         }
     }
     (base, true)
+}
+
+/// Why the open design cannot go with a report now (a message id); `None` when it can.
+pub(crate) fn design_unavailable(app: &SolveApp) -> Option<&'static str> {
+    design::unavailable(app)
+}
+
+/// The programmatic "Include this design" (`ui.help {item: report, include_design}`): the zip is
+/// written to the report folder, the open report remembers it, and nothing is shown or opened.
+/// Returns the zip's path.
+pub(crate) fn attach_design(app: &mut SolveApp) -> Result<String, String> {
+    let attached = design::attach(app, false)?;
+    if let Some(draft) = app.issue_report.draft.as_mut() {
+        draft.include_design = true;
+        draft.design_file = Some(attached.name.clone());
+    }
+    Ok(attached.path.map_or(attached.name, |p| p.to_string_lossy().into_owned()))
 }
 
 pub fn begin(app: &mut SolveApp, ctx: &egui::Context, dialog: Option<&dialogs::Dialog>, error: Option<&str>) {
@@ -2326,5 +2352,86 @@ mod tests {
         receive(&mut app, token, Arc::new(ColorImage::new([0, 0], vec![])));
         assert!(app.issue_report.draft.as_ref().unwrap().image.is_none());
         assert!(app.issue_report.draft.as_ref().unwrap().note.contains("dimensions"));
+    }
+
+    fn report_folder(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("solidcraft-report-design-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    /// A harness with a design open, a report folder of its own and a log of "show in folder".
+    fn design_report(tag: &str) -> (crate::scenario::Harness, std::path::PathBuf, std::rc::Rc<std::cell::RefCell<Vec<String>>>) {
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        let dir = report_folder(tag);
+        h.app.issue_report.folder = Some(dir.clone());
+        let shown = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = shown.clone();
+        h.app.services.show_in_folder = Some(Box::new(move |path| seen.borrow_mut().push(path.to_string())));
+        (h, dir, shown)
+    }
+
+    #[test]
+    fn issue_report_includes_the_design_only_when_asked_and_the_zip_holds_the_design_and_its_script() {
+        let (mut h, dir, shown) = design_report("dialog");
+        h.call("ui.help", json!({"item": "report"}));
+        h.frames(4);
+        let draft = h.app.issue_report.draft.as_mut().unwrap();
+        assert!(!draft.include_design, "off by default");
+        draft.description = "The hole is missing".into();
+        open_commands(&mut h);
+        assert!(shown.borrow().is_empty() && !dir.exists(), "nothing is saved or shown while it is off");
+
+        h.app.issue_report.draft.as_mut().unwrap().include_design = true;
+        open_commands(&mut h);
+        let shown = shown.borrow();
+        assert_eq!(shown.len(), 1, "the folder is shown once");
+        let zip = std::path::PathBuf::from(&shown[0]);
+        assert!(zip.starts_with(&dir) && zip.extension().is_some_and(|e| e == "zip"));
+        let files = solidcraft_engine::io::safe_zip::read(
+            &std::fs::read(&zip).unwrap(),
+            solidcraft_engine::io::safe_zip::Limits { max_entries: 8, max_entry_bytes: 1 << 30, max_total_bytes: 1 << 30 },
+        )
+        .unwrap();
+        let names: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+        assert!(names.iter().any(|n| n.ends_with(".sc")), "{names:?}");
+        assert!(names.contains(&"repro.json"), "{names:?}");
+        let repro = files.iter().find(|f| f.path == "repro.json").unwrap();
+        assert!(serde_json::from_slice::<serde_json::Value>(&repro.bytes).is_ok());
+        let file = h.app.issue_report.draft.as_ref().unwrap().design_file.clone().unwrap();
+        assert_eq!(Some(file.as_str()), zip.file_name().and_then(|n| n.to_str()), "the dialog names the file to drag");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn issue_report_programmatic_include_design_returns_the_path_and_opens_nothing() {
+        let (mut h, dir, shown) = design_report("control");
+        let reply = h.call("ui.help", json!({"item": "report", "include_design": true}));
+        assert_eq!(reply["ok"], true, "{reply}");
+        let path = reply["result"]["design_zip"].as_str().unwrap().to_string();
+        assert!(std::path::Path::new(&path).starts_with(&dir) && std::path::Path::new(&path).is_file());
+        assert!(shown.borrow().is_empty(), "no file browser opens");
+        let off = h.call("ui.help", json!({"item": "report"}));
+        assert!(off["result"].get("design_zip").is_none(), "off unless asked");
+        let wrong = h.call("ui.help", json!({"item": "about", "include_design": true}));
+        assert_eq!(wrong["ok"], false);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn issue_report_include_design_is_disabled_without_an_open_design() {
+        let (mut h, dir, shown) = design_report("none");
+        h.app.home.open = true;
+        let reply = h.call("ui.help", json!({"item": "report", "include_design": true}));
+        assert_eq!(reply["ok"], false);
+        assert!(h.app.issue_report.draft.is_none(), "a refused call opens no report");
+        assert_eq!(design::unavailable(&h.app), Some("ui.report_design_none"));
+        h.call("ui.help", json!({"item": "report"}));
+        h.frames(4);
+        h.app.issue_report.draft.as_mut().unwrap().include_design = true;
+        h.frames(2);
+        assert!(!h.app.issue_report.draft.as_ref().unwrap().include_design, "the option cannot stay on");
+        assert!(shown.borrow().is_empty() && !dir.exists());
     }
 }

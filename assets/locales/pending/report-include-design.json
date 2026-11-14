@@ -1,0 +1,74 @@
+{
+  "en": {
+    "ui.report_design": "Include this design",
+    "ui.report_design_drag": "Drag {file} into the issue.",
+    "ui.report_design_failed": "Could not save the design: {error}",
+    "ui.report_design_none": "Open a design to include it.",
+    "ui.report_design_nowhere": "This computer has no folder to save the design in.",
+    "ui.report_design_public": "Your design becomes public with the issue.",
+    "ui.report_design_web_only": "Only the Report a bug window can offer the design as a download in the web app."
+  },
+  "ar": {
+    "ui.report_design": "تضمين هذا التصميم",
+    "ui.report_design_drag": "اسحب {file} إلى المشكلة.",
+    "ui.report_design_failed": "تعذّر حفظ التصميم: {error}",
+    "ui.report_design_none": "افتح تصميمًا لتضمينه.",
+    "ui.report_design_nowhere": "لا يوجد على هذا الكمبيوتر مجلد لحفظ التصميم فيه.",
+    "ui.report_design_public": "يصبح تصميمك علنيًا مع المشكلة.",
+    "ui.report_design_web_only": "في تطبيق الويب، تتيح نافذة الإبلاغ عن خطأ وحدها تنزيل التصميم."
+  },
+  "de": {
+    "ui.report_design": "Dieses Design einschließen",
+    "ui.report_design_drag": "Ziehe {file} in das Issue.",
+    "ui.report_design_failed": "Das Design konnte nicht gespeichert werden: {error}",
+    "ui.report_design_none": "Öffne ein Design, um es einzuschließen.",
+    "ui.report_design_nowhere": "Auf diesem Computer gibt es keinen Ordner zum Speichern des Designs.",
+    "ui.report_design_public": "Dein Design wird mit dem Issue öffentlich.",
+    "ui.report_design_web_only": "In der Web-App bietet nur das Fenster „Fehler melden“ das Design als Download an."
+  },
+  "he": {
+    "ui.report_design": "לכלול את התכנון הזה",
+    "ui.report_design_drag": "גררו את {file} אל הדיווח.",
+    "ui.report_design_failed": "לא ניתן היה לשמור את התכנון: {error}",
+    "ui.report_design_none": "פתחו תכנון כדי לכלול אותו.",
+    "ui.report_design_nowhere": "במחשב הזה אין תיקייה לשמירת התכנון.",
+    "ui.report_design_public": "התכנון שלכם הופך לציבורי יחד עם הדיווח.",
+    "ui.report_design_web_only": "באפליקציית האינטרנט רק חלון דיווח על באג יכול להציע את התכנון כהורדה."
+  },
+  "ja": {
+    "ui.report_design": "この設計を含める",
+    "ui.report_design_drag": "{file} をイシューにドラッグしてください。",
+    "ui.report_design_failed": "設計を保存できませんでした: {error}",
+    "ui.report_design_none": "含めるには設計を開いてください。",
+    "ui.report_design_nowhere": "このコンピューターには設計を保存するフォルダーがありません。",
+    "ui.report_design_public": "設計はイシューとともに公開されます。",
+    "ui.report_design_web_only": "Web アプリでは、バグ報告ウィンドウだけが設計をダウンロードとして提供できます。"
+  },
+  "ko": {
+    "ui.report_design": "이 설계 포함",
+    "ui.report_design_drag": "{file}을(를) 이슈로 끌어다 놓으세요.",
+    "ui.report_design_failed": "설계를 저장하지 못했습니다: {error}",
+    "ui.report_design_none": "포함하려면 설계를 여세요.",
+    "ui.report_design_nowhere": "이 컴퓨터에는 설계를 저장할 폴더가 없습니다.",
+    "ui.report_design_public": "설계가 이슈와 함께 공개됩니다.",
+    "ui.report_design_web_only": "웹 앱에서는 버그 신고 창에서만 설계를 다운로드로 제공할 수 있습니다."
+  },
+  "vi": {
+    "ui.report_design": "Đính kèm thiết kế này",
+    "ui.report_design_drag": "Kéo {file} vào issue.",
+    "ui.report_design_failed": "Không thể lưu thiết kế: {error}",
+    "ui.report_design_none": "Hãy mở một thiết kế để đính kèm.",
+    "ui.report_design_nowhere": "Máy tính này không có thư mục để lưu thiết kế.",
+    "ui.report_design_public": "Thiết kế của bạn sẽ công khai cùng với issue.",
+    "ui.report_design_web_only": "Trong ứng dụng web, chỉ cửa sổ Báo cáo lỗi mới có thể cung cấp thiết kế để tải xuống."
+  },
+  "zh": {
+    "ui.report_design": "包含此设计",
+    "ui.report_design_drag": "将 {file} 拖入该 issue。",
+    "ui.report_design_failed": "无法保存设计：{error}",
+    "ui.report_design_none": "请先打开一个设计再包含它。",
+    "ui.report_design_nowhere": "这台电脑没有可保存设计的文件夹。",
+    "ui.report_design_public": "你的设计会随 issue 一起公开。",
+    "ui.report_design_web_only": "在网页版中，只有“报告错误”窗口可以将设计作为下载提供。"
+  }
+}
