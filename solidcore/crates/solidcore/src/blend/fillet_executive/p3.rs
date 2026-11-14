@@ -3033,13 +3033,17 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         let mut index = 0;
         while let Some(solver) = self.solvers.get(index).copied() {
             index += 1;
+            let __t = std::time::Instant::now();
             let judged = access.geometry_rails_fit_judged(k, solver, self)?;
+            super::session::band_cuts::tadd(5, __t);
             if judged.rolls_over {
                 rolls_over = true;
             }
             // the fork's tangency-labs/smlib@a307480: an end section that runs off its end
             // face overflows it the same way
+            let __t = std::time::Instant::now();
             let fit = judged.fit && access.geometry_end_sections_fit(k, solver, self)?;
+            super::session::band_cuts::tadd(6, __t);
             if fit {
                 continue;
             }
@@ -4070,6 +4074,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         // the fork's 862971f, e568e45 and aac4288: a convex blend that would cut the part
         // into pieces, refused naming the largest size that keeps it whole
         self.refuse_blends_cutting_the_part(k, access)?;
+        eprintln!("TT planesetup(5) intersectcalls(6) intersecttime(7) all:", 0, 0, 0, 0, 0); eprintln!("TT crossings {} keepsfull {} ballsection {} judge {} cachenew {} (ms)", (0..8).map(|i| (super::session::band_cuts::TT[i].load(std::sync::atomic::Ordering::Relaxed) / 1_000_000).to_string()).collect::<Vec<_>>().join(" "), "", "", "", "");
         // not the fork's (WR-707, #2299): a convex blend whose section would break through a
         // wall into the hollow behind, refused naming the largest size that does not
         if k.fixes.fillet_refuse_rounds_breaking_through {
@@ -4089,7 +4094,7 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
         self.adjust_corner_topology(k, access)?;
         self.calculate_solver_geometry(k, access)?;
         self.refuse_blends_larger_than_faces(k, access)?;
-        self.refuse_face_consuming_blends(k, access)?;
+                self.refuse_face_consuming_blends(k, access)?;
         self.refuse_overlapping_bands(k, access)?;
         self.ease_set_back_sections(k, access)?;
         self.calculate_corner_edges(k, access)?;
