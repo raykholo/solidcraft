@@ -158,7 +158,7 @@ pub fn infer_cylinder_emboss(body: &Body, plane: &Plane, regions: &[Region2], de
                         Some((lo, hi)) => profile_interval_overlaps(plane, regions, o, a, lo, hi)?,
                         None => true,
                     };
-                    if relevant && convex && signed < 0.0 {
+                    if relevant && convex && radial.dot(plane.normal()) < 0.0 {
                         return Err(fail("sketch normal must point outwards from the exterior wall"));
                     }
                     tangent |= relevant;
