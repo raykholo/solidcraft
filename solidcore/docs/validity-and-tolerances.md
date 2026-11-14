@@ -170,7 +170,12 @@ margin). A vertex tolerance under 1000 times the body's passes Test 82 as ever. 
 limit, an imported corner whose gap is local, is accepted only if its ball reaches no face or edge
 it does not bound or neighbour (rule 7); a ball that does, or whose clearance cannot be established,
 is refused with Test 82, and so is any past twice the limit (a tolerance covers a gap, never a
-misplaced vertex; the boolean's tolerance update grows a vertex no further either). Geometric gap checks still apply. The pointer check keeps its ratio of 1000
+misplaced vertex; the boolean's tolerance update grows a vertex no further either). The refusal past
+twice the limit reads the tolerance alone, so it applies to every body, faceless or already failing
+other pointer checks; on a body whose topology failed those checks clearance cannot be proven, and a
+vertex from the limit up to twice it is refused as before. Vertex Test 1 accepts a vertex/face gap
+within the vertex's own tolerance (the body's intersection tolerance is the floor), except that a
+tolerance past twice the limit excuses no gap. Geometric gap checks still apply. The pointer check keeps its ratio of 1000
 for faces and edges (`validation/pointers.rs`); the separate Edge tests 5, 6 are obsolete, and Face
 tests 25, 26 and 30 are not run (`assert_valid/face.rs`).
 
