@@ -597,6 +597,17 @@ mod tests {
             // a body tolerance whose limit is 1000 / 1500: the nearest non-incident face (x = 1)
             // is 1.5 x the limit away, so the radii below are 1.35 x to 1.8 x it
             b.set_tolerance(1.0 / 1500.0);
+            // Tests 6 and 83 hold the face and vertex zones above 0.99 x the body's, so the
+            // coarser body takes its zones with it.
+            for f in b.face_list().to_vec() {
+                b.face_mut(f).unwrap().tolerance = 1.0 / 1500.0;
+            }
+            for e in b.edge_list().to_vec() {
+                b.edge_mut(e).unwrap().tolerance = 1.0 / 1500.0;
+            }
+            for w in b.vertex_list().to_vec() {
+                b.vertex_mut(w).unwrap().tolerance = 1.0 / 1500.0;
+            }
             let v = b.vertex_list()[0];
             b.vertex_mut(v).unwrap().tolerance = radius;
             assert_eq!(
