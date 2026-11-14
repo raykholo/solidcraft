@@ -7,7 +7,7 @@
 //! coincidence validator runs on an edge and a face), with every sampled point of the interval
 //! within the tolerance of the surface and the curve tangent to it there. It is inside the trim
 //! by the kernel's classification of each part of the interval against the face's boundary
-//! ([`crate::topology::face::p2::classify_interval_on_face`]): each part is in the face or on
+//! (`classify_interval_on_face`): each part is in the face or on
 //! an edge of it, none outside.
 
 use crate::curve::curve::Curve;
