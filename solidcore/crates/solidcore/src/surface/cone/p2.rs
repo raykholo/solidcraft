@@ -1896,6 +1896,64 @@ mod tests {
         }
     }
 
+    /// #16488: a form whose rows are not exact translates. A unit-radius arc of 1 rad about
+    /// the x axis, extruded 1 mm along x, whose top row is turned about the axis by `turn`.
+    /// The recogniser holds the arcs' X axes to `EFF_ZERO_SQRT` radians, so a turn of half
+    /// that is a cylinder whose axis is the ruling's direction (tilted from x by about the
+    /// turn), and a turn of four times it is not a cylinder.
+    #[test]
+    fn a_top_row_turned_about_the_axis_is_a_cylinder_within_the_angle_tolerance_only() {
+        use crate::nurbs::math::CPoint;
+        use crate::nurbs::srf_basic::Surface as Nurb;
+        use crate::surface::implicit::AnalyticSupport;
+        let k = kernel();
+        let sweep = 1.0_f64;
+        let w = (0.5 * sweep).cos();
+        let row = |turn: f64, x: f64| -> Vec<CPoint> {
+            [
+                (0.0, 1.0, 1.0),
+                (0.5 * sweep, 1.0 / w, w),
+                (sweep, 1.0, 1.0),
+            ]
+            .iter()
+            .map(|&(a, r, weight): &(f64, f64, f64)| {
+                let (y, z) = (r * (a + turn).cos(), r * (a + turn).sin());
+                CPoint::new(x * weight, y * weight, z * weight, weight)
+            })
+            .collect()
+        };
+        let form = |turn: f64| {
+            let (bot, top) = (row(0.0, 0.0), row(turn, 1.0));
+            let net = (0..3).map(|i| vec![bot[i], top[i]]).collect();
+            let nurb = Nurb::new(
+                net,
+                2,
+                1,
+                vec![0.0, 0.0, 0.0, sweep, sweep, sweep],
+                vec![0.0, 0.0, 1.0, 1.0],
+            )
+            .unwrap();
+            BSplineSurface::from_nurb(nurb, false)
+        };
+        let near = Cone::is_nurb_surface_cylinder(&k, &form(0.5 * EFF_ZERO_SQRT), 1.0)
+            .unwrap()
+            .expect("a cylinder within the angle tolerance");
+        let surface = crate::surface::surface::Surface::from(near);
+        let support = AnalyticSupport::of(&surface).expect("an analytic surface");
+        let (AnalyticSupport::Cylinder { placement, .. } | AnalyticSupport::Cone { placement, .. }) =
+            support
+        else {
+            panic!("{support:?}");
+        };
+        let tilt = (placement.z_axis() - Vec3::new(1.0, 0.0, 0.0)).length();
+        assert!(tilt > 0.0 && tilt < 2.0 * EFF_ZERO_SQRT, "{tilt:e}");
+        assert!(
+            Cone::is_nurb_surface_cylinder(&k, &form(4.0 * EFF_ZERO_SQRT), 1.0)
+                .unwrap()
+                .is_none()
+        );
+    }
+
     /// A canonical cylinder of radius 2.94 (the goldens' gen0196), its net reaching ±1.2e6
     /// along its axis, recognised at a thousandth of the default tolerance. Its control points
     /// are known to the rounding of coordinates that large (about 2.3e-10), which turns its
