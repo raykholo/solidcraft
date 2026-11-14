@@ -879,6 +879,10 @@ pub fn edge_on<'a>(
 /// Points per edge along a loop taken for a face's extent.
 const EXTENT_POINTS: usize = 32;
 
+/// How many times the step that reads an edge's rate round a period is halved to keep it short of
+/// a quarter period: from a millionth of the span, 2^-30 of that reads an edge of 2^50 turns.
+const PROBE_HALVINGS: usize = 30;
+
 /// The most samples one edge takes: 2048 turns at eight a turn (an edge that winds more is not
 /// measured).
 const MAX_EXTENT_POINTS: usize = 1 << 14;
@@ -975,18 +979,47 @@ fn extent_in(
             let span = highest - lowest;
             let mut points = EXTENT_POINTS;
             if span > 0.0 && period.iter().any(Option::is_some) {
-                let step = span * 1e-6;
                 let mut turns = 0.0_f64;
                 for k in 0..=EXTENT_POINTS {
                     let t = lowest + span * k as f64 / EXTENT_POINTS as f64;
-                    let other = if t + step <= highest {
-                        t + step
-                    } else {
-                        t - step
-                    };
                     let Some(q) = at(t, None) else { continue };
-                    let Some(r) = at(other, Some(q)) else {
-                        continue;
+                    // The rate is read over a step short enough that the point has advanced less
+                    // than a quarter of a period: a step of a whole turn or more (an edge of a
+                    // million turns, probed over a millionth of its span) projects back onto the
+                    // point it started from and reads as no winding. A step is halved until it
+                    // is short enough; an edge that still advances that far over the smallest
+                    // step is wound beyond what can be measured and is refused.
+                    let mut step = span * 1e-6;
+                    let mut read = None;
+                    let mut unplaced = false;
+                    for _ in 0..PROBE_HALVINGS {
+                        let other = if t + step <= highest {
+                            t + step
+                        } else {
+                            t - step
+                        };
+                        let Some(r) = at(other, Some(q)) else {
+                            unplaced = true;
+                            break;
+                        };
+                        let too_far = (0..2).any(|d| {
+                            matches!(period.get(d), Some(Some(per))
+                                if (ix(&r, d) - ix(&q, d)).abs() >= 0.25 * per)
+                        });
+                        if !too_far {
+                            read = Some((r, step));
+                            break;
+                        }
+                        step *= 0.5;
+                    }
+                    let Some((r, step)) = read else {
+                        // A point that could not be placed is skipped, as before; one that
+                        // still advances a quarter period over the smallest step is wound
+                        // beyond what can be measured: the edge is refused.
+                        if unplaced {
+                            continue;
+                        }
+                        return None;
                     };
                     for d in 0..2 {
                         if let Some(Some(per)) = period.get(d) {

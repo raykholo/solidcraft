@@ -1338,6 +1338,35 @@ fn an_edge_that_winds_more_than_sixteen_turns_is_measured_whole() {
     );
 }
 
+/// An edge of a million turns is probed over a step of a whole turn at the start: that step
+/// projects back onto its start and would read as no winding, so the face's box would be one turn
+/// wide. The step is halved until it advances less than a quarter turn, and the edge is then
+/// refused as wound beyond what is measured.
+#[test]
+fn an_edge_of_a_million_turns_is_refused_not_read_as_one_turn() {
+    let r = 20.0f64;
+    let cylinder = Surface::Cylinder {
+        frame: Frame {
+            origin: [0.; 3],
+            x_axis: [1., 0., 0.],
+            y_axis: [0., 1., 0.],
+        },
+        radius: r,
+    };
+    let c = std::f64::consts::FRAC_1_SQRT_2;
+    let cut = Curve::Ellipse {
+        frame: Frame {
+            origin: [0., 0., 30.],
+            x_axis: [c, 0., c],
+            y_axis: [0., 1., 0.],
+        },
+        radii: [r * 2f64.sqrt(), r],
+    };
+    let turns = 1.0e6;
+    let found = form::extent(&cylinder, &[vec![(&cut, [0., turns * TAU], true)]], 1e-9).unwrap();
+    assert!(found.is_none(), "{found:?}");
+}
+
 /// The flux of `p / 3` through a whole sphere is its volume.
 #[test]
 fn a_spheres_flux_is_its_volume() {
