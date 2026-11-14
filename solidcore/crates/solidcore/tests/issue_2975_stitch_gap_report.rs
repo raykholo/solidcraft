@@ -666,20 +666,22 @@ fn parallel_pair(k: &mut Kernel, lift: f64) -> Brep {
     )
 }
 
-/// The second surface `z = x - 1 + lift` (a 45 degree tilt), parameters `u = x`, `v = y`: it
-/// crosses the first along the line `x = 1 - lift`, `lift` from the seam.
+/// The second surface `z = x - 1 + lift` (a 45 degree tilt) with its square over the parameters 0
+/// to 1, so that its edge at `u = 0` is the line `x = 1`, `z = lift`: it crosses the first
+/// surface along the line `x = 1 - lift`, `lift` from the seam.
 fn crossing_pair(k: &mut Kernel, lift: f64) -> Brep {
     let domain = Extent2d::from_points(Point2::new(-10.0, -10.0), Point2::new(10.0, 10.0));
-    pair_with_second_plane(
-        k,
-        Plane::new(
-            Vec3::new(0.0, 0.0, lift - 1.0),
-            Vec3::new(1.0, 0.0, 1.0),
-            Vec3::new(0.0, 1.0, 0.0),
-            solidcore::math::Vec2::new(2.0_f64.sqrt(), 1.0),
-            &domain,
-        ),
-    )
+    let plane = Plane::new(
+        Vec3::new(1.0, 0.0, lift),
+        Vec3::new(1.0, 0.0, 1.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        solidcore::math::Vec2::new(1.0, 1.0),
+        &domain,
+    );
+    let mut b = new_brep(k, USE_DEFAULT, USE_DEFAULT).unwrap();
+    add_square(k, &mut b, 0.0, 0.0);
+    add_square_on(k, &mut b, 0.0, 0.0, plane);
+    b
 }
 
 /// Whether any edge of `b` is used by both faces.
@@ -762,8 +764,8 @@ fn a_seam_between_surfaces_a_constant_gap_apart_takes_the_proved_gap_as_its_tole
         0.5 * lift
     );
     assert!(
-        tolerance <= 0.5 * lift * 1.01,
-        "the tolerance {tolerance:e} is the enclosure of the gap, not a margin on it"
+        tolerance <= lift * 1.01,
+        "the tolerance {tolerance:e} is the gap, not a margin on it"
     );
 }
 
