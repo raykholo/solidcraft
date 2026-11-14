@@ -985,16 +985,30 @@ fn extent_in(
             let (lowest, highest) = (t0.min(*t1), t0.max(*t1));
             let span = highest - lowest;
             let mut points = EXTENT_POINTS;
-            if span > 0.0 && period.iter().any(Option::is_some) {
+            if span > 0.0
+                && matches!(label, Surface::Cylinder { .. } | Surface::Cone { .. })
+                && period.iter().any(Option::is_some)
+            {
                 let mut turns = 0.0_f64;
+                let mut at_apex = false;
                 for k in 0..=EXTENT_POINTS {
-                    // Read a little inside the edge's ends: at a pole the angle round the axis is
-                    // not defined, and a point there reads as a jump of half a turn.
-                    let inset = span * 1e-3;
-                    let t = (lowest + span * k as f64 / EXTENT_POINTS as f64)
-                        .max(lowest + inset)
-                        .min(highest - inset);
+                    let t = lowest + span * k as f64 / EXTENT_POINTS as f64;
                     let Some(q) = at(t, None) else { continue };
+                    // The angle round a cone's axis is not defined at its apex: a sample there
+                    // reads no rate (an edge along a generator to the apex does not wind).
+                    if matches!(label, Surface::Cone { .. }) {
+                        match eval.pole_within(q, reach) {
+                            Ok(p) if p.iter().any(|p| *p) => {
+                                at_apex = true;
+                                continue;
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                *refused = Some(e);
+                                return None;
+                            }
+                        }
+                    }
                     // The rate is read over a step short enough that the point has advanced less
                     // than a quarter of a period: a step of a whole turn or more (an edge of a
                     // million turns, probed over a millionth of its span) projects back onto the
@@ -1038,6 +1052,14 @@ fn extent_in(
                             turns = turns.max((ix(&r, d) - ix(&q, d)).abs() / step * span / per);
                         }
                     }
+                }
+                // An edge through the apex that winds elsewhere has no angle there to follow.
+                if at_apex && turns > 1.0 {
+                    *refused = Some(EvalError::Invalid(
+                        "a face that winds round a cone's axis with an edge through its apex"
+                            .into(),
+                    ));
+                    return None;
                 }
                 // Eight samples a turn: no step is more than an eighth.
                 let needed = (8.0 * turns).ceil();
