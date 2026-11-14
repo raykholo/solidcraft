@@ -5677,45 +5677,35 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
         solvers: &[FilletObject],
     ) -> Result<bool> {
         use crate::geom::global_solver::SolverOperation;
-        use crate::intersect::point_class::{PointClassType, PointClassification};
         let (rails, edges, tol) = band_rails(self, k, solvers)?;
         let apart = 10.0 * tol;
-        // Pruning by boxes (#16645: the pair loop is quadratic in the blends, and each
-        // sample classifies against the face). A pair `(a, b)` can refuse only through a
-        // sample `p` of rail `a`'s kept part for which, with `e` on edge `b` and `r` on
-        // rail `b` (both inside their curves' boxes), `|p - e| < |e - r|`. So `p` lies
-        // within `|e - r|` of `e`, and `|e - r|` is at most the diagonal of the union
-        // of edge `b`'s box and rail `b`'s box. Rail `a`'s box contains `p`; when it is
-        // separated from edge `b`'s box grown by that diagonal (plus a margin) on some
-        // axis, the Euclidean distance from `p` to every `e` exceeds the diagonal, so
-        // no sample of the pair can pass the band test and skipping it gives the same
-        // verdict. Boxes are the curves' exact bounds; a curve whose box cannot be
-        // computed is never pruned.
+        // Pruning by boxes (#16645: the pair loop is quadratic in the blends). A pair
+        // `(a, b)` can refuse only through a sample `p` of rail `a`'s kept part for which,
+        // with `e` on edge `b` and `r` on rail `b`, `|p - e| < |e - r|`. So `p` lies
+        // within `|e - r|` of `e`, and `|e - r|` is at most the diagonal of the union of
+        // a box holding edge `b` and a box holding rail `b`. A box holding rail `a`
+        // (so `p`) that is separated from edge `b`'s box grown by that diagonal (plus a
+        // margin) on some axis leaves every `p` farther than the diagonal from every
+        // `e`, so no sample of the pair can pass the band test. The boxes are
+        // guaranteed bounds, never sampled extremes: the control polygon's box of a
+        // B-spline (or line) with positive weights holds the whole curve (the convex
+        // hull property), and a curve of any other kind is not pruned.
         let margin = 100.0 * tol + apart;
         let mut edge_boxes: Vec<Option<Extent3d>> = Vec::new();
         for &(edge, _) in &edges {
             let e = self.target.edge(edge)?;
-            let boxed = match &e.curve {
-                Some(c) => c.calculate_tight_bounding_box(k, &e.interval).ok(),
-                None => None,
-            };
-            edge_boxes.push(boxed);
+            edge_boxes.push(e.curve.as_ref().and_then(control_hull_box));
         }
-        // per rail: the box of its kept part (as rail `a`) and of its natural interval
-        // (as rail `b`)
-        let mut rail_boxes: Vec<Vec<(Option<Extent3d>, Option<Extent3d>)>> = Vec::new();
-        for own in &rails {
-            let mut v = Vec::new();
-            for (_, curve, kept) in own {
-                v.push((
-                    curve.calculate_tight_bounding_box(k, kept).ok(),
-                    curve
-                        .calculate_tight_bounding_box(k, &curve.natural_interval())
-                        .ok(),
-                ));
-            }
-            rail_boxes.push(v);
-        }
+        let rail_boxes: Vec<Vec<Option<Extent3d>>> = rails
+            .iter()
+            .map(|own| {
+                own.iter()
+                    .map(|(_, curve, _)| control_hull_box(curve))
+                    .collect()
+            })
+            .collect();
+        // faces whose guards main runs at their first sample, kept as it ran them
+        let mut guarded: BTreeSet<FaceId> = BTreeSet::new();
         for (a, &(edge_a, ends_a)) in edges.iter().enumerate() {
             for (b, &(edge_b, ends_b)) in edges.iter().enumerate() {
                 if a == b || edge_a == edge_b {
@@ -5749,10 +5739,22 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                         if face_a != face_b {
                             continue;
                         }
+                        if guarded.insert(*face_a) {
+                            // what main's first classification of a sample on this face
+                            // refuses before it looks at the sample: the face's own
+                            // hostile-coordinate check and its tolerance
+                            crate::query::face::p3::check_face_coordinates(
+                                k,
+                                self.target,
+                                *face_a,
+                                "query::face::p1::point_3d_classify",
+                            )?;
+                            crate::topology::face::p2::tolerance(self.target, *face_a)?;
+                        }
                         if let (Some(eb), Some(Some(box_a)), Some(Some(box_b))) = (
                             edge_box_b,
-                            rail_boxes.get(a).and_then(|r| r.get(ia)).map(|x| &x.0),
-                            rail_boxes.get(b).and_then(|r| r.get(ib)).map(|x| &x.1),
+                            rail_boxes.get(a).and_then(|r| r.get(ia)),
+                            rail_boxes.get(b).and_then(|r| r.get(ib)),
                         ) {
                             let reach = eb.union(box_b).size().length() + margin;
                             let mut grown = *eb;
@@ -5766,7 +5768,13 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                         for s in 1..16_u32 {
                             let p =
                                 curve_a.evaluate_point(k, ivl_a.evaluate(f64::from(s) / 16.0))?;
-                            let on_edge = edge_curve_b.drop_point(
+                            // Main classifies the sample first and drops a sample off its
+                            // face before any of the geometry below. The classification is
+                            // the costly step, so the geometry runs first; where it fails
+                            // (an error main would only reach for a sample on the face),
+                            // the sample is classified at once, as main did: off the face
+                            // it is dropped, on it the error is main's.
+                            let on_edge = match edge_curve_b.drop_point(
                                 k,
                                 &edge_ivl_b,
                                 p,
@@ -5774,8 +5782,16 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                                 crate::math::BIG_DOUBLE,
                                 None,
                                 SolverOperation::Minimize,
-                            )?;
-                            let on_rail = curve_b.drop_point(
+                            ) {
+                                Ok(v) => v,
+                                Err(error) => {
+                                    if sample_off_face(k, self.target, *face_a, p)? {
+                                        continue;
+                                    }
+                                    return Err(error);
+                                }
+                            };
+                            let on_rail = match curve_b.drop_point(
                                 k,
                                 &ivl_b,
                                 p,
@@ -5783,7 +5799,15 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                                 crate::math::BIG_DOUBLE,
                                 None,
                                 SolverOperation::Minimize,
-                            )?;
+                            ) {
+                                Ok(v) => v,
+                                Err(error) => {
+                                    if sample_off_face(k, self.target, *face_a, p)? {
+                                        continue;
+                                    }
+                                    return Err(error);
+                                }
+                            };
                             let t = on_edge.parameter;
                             if !on_edge.success
                                 || !on_rail.success
@@ -5792,7 +5816,18 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                             {
                                 continue; // beside the band, not across it
                             }
-                            let e = edge_curve_b.evaluate_point(k, t)?;
+                            let (e, r) = match (
+                                edge_curve_b.evaluate_point(k, t),
+                                curve_b.evaluate_point(k, on_rail.parameter),
+                            ) {
+                                (Ok(e), Ok(r)) => (e, r),
+                                (Err(error), _) | (_, Err(error)) => {
+                                    if sample_off_face(k, self.target, *face_a, p)? {
+                                        continue;
+                                    }
+                                    return Err(error);
+                                }
+                            };
                             // A constrained closest point can return an endpoint one
                             // parameter ulp inside the interval. It is still beside
                             // the band: testing only t would extend the band's chord
@@ -5804,7 +5839,6 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                             {
                                 continue;
                             }
-                            let r = curve_b.evaluate_point(k, on_rail.parameter)?;
                             let mut chord = e - r;
                             let width = chord.length();
                             if !matches!(
@@ -5822,30 +5856,8 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                             if from_rail > apart
                                 && from_rail < width - apart
                                 && (p - e).length() < width
+                                && !sample_off_face(k, self.target, *face_a, p)?
                             {
-                                // Inside the band by geometry; it refuses when the sample
-                                // is also on its face. The face test comes last because it
-                                // only filters (a sample off the face never refuses), so
-                                // the verdict does not depend on the order, and it is the
-                                // costly step (#16645): it runs only for a real overlap.
-                                let face_tol = crate::geom::tol::zone_tol3d(
-                                    k,
-                                    crate::topology::face::p2::tolerance(self.target, *face_a)?,
-                                );
-                                let mut on = PointClassification::<EntityRef>::new(face_tol);
-                                crate::query::face::p1::point_3d_classify(
-                                    k,
-                                    self.target,
-                                    *face_a,
-                                    p,
-                                    face_tol,
-                                    true,
-                                    &mut on,
-                                    crate::query::face::p1::Point3dClassifyOptions::default(),
-                                )?;
-                                if on.point_class() == PointClassType::Unknown {
-                                    continue; // off the face
-                                }
                                 return Ok(false);
                             }
                         }
@@ -5855,6 +5867,55 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
         }
         Ok(true)
     }
+}
+
+/// Whether `p` lies off `face` (the band check's classification of a sample).
+fn sample_off_face(
+    k: &Kernel,
+    target: &mut Brep,
+    face: FaceId,
+    p: crate::math::Point3,
+) -> Result<bool> {
+    use crate::intersect::point_class::{PointClassType, PointClassification};
+    let face_tol =
+        crate::geom::tol::zone_tol3d(k, crate::topology::face::p2::tolerance(target, face)?);
+    let mut on = PointClassification::<EntityRef>::new(face_tol);
+    crate::query::face::p1::point_3d_classify(
+        k,
+        target,
+        face,
+        p,
+        face_tol,
+        true,
+        &mut on,
+        crate::query::face::p1::Point3dClassifyOptions::default(),
+    )?;
+    Ok(on.point_class() == PointClassType::Unknown)
+}
+
+/// The box of a curve's control polygon when that holds the whole curve for certain: a
+/// B-spline or line whose points are finite and whose weights, if rational, are positive
+/// (the convex hull property). Any other curve has none.
+fn control_hull_box(curve: &crate::curve::curve::Curve) -> Option<Extent3d> {
+    use crate::curve::curve::CurveKind;
+    let (points, weights) = match curve.kind() {
+        CurveKind::BSpline(c) => c.control_polygon().ok()?,
+        CurveKind::Line(l) => l.base_with_nurb().ok()?.control_polygon().ok()?,
+        _ => return None,
+    };
+    if weights.iter().any(|w| !(*w > 0.0 && w.is_finite())) {
+        return None;
+    }
+    let mut it = points.iter();
+    let first = *it.next()?;
+    let mut hull = Extent3d::from_point(first);
+    for &p in std::iter::once(&first).chain(it) {
+        if !(p.x.is_finite() && p.y.is_finite() && p.z.is_finite()) {
+            return None;
+        }
+        hull.add_point(p);
+    }
+    Some(hull)
 }
 
 impl SolverLoadingAccess<FilletObject> for SessionObjects<'_> {
