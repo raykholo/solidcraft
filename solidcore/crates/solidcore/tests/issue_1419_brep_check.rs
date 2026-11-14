@@ -173,13 +173,30 @@ fn invalid_vertex_tolerances_are_still_refused() {
     }
 }
 
-/// A finite radius is local only while it remains clear of separate topology.
-/// The origin corner's ball reaches the opposite x=1 face at radius 1.
+/// A finite radius is local only while it remains clear of separate topology, and a tolerance
+/// past twice the ratio limit is refused outright. The origin corner's ball reaches the opposite
+/// x=1 face at radius 1. The body tolerance makes the limit 1000 / 1500, so radii from 0.667 to
+/// 1.333 are decided by clearance, and 1.5 is too wide for it.
 #[test]
 fn vertex_ball_must_not_reach_non_incident_topology() {
-    for (radius, accepted) in [(0.1, true), (0.999, true), (1.0, false), (2.0, false)] {
+    for (radius, accepted, message) in [
+        (0.1, true, ""),
+        (0.9, true, ""),
+        (1.1, false, "Vertex tolerance reaches a non-adjacent face"),
+        (
+            1.5,
+            false,
+            "Vertex tolerance is too wide to excuse by clearance",
+        ),
+        (
+            2.0,
+            false,
+            "Vertex tolerance is too wide to excuse by clearance",
+        ),
+    ] {
         let mut k = Kernel::default();
         let mut b = box_body(&mut k);
+        b.set_tolerance(1.0 / 1500.0);
         let v = b.vertex_list()[0];
         b.vertex_mut(v).unwrap().tolerance = radius;
         let result = check_brep(&mut k, &mut b, CheckLevel::Level2);
@@ -191,10 +208,7 @@ fn vertex_ball_must_not_reach_non_incident_topology() {
             let report = result.unwrap();
             assert!(!report.is_valid(), "radius {radius}");
             assert!(
-                report
-                    .lines()
-                    .iter()
-                    .any(|line| line.contains("Vertex tolerance reaches a non-adjacent face")),
+                report.lines().iter().any(|line| line.contains(message)),
                 "radius {radius}: {:?}",
                 report.lines()
             );
@@ -210,11 +224,20 @@ type Mutation = Box<dyn Fn(&mut Brep)>;
 fn mutated_bodies_report_exact_lines() {
     let mut k = Kernel::default();
     let cases: Vec<(&str, Mutation, Vec<&str>)> = vec![
-        // A finite local tolerance alone does not invalidate exact geometry.
+        // A finite local tolerance within twice the ratio limit does not invalidate exact geometry.
+        (
+            "vertex tolerance 0.015",
+            Box::new(|b: &mut Brep| { let v = b.vertex_list()[0]; b.vertex_mut(v).unwrap() }.tolerance = 0.015),
+            vec![],
+        ),
+        // Past it a tolerance would absorb a misplaced vertex: refused whatever its ball clears.
         (
             "vertex tolerance 0.1",
             Box::new(|b: &mut Brep| { let v = b.vertex_list()[0]; b.vertex_mut(v).unwrap() }.tolerance = 0.1),
-            vec![],
+            vec![
+                "SmBrep::Test #82 Tolerance: Vertex tolerance is too wide to excuse by clearance (offset=   0.1, tolerance=  0.02) [owner SmVertex]",
+                "AssertValid skipped: ValidatePointers failed",
+            ],
         ),
         (
             "edge tolerance 0.1",

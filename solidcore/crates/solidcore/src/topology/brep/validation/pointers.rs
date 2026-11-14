@@ -1869,10 +1869,12 @@ mod issue_891_tests {
             level: 0,
             failed: false,
         };
+        // a body tolerance whose limit is 1000 / 1500, so both radii are between 1 x and 2 x it
+        body.set_tolerance(1.0 / 1500.0);
         body.vertex_mut(vertex).unwrap().tolerance = 0.9;
         check_vertex_exclusion(&k, &mut body, &mut reports).unwrap();
         assert!(!reports.failed);
-        body.vertex_mut(vertex).unwrap().tolerance = 1.0;
+        body.vertex_mut(vertex).unwrap().tolerance = 1.1;
         check_vertex_exclusion(&k, &mut body, &mut reports).unwrap();
         assert!(reports.failed);
     }
@@ -2003,6 +2005,8 @@ mod issue_891_tests {
             .is_err());
         // Only vertices at or past the ratio limit are decided by exclusion; give all a wide
         // ball that still clears the wires one unit apart.
+        // The body tolerance makes the limit 0.4, so 0.5 is between 1 x and 2 x it.
+        body.set_tolerance(4e-4);
         for v in body.vertex_list().to_vec() {
             body.vertex_mut(v).unwrap().tolerance = 0.5;
         }
