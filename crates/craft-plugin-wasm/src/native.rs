@@ -456,7 +456,7 @@ impl<H: PluginHost> evaluate::Host for State<H> {
             self.evaluation()?.evaluating = true;
         }
         let result = self.host.evaluate_run(&command, &args).map_err(wit_error)?;
-        let text = serde_json::to_string(&result).map_err(|e| trap(e.to_string()))?;
+        let text = serde_json::to_string(&result).map_err(|e| wit_error(trap(e.to_string())))?;
         if text.len() > MAX_JSON_BYTES {
             // Too large to check this way: an answer, not a failed import.
             return Err(wit_error(limit("evaluate.run result exceeds 1 MiB")));
