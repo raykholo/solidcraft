@@ -945,7 +945,10 @@ fn face_corner_to_move_to(
 /// Those of the gap and surface evaluations.
 fn min_max_gap_point(k: &Kernel, brep: &mut Brep, v: VertexId, corner: Point3) -> Result<Point3> {
     let old = brep.vertex(v)?.point;
-    let found = minimax_centre(corner, |x| nearest_face_points(k, brep, v, x));
+    // Nearest points closer than a millionth of the intersection tolerance are the same point
+    // rounded differently (coordinates of order 1e3 carry rounding of 1e-13).
+    let merge = 1e-6 * vertex::corner::xsect_tol_3d_of_brep(k, brep);
+    let found = minimax_centre(corner, merge, |x| nearest_face_points(k, brep, v, x));
     brep.vertex_mut(v)?.point = old;
     reset_vertex_face_gaps(brep, v)?;
     found
@@ -999,12 +1002,13 @@ const MINIMAX_STEPS: usize = 64;
 /// are `x` itself and `x` stays.
 fn minimax_centre(
     start: Point3,
+    merge: f64,
     mut nearest: impl FnMut(Point3) -> Result<Vec<Point3>>,
 ) -> Result<Point3> {
     let mut x = start;
     for _ in 0..MINIMAX_STEPS {
         let points = nearest(x)?;
-        let Some(next) = enclosing_ball_centre(&points) else {
+        let Some(next) = enclosing_ball_centre(&points, merge) else {
             break;
         };
         let step = next.distance(x);
@@ -1017,63 +1021,28 @@ fn minimax_centre(
     Ok(x)
 }
 
-/// The centre of the smallest ball holding `points` (`None` for none): the one of the centres of
-/// the balls through one to four of them (the point, the midpoint of two, the circumcentre of
-/// three or of four) with the smallest radius over all of `points`. The smallest enclosing ball
-/// is one of these, and the ball of a candidate is measured against every point, so a
-/// circumcentre of a subset that leaves a point out is never chosen over the true centre. For
-/// three points that is the circumcentre of an acute triangle and the midpoint of the longest
-/// side otherwise.
-fn enclosing_ball_centre(points: &[Point3]) -> Option<Point3> {
-    if points.len() > MAX_EXHAUSTIVE_BALL {
-        return welzl_ball_centre(points);
-    }
-    let mut best: Option<(f64, Point3)> = None;
-    let mut consider = |c: Point3| {
-        if !(c.x.is_finite() && c.y.is_finite() && c.z.is_finite()) {
-            return;
-        }
-        let radius = points.iter().map(|p| p.distance(c)).fold(0.0_f64, f64::max);
-        if best.is_none_or(|(r, _)| radius < r) {
-            best = Some((radius, c));
-        }
-    };
-    for (i, &a) in points.iter().enumerate() {
-        consider(a);
-        for (j, &b) in points.iter().enumerate().skip(i + 1) {
-            consider(0.5 * (a + b));
-            for (l, &c) in points.iter().enumerate().skip(j + 1) {
-                if let Some(o) = circumcentre3(a, b, c) {
-                    consider(o);
-                }
-                for &d in points.iter().skip(l + 1) {
-                    if let Some(o) = circumcentre4(a, b, c, d) {
-                        consider(o);
-                    }
-                }
-            }
+/// The centre of the smallest ball holding `points` (`None` for none, or for more than
+/// [`MAX_WELZL_POINTS`] distinct ones). Points within `merge` of one another count once: every
+/// vertex use of a face gives that face's nearest point again, the same point up to rounding,
+/// and taking the noise between them as separate points makes Welzl's support sets nearly
+/// degenerate. The ball of the distinct points is then exact, by Welzl's algorithm in the order
+/// the points come (no randomness).
+fn enclosing_ball_centre(points: &[Point3], merge: f64) -> Option<Point3> {
+    let mut distinct: Vec<Point3> = Vec::with_capacity(points.len());
+    for &p in points {
+        if !distinct.iter().any(|q| q.distance(p) <= merge) {
+            distinct.push(p);
         }
     }
-    best.map(|(_, c)| c)
-}
-
-/// The most points [`enclosing_ball_centre`] searches exhaustively (every ball through one to four
-/// of them is tried, O(n^4)); more go to [`welzl_ball_centre`], expected linear. A vertex with
-/// many faces (a cone's apex) reaches it.
-const MAX_EXHAUSTIVE_BALL: usize = 8;
-
-/// The most points [`welzl_ball_centre`] takes: its recursion is one level per point.
-const MAX_WELZL_POINTS: usize = 4096;
-
-/// The centre of the smallest ball holding `points` by Welzl's algorithm (`None` for none, for
-/// more than [`MAX_WELZL_POINTS`], or when a support set has no ball through it).
-fn welzl_ball_centre(points: &[Point3]) -> Option<Point3> {
-    if points.len() > MAX_WELZL_POINTS {
+    if distinct.len() > MAX_WELZL_POINTS {
         return None;
     }
     let mut support = Vec::with_capacity(4);
-    welzl(points, points.len(), &mut support).map(|(_, c)| c)
+    welzl(&distinct, distinct.len(), &mut support).map(|(_, c)| c)
 }
+
+/// The most points [`enclosing_ball_centre`] takes: Welzl's recursion is one level per point.
+const MAX_WELZL_POINTS: usize = 4096;
 
 /// The smallest ball (radius, centre) holding `points[..n]` with `support` on its surface.
 /// Recursion depth is at most `n`, bounded by [`MAX_WELZL_POINTS`] at the entry.
@@ -1466,7 +1435,7 @@ mod tests {
                 Vec3::new(x.x.max(d), 0.0, x.z),
             ])
         };
-        let at = minimax_centre(Vec3::ZERO, nearest).unwrap();
+        let at = minimax_centre(Vec3::ZERO, 1e-12, nearest).unwrap();
         let want = Vec3::new(0.75 * d, 0.25 * d, 0.0);
         assert!(at.distance(want) < 1e-12, "{at:?}");
         let gap = |p: Point3| {
@@ -1478,7 +1447,7 @@ mod tests {
         assert!(gap(at) < gap(Vec3::new(0.5 * d, 0.0, 0.0)));
         // a corner every face holds stays where it is
         let held = |x: Point3| -> Result<Vec<Point3>> { Ok(vec![x, x]) };
-        assert_eq!(minimax_centre(Vec3::ZERO, held).unwrap(), Vec3::ZERO);
+        assert_eq!(minimax_centre(Vec3::ZERO, 1e-12, held).unwrap(), Vec3::ZERO);
     }
 
     // CodeRabbit on #16538: three faces whose nearest points are the corners of an equilateral
@@ -1493,7 +1462,7 @@ mod tests {
             Vec3::new(0.5 * s, 0.5 * s * 3.0_f64.sqrt(), 0.0),
         ];
         let nearest = |_: Point3| -> Result<Vec<Point3>> { Ok(corners.to_vec()) };
-        let at = minimax_centre(Vec3::ZERO, nearest).unwrap();
+        let at = minimax_centre(Vec3::ZERO, 1e-12, nearest).unwrap();
         let want = Vec3::new(0.5 * s, s / (2.0 * 3.0_f64.sqrt()), 0.0);
         assert!(at.distance(want) < 1e-12, "{at:?}");
         // an obtuse triangle: the midpoint of its longest side
@@ -1502,7 +1471,7 @@ mod tests {
             Vec3::new(s, 0.0, 0.0),
             Vec3::new(0.5 * s, 0.1 * s, 0.0),
         ];
-        let at = minimax_centre(Vec3::ZERO, |_| Ok(flat.to_vec())).unwrap();
+        let at = minimax_centre(Vec3::ZERO, 1e-12, |_| Ok(flat.to_vec())).unwrap();
         assert!(at.distance(Vec3::new(0.5 * s, 0.0, 0.0)) < 1e-12, "{at:?}");
     }
 
@@ -1520,9 +1489,35 @@ mod tests {
             .collect();
         points.push(centre + Vec3::new(0.3, -0.2, 0.0));
         points.push(centre + Vec3::new(-1.0, 0.5, 0.0));
-        assert!(points.len() > MAX_EXHAUSTIVE_BALL);
-        let at = enclosing_ball_centre(&points).unwrap();
+        let at = enclosing_ball_centre(&points, 1e-12).unwrap();
         assert!(at.distance(centre) < 1e-9, "{at:?}");
+    }
+
+    // The case that broke the slab and ring-and-lip joins: each face's nearest point comes once
+    // per vertex use, equal up to rounding. Repeating the points of a triangle 1e-5 across with
+    // noise of 1e-15 gives the centre of the triangle's smallest ball.
+    #[test]
+    fn near_duplicate_points_give_the_ball_of_the_distinct_ones() {
+        let s = 1.0e-5;
+        let base = Vec3::new(10.0, 20.0, 30.0);
+        let distinct = [
+            base,
+            base + Vec3::new(s, 0.0, 0.0),
+            base + Vec3::new(0.5 * s, 0.5 * s * 3.0_f64.sqrt(), 0.0),
+        ];
+        let want = enclosing_ball_centre(&distinct, 1e-11).unwrap();
+        let mut noisy = Vec::new();
+        let mut count = 0.0;
+        for _ in 0..6 {
+            for p in &distinct {
+                count += 1.0;
+                let n = 1e-15 * count;
+                noisy.push(*p + Vec3::new(n, -n, n));
+            }
+        }
+        let at = enclosing_ball_centre(&noisy, 1e-11).unwrap();
+        assert!(at.distance(want) < 1e-13, "{at:?} {want:?}");
+        assert!(at.distance(base + Vec3::new(0.5 * s, s / (2.0 * 3.0_f64.sqrt()), 0.0)) < 1e-13);
     }
 
     #[test]
