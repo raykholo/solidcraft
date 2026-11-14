@@ -1270,9 +1270,9 @@ fn surface_clears(
 }
 
 /// [`surface_clears`] for a curve over `interval`, split in two. Each cell's box is the curve's
-/// [`Curve::certified_bounding_box`] (a curve on a surface: its approximation's box grown by the
-/// approximation's measured gap); a curve with no such box, whose only box would be sampled,
-/// proves nothing, so it counts as reaching.
+/// [`Curve::certified_bounding_box`]; a curve with no such box (a curve on a surface, whose
+/// approximation's gap is sampled, or a curve whose only box would be the base class's sampled
+/// one) proves nothing, so it counts as reaching.
 fn curve_clears(
     k: &Kernel,
     curve: &Curve,
@@ -2390,13 +2390,11 @@ mod issue_891_tests {
         assert_eq!(after[0], middle_control_point(&mut trim()));
     }
 
-    /// A curve-on-surface edge's clearance box is its approximation's box grown by the
-    /// approximation's measured gap. A helix-like line in (u, v) on a cylinder is
-    /// approximated by a non-rational spline with a gap above zero: a point that far outside
-    /// the approximation's box is inside the grown one, so the plain box would have called a
-    /// ball of 0.9 of the gap clear and the certified one does not.
+    /// A curve-on-surface edge has no certified box: its approximation's gap from the curve is
+    /// measured at sample points (and forced passes keep spans out of tolerance), so its box
+    /// bounds nothing, and even a ball far from it counts as reaching.
     #[test]
-    fn a_curve_on_surface_box_grows_by_its_approximation_gap() {
+    fn a_curve_on_surface_has_no_certified_box_and_counts_as_reaching() {
         use crate::curve::crv_on_surf::CrvOnSurf;
         use crate::nurbs::nurbs_crv::allocate_nurb_curve;
         use crate::primitive::api_primitives::create_cylinder_surface;
@@ -2415,35 +2413,9 @@ mod issue_891_tests {
         let on = CrvOnSurf::new(&k, uv, Surface::from(cylinder), None, 3).unwrap();
         let curve = Curve::from(on);
         let interval = curve.natural_interval();
-        let certified = curve
-            .certified_bounding_box(&k, &interval)
-            .unwrap()
-            .unwrap();
-        let CurveKind::CrvOnSurf(on) = curve.kind() else {
-            panic!("expected a curve on a surface");
-        };
-        let gap = on.bs_approx_max_gap_3d();
-        assert!(gap > 0.0 && gap.is_finite(), "approximation gap {gap}");
-        let plain = curve
-            .calculate_bounding_box(
-                &k,
-                &interval,
-                BoundingBoxRequest {
-                    normal: true,
-                    pseudo: false,
-                    polar: false,
-                },
-                true,
-            )
-            .unwrap()
-            .normal
-            .unwrap();
-        let mut grown = plain;
-        grown.expand_absolute(gap);
-        assert_eq!(certified, grown);
-        let outside = Vec3::new(plain.max().x + gap, 0.0, 0.5);
-        assert!(box_distance(&plain, outside) >= 0.9 * gap);
-        assert!(box_distance(&certified, outside) < 0.9 * gap);
+        assert_eq!(curve.certified_bounding_box(&k, &interval).unwrap(), None);
+        let far = Vec3::new(100.0, 100.0, 100.0);
+        assert!(!curve_clears(&k, &curve, &interval, 1e-5, far, 0.1).unwrap());
     }
 
     /// A curve whose only box is the base class's sampled one (here an iso curve) proves no

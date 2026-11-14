@@ -589,10 +589,10 @@ impl Curve {
     /// none is known (not upstream; for clearance proofs, where a sampled box proves
     /// nothing). The B-spline and conic boxes come from the control points of the spans
     /// covered, a line's from its ends, a Hermite curve's from its Bezier polygon (over
-    /// the whole curve), a composite's from its segments' certified boxes. A curve on a
-    /// surface takes its cached approximation's box grown by the approximation's measured
-    /// gap, and has none when the approximation cannot be made. Every other kind would
-    /// fall back to [`calculate_bounding_box_base`], which samples, so it has none.
+    /// the whole curve), a composite's from its segments' certified boxes (none when a
+    /// segment has none). A curve on a surface or a tangent-field curve has none: its box is
+    /// its approximation's, whose gap from the curve is measured at sample points. Every other
+    /// kind would fall back to [`calculate_bounding_box_base`], which samples, so it has none.
     ///
     /// # Errors
     ///
@@ -618,11 +618,9 @@ impl Curve {
                 c.calculate_bounding_box(Some(&mut normal), None, None)?;
                 Some(normal)
             }
-            CurveKind::CrvOnSurf(c) => c.certified_bounding_box_ref_as(k, interval, None)?,
-            CurveKind::TangentField(c) => {
-                c.base()
-                    .certified_bounding_box_ref_as(k, interval, Some(c.members()))?
-            }
+            // their approximation's gap is measured at sample points, so no box of theirs
+            // bounds the curve
+            CurveKind::CrvOnSurf(_) | CurveKind::TangentField(_) => None,
             CurveKind::Composite(c) => c.certified_bounding_box(k, interval)?,
             _ => None,
         }

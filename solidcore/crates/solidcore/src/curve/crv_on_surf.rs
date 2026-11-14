@@ -144,7 +144,6 @@ use crate::error::{ignored, Result, SolidError};
 use crate::geom::axis2_placement::Axis2Placement;
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent2d::Extent2d;
-use crate::geom::extent3d::Extent3d;
 use crate::geom::geom_utility::p2::ContinuityType;
 use crate::geom::global_solver::SolverOperation;
 use crate::geom::tol::are_same;
@@ -1493,57 +1492,6 @@ impl CrvOnSurf {
                 calculate_bounding_box_base(k, &self.as_curve(derived), interval, req, expand)
             }
         }
-    }
-
-    /// A box holding every point of the curve over `interval` (not upstream; see
-    /// [`crate::curve::curve::Curve::certified_bounding_box`]): the cached approximation's box (its control
-    /// points), grown by the approximation's measured largest 3D gap from this curve. `None`
-    /// when the approximation cannot be made, or its gap was not measured: the base-class
-    /// box samples, so it bounds nothing. Runs on an exact copy whose caches are kept.
-    ///
-    /// # Errors
-    ///
-    /// Those of the box; [`SolidError::Unported`] from the approximation.
-    pub(crate) fn certified_bounding_box_ref_as(
-        &self,
-        k: &Kernel,
-        interval: &Extent1d,
-        derived: Option<TangentFieldMembers>,
-    ) -> Result<Option<Extent3d>> {
-        let mut copy = self.clone_exact_shared();
-        let result = copy.certified_bounding_box_as(k, interval, derived);
-        self.keep_caches_of(copy);
-        result
-    }
-
-    fn certified_bounding_box_as(
-        &mut self,
-        k: &Kernel,
-        interval: &Extent1d,
-        derived: Option<TangentFieldMembers>,
-    ) -> Result<Option<Extent3d>> {
-        let bs = match self.get_or_create_bs_approx_as(k, APPROX_TOL_3D, None, None, derived) {
-            Ok(bs) => bs,
-            Err(e) if e.is_unported_or_cancelled() => return Err(e),
-            Err(_) => return Ok(None),
-        };
-        let gap = self.approx_cache_mut().max_gap_3d;
-        if !(0.0..BIG_DOUBLE).contains(&gap) {
-            return Ok(None);
-        }
-        let req = BoundingBoxRequest {
-            normal: true,
-            pseudo: false,
-            polar: false,
-        };
-        Ok(bs
-            .calculate_bounding_box(interval, req)?
-            .normal
-            .filter(Extent3d::is_defined)
-            .map(|mut b| {
-                b.expand_absolute(gap);
-                b
-            }))
     }
 
     /// [`Self::calculate_bounding_box`] on `&self`: run on an exact copy whose break and
