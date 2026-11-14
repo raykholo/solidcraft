@@ -1567,7 +1567,9 @@ fn slab_past_spring_case(dx: f64, op: BooleanOp) {
     };
     let built = boolean(filleted_cube(), slab_past_spring(dx), op);
     assert!(built.is_ok(), "{op:?} dx {dx}: {:?}", built.as_ref().err());
-    let result = built.ok().flatten().expect("the boolean leaves a body");
+    let result = built.ok().flatten();
+    assert!(result.is_some(), "{op:?} dx {dx}: the boolean left no body");
+    let result = result.unwrap();
     let report = result.check(CheckLevel::All).unwrap();
     assert!(report.is_valid(), "{op:?} dx {dx}: {}", report.text);
     let got = volume(&result);
