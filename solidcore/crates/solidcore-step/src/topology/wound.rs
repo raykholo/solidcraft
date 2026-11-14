@@ -55,21 +55,40 @@ struct Axis {
 }
 
 fn axis(label: &BSurface) -> R<Axis> {
-    let frame = form::frame_of(label).ok_or_else(|| unsupported("a face that winds round a surface with no axis"))?;
-    let (origin, x, y) = (Vec3::from(frame.origin), Vec3::from(frame.x_axis), Vec3::from(frame.y_axis));
+    let frame = form::frame_of(label)
+        .ok_or_else(|| unsupported("a face that winds round a surface with no axis"))?;
+    let (origin, x, y) = (
+        Vec3::from(frame.origin),
+        Vec3::from(frame.x_axis),
+        Vec3::from(frame.y_axis),
+    );
     let radius: Box<dyn Fn(f64) -> f64> = match label {
         BSurface::Cylinder { radius, .. } => {
             let r = *radius;
             Box::new(move |_| r)
         }
-        BSurface::Cone { radius_at_origin, half_angle, .. } => {
+        BSurface::Cone {
+            radius_at_origin,
+            half_angle,
+            ..
+        } => {
             let (r, slope) = (*radius_at_origin, half_angle.tan());
             Box::new(move |h| r + h * slope)
         }
-        _ => return Err(unsupported("a face that winds round a surface that is not a cylinder or a cone")),
+        _ => {
+            return Err(unsupported(
+                "a face that winds round a surface that is not a cylinder or a cone",
+            ));
+        }
     };
     let z = x.cross(y).normalized().ok_or("a degenerate frame")?;
-    Ok(Axis { origin, x, y, z, radius })
+    Ok(Axis {
+        origin,
+        x,
+        y,
+        z,
+        radius,
+    })
 }
 
 impl Axis {
@@ -79,9 +98,16 @@ impl Axis {
         let (x, y) = (r.dot(self.x), r.dot(self.y));
         let round = x * x + y * y;
         if !(round > 1e-18) {
-            return Err(unsupported("an edge of a face that winds round its axis on the axis"));
+            return Err(unsupported(
+                "an edge of a face that winds round its axis on the axis",
+            ));
         }
-        Ok(Spot { theta: y.atan2(x), height: r.dot(self.z), d_theta: (x * d.dot(self.y) - y * d.dot(self.x)) / round, d_height: d.dot(self.z) })
+        Ok(Spot {
+            theta: y.atan2(x),
+            height: r.dot(self.z),
+            d_theta: (x * d.dot(self.y) - y * d.dot(self.x)) / round,
+            d_height: d.dot(self.z),
+        })
     }
 
     /// The surface point at form parameters `u` (angle by the form's quarters) and height `h`.
@@ -116,7 +142,10 @@ struct End {
 /// The cubic Hermite value at `s` in `[0, 1]` from values `p` and slopes `m` (per unit of `s`).
 fn hermite(p: [f64; 2], m: [f64; 2], s: f64) -> f64 {
     let (s2, s3) = (s * s, s * s * s);
-    (2.0 * s3 - 3.0 * s2 + 1.0) * p[0] + (s3 - 2.0 * s2 + s) * m[0] + (-2.0 * s3 + 3.0 * s2) * p[1] + (s3 - s2) * m[1]
+    (2.0 * s3 - 3.0 * s2 + 1.0) * p[0]
+        + (s3 - 2.0 * s2 + s) * m[0]
+        + (-2.0 * s3 + 3.0 * s2) * p[1]
+        + (s3 - s2) * m[1]
 }
 
 /// `theta` (wrapped) moved by whole turns to the one nearest `near`.
@@ -129,14 +158,24 @@ impl Axis {
         let s = self.spot(c, t)?;
         let theta = near.map_or(s.theta, |n| nearest(s.theta, n));
         let (u, scale) = along(theta);
-        Ok(End { t, theta, u, v: s.height, du: scale * s.d_theta, dv: s.d_height, d_theta: s.d_theta })
+        Ok(End {
+            t,
+            theta,
+            u,
+            v: s.height,
+            du: scale * s.d_theta,
+            dv: s.d_height,
+            d_theta: s.d_theta,
+        })
     }
 }
 
 /// The knots of a spline `curve` strictly inside `(a, b)` (none for any other curve).
 fn knots_within(curve: &BCurve, a: f64, b: f64) -> Vec<f64> {
     match curve {
-        BCurve::Spline { knots, .. } | BCurve::RationalSpline { knots, .. } => knots.iter().copied().filter(|k| *k > a && *k < b).collect(),
+        BCurve::Spline { knots, .. } | BCurve::RationalSpline { knots, .. } => {
+            knots.iter().copied().filter(|k| *k > a && *k < b).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -171,7 +210,9 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
         }
     }
     if stops.len() > MAX_PIECES / 4 {
-        return Err(unsupported("an edge of a face that winds round its axis, whose curve has too many knot spans"));
+        return Err(unsupported(
+            "an edge of a face that winds round its axis, whose curve has too many knot spans",
+        ));
     }
     let mut ends = vec![first];
     for &t in &stops {
@@ -179,7 +220,13 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
         let guess = prev.theta + 0.5 * (t - prev.t) * (prev.d_theta + ax.spot(&c, t)?.d_theta);
         ends.push(ax.end(&c, t, Some(guess))?);
     }
-    let mut pieces: Vec<[End; 2]> = ends.windows(2).map(|w| [w[0], w[1]]).collect();
+    let mut pieces: Vec<[End; 2]> = ends
+        .windows(2)
+        .filter_map(|w| match w {
+            [a, b] => Some([*a, *b]),
+            _ => None,
+        })
+        .collect();
     let mut done: Vec<[End; 2]> = Vec::new();
     let mut halvings = vec![0u32; pieces.len()];
     pieces.reverse();
@@ -190,7 +237,11 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
         let h = q.t - p.t;
         // The exact point at s of the piece (angle followed from the piece's own by the
         // Hermite estimate) against the Hermite spline there.
-        let mut worst = if (q.theta - p.theta).abs() > FRAC_PI_8 { f64::INFINITY } else { 0.0 };
+        let mut worst = if (q.theta - p.theta).abs() > FRAC_PI_8 {
+            f64::INFINITY
+        } else {
+            0.0
+        };
         let mut mid = None;
         for s in [0.25, 0.5, 0.75] {
             let theta_h = hermite([p.theta, q.theta], [h * p.d_theta, h * q.d_theta], s);
@@ -207,7 +258,9 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
             continue;
         }
         if depth >= MAX_HALVINGS || done.len() + pieces.len() >= MAX_PIECES {
-            return Err(unsupported(format!("an edge of a face that winds round its axis, whose pcurve takes more than {MAX_PIECES} pieces")));
+            return Err(unsupported(format!(
+                "an edge of a face that winds round its axis, whose pcurve takes more than {MAX_PIECES} pieces"
+            )));
         }
         let mid = mid.ok_or("pcurve midpoint")?;
         pieces.push([mid, q]);
@@ -238,10 +291,15 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
 /// close once unwrapped, or that runs further than the form does, is refused. The loop that runs
 /// furthest (the outer) is put on the form's first turn; each other loop (a hole) goes on the turn
 /// of the form where it is inside the outer, and is refused where that is no turn or more than one.
-pub(super) fn unwind(edge_loops: &[Vec<(u32, bool)>], pcs: &mut [Vec<Curve2>], range: [f64; 2]) -> R<()> {
+pub(super) fn unwind(
+    edge_loops: &[Vec<(u32, bool)>],
+    pcs: &mut [Vec<Curve2>],
+    range: [f64; 2],
+) -> R<()> {
     let at = |c: &Curve2, end: bool| -> R<[f64; 2]> {
         let [a, b] = c.interval().ok_or("pcurve interval")?;
-        solidcore_ops::pcurve::eval(c, if end { b } else { a }).ok_or_else(|| "pcurve end".to_string())
+        solidcore_ops::pcurve::eval(c, if end { b } else { a })
+            .ok_or_else(|| "pcurve end".to_string())
     };
     // Each loop on its own: its uses' moves to run on from one another, and its extent in u.
     let mut moves_of = Vec::with_capacity(pcs.len());
@@ -264,14 +322,18 @@ pub(super) fn unwind(edge_loops: &[Vec<(u32, bool)>], pcs: &mut [Vec<Curve2>], r
         if let Some(p) = previous
             && (p - first).abs() > 0.5 * FORM_TURN
         {
-            return Err(unsupported(format!("a loop that winds {:.1} turns about its axis and does not close", (p - first) / FORM_TURN)));
+            return Err(unsupported(format!(
+                "a loop that winds {:.1} turns about its axis and does not close",
+                (p - first) / FORM_TURN
+            )));
         }
         // The loop's extent in u, from the points each pcurve passes through.
         let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
         for (c, by) in loop_pcs.iter().zip(&moves) {
             let [a, b] = c.interval().ok_or("pcurve interval")?;
             for k in 0..=32 {
-                let q = solidcore_ops::pcurve::eval(c, a + (b - a) * f64::from(k) / 32.0).ok_or("pcurve point")?;
+                let q = solidcore_ops::pcurve::eval(c, a + (b - a) * f64::from(k) / 32.0)
+                    .ok_or("pcurve point")?;
                 lo = lo.min(q[0] + by);
                 hi = hi.max(q[0] + by);
             }
@@ -290,20 +352,32 @@ pub(super) fn unwind(edge_loops: &[Vec<(u32, bool)>], pcs: &mut [Vec<Curve2>], r
     let (lo, hi) = *extent_of.get(outer).ok_or("loop extent")?;
     let outer_whole = ((range[0] - FORM_SLACK - lo) / FORM_TURN).ceil() * FORM_TURN;
     if !(hi + outer_whole <= range[1] + FORM_SLACK) {
-        return Err(unsupported("a loop that winds further round its axis than its face's form"));
+        return Err(unsupported(
+            "a loop that winds further round its axis than its face's form",
+        ));
     }
-    let outer_moves: Vec<f64> = moves_of.get(outer).ok_or("loop moves")?.iter().map(|by| by + outer_whole).collect();
+    let outer_moves: Vec<f64> = moves_of
+        .get(outer)
+        .ok_or("loop moves")?
+        .iter()
+        .map(|by| by + outer_whole)
+        .collect();
     let mut whole_of = vec![outer_whole; pcs.len()];
     for k in (0..pcs.len()).filter(|&k| k != outer) {
         let (lo, hi) = *extent_of.get(k).ok_or("loop extent")?;
         let first = ((range[0] - FORM_SLACK - lo) / FORM_TURN).ceil() * FORM_TURN;
         if !(hi + first <= range[1] + FORM_SLACK) {
-            return Err(unsupported("a loop that winds further round its axis than its face's form"));
+            return Err(unsupported(
+                "a loop that winds further round its axis than its face's form",
+            ));
         }
         // Where the loop's first use starts, on each turn the form has room for.
         let start = {
             let c = pcs.get(k).and_then(|l| l.first()).ok_or("loop pcurves")?;
-            let by = moves_of.get(k).and_then(|m| m.first()).ok_or("loop moves")?;
+            let by = moves_of
+                .get(k)
+                .and_then(|m| m.first())
+                .ok_or("loop moves")?;
             let q = at(c, false)?;
             [q[0] + by, q[1]]
         };
@@ -313,14 +387,17 @@ pub(super) fn unwind(edge_loops: &[Vec<(u32, bool)>], pcs: &mut [Vec<Curve2>], r
         while hi + first + turn <= range[1] + FORM_SLACK {
             if inside(outer_pcs, &outer_moves, [start[0] + first + turn, start[1]])? {
                 if on.is_some() {
-                    return Err(unsupported("a loop inside the face's outer loop on more than one turn of its form"));
+                    return Err(unsupported(
+                        "a loop inside the face's outer loop on more than one turn of its form",
+                    ));
                 }
                 on = Some(first + turn);
             }
             turn += FORM_TURN;
         }
-        *whole_of.get_mut(k).ok_or("loop turn")? =
-            on.ok_or_else(|| unsupported("a loop that is inside the face's outer loop on no turn of its form"))?;
+        *whole_of.get_mut(k).ok_or("loop turn")? = on.ok_or_else(|| {
+            unsupported("a loop that is inside the face's outer loop on no turn of its form")
+        })?;
     }
     for ((loop_pcs, moves), whole) in pcs.iter_mut().zip(moves_of).zip(whole_of) {
         for (c, by) in loop_pcs.iter_mut().zip(moves) {
@@ -343,7 +420,11 @@ fn inside(loop_pcs: &[Curve2], moves: &[f64], q: [f64; 2]) -> R<bool> {
         let mut t0 = a;
         let mut left = point(t0)?[0] + by < q[0];
         for i in 1..=CROSSING_CELLS {
-            let t1 = if i == CROSSING_CELLS { b } else { a + (b - a) * i as f64 / CROSSING_CELLS as f64 };
+            let t1 = if i == CROSSING_CELLS {
+                b
+            } else {
+                a + (b - a) * i as f64 / CROSSING_CELLS as f64
+            };
             let now = point(t1)?[0] + by < q[0];
             if now != left {
                 let (mut lo, mut hi) = (t0, t1);
@@ -386,11 +467,16 @@ mod tests {
 
     /// A straight pcurve from `a` to `b` in the form's (u, v).
     fn line(a: [f64; 2], b: [f64; 2]) -> Curve2 {
-        Curve2::Spline { knots: vec![0.0, 0.0, 1.0, 1.0], points: vec![a, b] }
+        Curve2::Spline {
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            points: vec![a, b],
+        }
     }
 
     fn polygon(corners: &[[f64; 2]]) -> Vec<Curve2> {
-        (0..corners.len()).map(|i| line(corners[i], corners[(i + 1) % corners.len()])).collect()
+        (0..corners.len())
+            .map(|i| line(corners[i], corners[(i + 1) % corners.len()]))
+            .collect()
     }
 
     /// A two-turn strip (a thread's flank: the band between two helices, v rising by 1 a turn) with
@@ -401,11 +487,17 @@ mod tests {
     fn a_hole_goes_on_the_turn_of_the_strip_it_is_inside() {
         let strip = polygon(&[[0.0, 0.0], [8.0, 2.0], [8.0, 3.0], [0.0, 1.0]]);
         let hole = polygon(&[[0.5, 1.4], [0.75, 1.4], [0.75, 1.6], [0.5, 1.6]]);
-        let loops = vec![vec![(0, true), (1, true), (2, true), (3, true)], vec![(4, true), (5, true), (6, true), (7, true)]];
+        let loops = vec![
+            vec![(0, true), (1, true), (2, true), (3, true)],
+            vec![(4, true), (5, true), (6, true), (7, true)],
+        ];
         let mut pcs = vec![strip, hole];
         unwind(&loops, &mut pcs, [0.0, 8.0]).unwrap();
         let start = solidcore_ops::pcurve::eval(&pcs[1][0], 0.0).unwrap();
-        assert!((start[0] - 4.5).abs() < 1e-12 && (start[1] - 1.4).abs() < 1e-12, "{start:?}");
+        assert!(
+            (start[0] - 4.5).abs() < 1e-12 && (start[1] - 1.4).abs() < 1e-12,
+            "{start:?}"
+        );
         let outer = solidcore_ops::pcurve::eval(&pcs[0][0], 0.0).unwrap();
         assert!(outer[0].abs() < 1e-12, "{outer:?}");
     }
@@ -415,7 +507,10 @@ mod tests {
     fn a_hole_low_in_the_strip_stays_on_the_first_turn() {
         let strip = polygon(&[[0.0, 0.0], [8.0, 2.0], [8.0, 3.0], [0.0, 1.0]]);
         let hole = polygon(&[[0.5, 0.4], [0.75, 0.4], [0.75, 0.6], [0.5, 0.6]]);
-        let loops = vec![vec![(0, true), (1, true), (2, true), (3, true)], vec![(4, true), (5, true), (6, true), (7, true)]];
+        let loops = vec![
+            vec![(0, true), (1, true), (2, true), (3, true)],
+            vec![(4, true), (5, true), (6, true), (7, true)],
+        ];
         let mut pcs = vec![strip, hole];
         unwind(&loops, &mut pcs, [0.0, 8.0]).unwrap();
         let start = solidcore_ops::pcurve::eval(&pcs[1][0], 0.0).unwrap();
