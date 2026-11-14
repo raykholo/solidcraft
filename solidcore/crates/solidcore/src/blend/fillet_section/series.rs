@@ -846,7 +846,7 @@ mod tests {
     #[test]
     fn vector_series_dot_and_cross() {
         let tr = Trunc::new(1, 1).unwrap();
-        let e1 = VSer::constant(V3::from_vec3(Vec3::new(1.0, 0.0, 0.0)));
+        let e1 = VSer::<f64>::constant(V3::from_vec3(Vec3::new(1.0, 0.0, 0.0)));
         let e2 = VSer::constant(V3::from_vec3(Vec3::new(0.0, 1.0, 0.0)));
         let e3 = e1.cross(&e2, tr);
         assert_eq!(e3.a[2].c[0][0], 1.0);
