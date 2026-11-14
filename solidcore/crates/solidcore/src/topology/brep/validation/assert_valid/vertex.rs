@@ -7,8 +7,9 @@
 //! | `vertex` | `SmVertex::AssertValid` |
 //! | `vertexuse` | `SmVertexuse::AssertValid` |
 //!
-//! Deviations: the vertex's local tolerance bounds its face gaps,
-//! with the body's intersection tolerance as a floor (see `seams`).
+//! Deviations: the vertex's local tolerance bounds its face gaps, with the body's
+//! intersection tolerance as a floor; a tolerance past twice Test #82's limit excuses
+//! nothing (see `seams`).
 
 use super::{base, class, seams, Cx};
 use crate::error::{EntityRef, Result};
@@ -31,8 +32,7 @@ pub(super) fn vertex(k: &mut Kernel, b: &mut Brep, cx: &mut Cx<'_>, v: VertexId)
     let (located, max_gap) = seams::assert_test_vertex1(k, b, v)?;
     if !located {
         // Local uncertainty with SmTol::GetXSectTol3d(GetBrep()) as the floor.
-        let xsect_tol =
-            crate::topology::vertex::corner::xsect_tol_3d_of_brep(k, b).max(b.vertex(v)?.tolerance);
+        let xsect_tol = seams::vertex1_tolerance(k, b, v)?;
         if max_gap > xsect_tol {
             let ok = !cx.rep.need(2);
             rtn &= cx

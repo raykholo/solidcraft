@@ -174,13 +174,32 @@ pub(super) fn assert_test_vertex1(
     use crate::topology::vertex::corner;
 
     let (_, face_gap, _) = corner::is_within_xsect_tol_3d_of_faces(k, b, v, false)?;
-    let tolerance = corner::xsect_tol_3d_of_brep(k, b).max(b.vertex(v)?.tolerance);
+    let tolerance = vertex1_tolerance(k, b, v)?;
     // CalcCornerFromFaces is a placement query, not a distance to the tolerant
     // boundary. Its approximate intersection can slide along a shared curve;
     // even an exact ideal corner ignores the incident faces' tolerance bands.
     // As on main, Test 1 reports the measured vertex/face gap. Strict corner
     // queries used by placement and repair keep their independent semantics.
     Ok((face_gap <= tolerance, face_gap))
+}
+
+/// The gap Vertex Test 1 allows: the vertex's own tolerance, with the body's intersection
+/// tolerance as the floor. A tolerance past `GROWTH_PAST_RATIO` times the large/small size
+/// limit (Test #82's refusal) excuses no gap, so such a vertex is held to the floor alone, as on
+/// main; the check itself may have grown it there (an edge tolerance cascading to its vertices).
+pub(super) fn vertex1_tolerance(k: &Kernel, b: &Brep, v: VertexId) -> Result<f64> {
+    use crate::topology::vertex::corner;
+
+    let floor = corner::xsect_tol_3d_of_brep(k, b);
+    let local = b.vertex(v)?.tolerance;
+    let refused = crate::topology::brep::validation::pointers::GROWTH_PAST_RATIO
+        * crate::geom::tol::LARGE_SMALL_SIZE_RATIO
+        * b.tolerance();
+    Ok(if local > refused {
+        floor
+    } else {
+        floor.max(local)
+    })
 }
 
 #[cfg(test)]
