@@ -794,9 +794,9 @@ impl Body {
     /// directions for the same.
     ///
     /// # Errors
-    /// [`Error::Argument`] for an index past the faces or a `direction` or `origin` that is not
-    /// finite; [`Error::Refused`] for a `direction` of no length; the errors of [`Body::face_plane_normal`] and
-    /// [`Body::face_centroid`].
+    /// [`Error::Argument`] for an index past the faces, a `direction` or `origin` that is not
+    /// finite, or input the kernel's query refuses (a `direction` of no length); the errors of
+    /// [`Body::face_plane_normal`] and [`Body::face_centroid`].
     pub fn face_square_level(
         &self,
         order: &Order,
@@ -812,8 +812,12 @@ impl Body {
         };
         let on_face = point(self.face_centroid(order, face, 1e-8)?.centroid)?;
         let Some(level) =
-            q::face_square_level(point(n.value)?, n.bound, on_face, direction, origin)
-                .map_err(status)?
+            q::face_square_level(point(n.value)?, n.bound, on_face, direction, origin).map_err(
+                |e| match e {
+                    solidcore::SolidError::InvalidInput { .. } => Error::Argument,
+                    e => status(e),
+                },
+            )?
         else {
             return Ok(None);
         };
