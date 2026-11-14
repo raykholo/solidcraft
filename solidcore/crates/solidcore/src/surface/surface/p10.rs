@@ -540,6 +540,18 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
             return Ok(false);
         }
 
+        // Not upstream. A ray has no roots behind its start: only the forward part of the
+        // interval is a candidate. Left whole, a leaf that a ray grazes (it crosses the
+        // convex patch twice) seeded its solve from the middle of the interval, which can
+        // settle on the root behind the start; that root is dropped below and the root
+        // ahead was never looked for, so the ray missed a wall it leaves by.
+        if self.ray_fire {
+            let scaled_zero = EFF_ZERO * (1.0 + self.line_point.max_dimension());
+            if bound_ivl.min() < -scaled_zero {
+                bound_ivl = Extent1d::from_min_max(-scaled_zero, bound_ivl.max());
+            }
+        }
+
         // no work - if given, m_cpLineInterval doesn't overlap sBoxIvl
         if let Some(line_ivl) = &self.line_interval {
             if line_ivl.are_disjoint(&bound_ivl, 0.0) {
