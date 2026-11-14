@@ -68,10 +68,11 @@
 //! - `static int cbiTol = 0` in `MergeCoincidentSurfaces` is a compile-time constant
 //!   upstream; only its `0` branch is ported. The `SM_DEBUG_CODE` and
 //!   `SM_VALIDATE_TOPOLOGY` blocks are compiled out upstream and not ported.
-//! - SolidCraft: split children from coincidence repairs are related together with
-//!   their endpoints. An unambiguous endpoint pairing must fit the stored intersection
-//!   tolerances; existing vertex mates survive coalescing, and deleted children leave
-//!   both the search and the later classification bookkeeping.
+//! - SolidCraft: unreferenced split children matched by the nearest-edge repair are
+//!   related together with their endpoints; the classification's own edge pairs keep
+//!   upstream's plain `Relate` and its repair. An unambiguous endpoint pairing must fit
+//!   the stored intersection tolerances; existing vertex mates survive coalescing, and
+//!   deleted children leave both the search and the later classification bookkeeping.
 //! - **Recursion.** None: `MergeCoincidentSurfaces` calls `MergeCurveOnSurfaces`,
 //!   which calls `MergeCurveClasses`; none calls back.
 
@@ -663,7 +664,8 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         // valid). First remove any existing relationships from all new edges.
         for ii in 0..new_edges.len() + new_edges_other.len() {
             // look for a ThisEdge<->OtherEdge mapping for current target edge
-            let (new_e, other_new_e) = self.new_edge_pair(ii, &new_edges, &new_edges_other)?;
+            let (new_e, other_new_e) =
+                self.new_edge_pair(ii, &new_edges, &new_edges_other, true)?;
 
             // when old pNewE<->pOtherNewE mapping exists remove it (status unchecked)
             if new_e.is_some() && other_new_e.is_some() {
@@ -679,7 +681,8 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
             // Now update Relationships on all new edges.
             for ii in 0..new_edges.len() + new_edges_other.len() {
                 // look for a ThisNewEdge<->OtherNewEdge mappings
-                let (new_e, other_new_e) = self.new_edge_pair(ii, &new_edges, &new_edges_other)?;
+                let (new_e, other_new_e) =
+                    self.new_edge_pair(ii, &new_edges, &new_edges_other, false)?;
 
                 if new_e.is_some_and(|e| squeezed.deleted_edges.contains(&e))
                     || other_new_e.is_some_and(|e| squeezed.deleted_edges.contains(&e))
@@ -784,12 +787,8 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
                         && !contains(&squeezed.deleted_edges, &e2)
                     {
                         // create the Edge/Edge mate relationship
-                        let conflicts = self.other_mate(Some(e1)).is_some_and(|e| e != e2)
-                            || self.brep_mate(Some(e2)).is_some_and(|e| e != e1);
-                        if conflicts {
+                        if !succeeded(self.relate(k, brep, Some(e1), Some(e2)))? {
                             self.repair_edge_relation(k, brep, e1, e2, &mut squeezed, out)?;
-                        } else {
-                            self.relate_edges_with_vertices(k, brep, e1, e2, &mut squeezed)?;
                         }
                     }
                 }
@@ -857,8 +856,8 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
     }
 
     /// The (`pNewE`, `pOtherNewE`) pair at index `ii` of the two mate-rebuilding loops
-    /// over the new edges of both B-reps: each B-rep edge with its other mate,
-    /// then each other edge with its B-rep mate. The
+    /// over the new edges of both B-reps: a B-rep edge with its other mate
+    /// (`mate_brep_edges`) or with none, then each other edge with its B-rep mate. The
     /// mates are looked up when the loop reaches the index, after the edits of the
     /// earlier indices, as upstream.
     fn new_edge_pair(
@@ -866,9 +865,15 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         ii: usize,
         new_edges: &[O],
         new_edges_other: &[O],
+        mate_brep_edges: bool,
     ) -> Result<(Option<O>, Option<O>)> {
         if let Some(&e) = new_edges.get(ii) {
-            Ok((Some(e), self.other_mate(Some(e))))
+            let other = if mate_brep_edges {
+                self.other_mate(Some(e))
+            } else {
+                None
+            };
+            Ok((Some(e), other))
         } else {
             let o = *ii
                 .checked_sub(new_edges.len())
@@ -1143,7 +1148,7 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
                         squeezed.deleted_edges.push(e1o);
                         brep.brep_delete_edge(k, brep_h, e1o)?;
                         out.topology_was_deleted = true;
-                        self.relate_edges_with_vertices(k, brep, e1, e2, squeezed)?;
+                        self.relate(k, brep, Some(e1), Some(e2))?;
                     }
                 }
             }
@@ -1182,7 +1187,7 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
                         squeezed.deleted_edges.push(e2o);
                         brep.brep_delete_edge(k, brep_h, e2o)?;
                         out.topology_was_deleted = true;
-                        self.relate_edges_with_vertices(k, brep, e1, e2, squeezed)?;
+                        self.relate(k, brep, Some(e1), Some(e2))?;
                     }
                 }
             }
@@ -1192,11 +1197,6 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
                     "the curve classifications could not be fixed",
                 ));
             }
-        } else {
-            return Err(SolidError::stage_failed(
-                OP_CLASSES,
-                "both coincident edges already have different mates",
-            ));
         }
         Ok(())
     }
