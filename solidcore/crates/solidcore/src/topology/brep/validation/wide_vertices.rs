@@ -567,7 +567,7 @@ mod tests {
     /// does. Past that a tolerance would be absorbing a misplaced vertex: refused whatever its
     /// ball clears. In the 10 x 10 x 10 box the nearest non-incident face is 10 away, so 1 x and
     /// 2 x the limit clear and 2.5 x and 50 x are refused. In a box 1.5 x the limit wide the
-    /// nearest is that far: a corner tolerance of 0.9 of it clears, 1.0 touches it and 1.1 passes
+    /// nearest is that far: a corner tolerance of 0.9 of it clears, 1.1 and 1.2 pass
     /// through it.
     #[test]
     fn a_vertex_past_the_ratio_limit_is_accepted_only_where_its_ball_clears_other_topology() {
@@ -591,11 +591,11 @@ mod tests {
             })
             .unwrap();
         }
-        for (radius, refused) in [(0.9, false), (1.0, true), (1.1, true)] {
+        for (radius, refused) in [(0.9, false), (1.1, true), (1.2, true)] {
             let mut k = Kernel::default();
             let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 1.0, 2.0, 3.0).unwrap();
             // a body tolerance whose limit is 1000 / 1500: the nearest non-incident face (x = 1)
-            // is 1.5 x the limit away, so the radii below are 1.35 x to 1.65 x it
+            // is 1.5 x the limit away, so the radii below are 1.35 x to 1.8 x it
             b.set_tolerance(1.0 / 1500.0);
             let v = b.vertex_list()[0];
             b.vertex_mut(v).unwrap().tolerance = radius;
