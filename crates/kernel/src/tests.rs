@@ -190,10 +190,9 @@ fn a_small_rim_round_builds_on_a_primitive_cylinder_as_on_an_extruded_one() {
     let primitive = cylinder(Vec3::ZERO, Vec3::Z, big, height).unwrap();
     let circle = Region2 { outer: Loop2::circle(Vec2::ZERO, big), holes: vec![] };
     let extruded = extrude(&Plane::XY, &[circle], 0.0, height).unwrap().pop().unwrap();
-    let rim = Vec3::new(big * std::f64::consts::FRAC_1_SQRT_2, big * std::f64::consts::FRAC_1_SQRT_2, height);
-    for r in [0.1, 0.5] {
-        let taken = 2.0 * PI * (big - r * (10.0 - 3.0 * PI) / (3.0 * (4.0 - PI))) * (1.0 - PI / 4.0) * r * r;
-        let want = PI * big * big * height - taken;
+    let rim = Vec3::new(7.0711, 7.0711, height);
+    // Pappus' closed form, pi R^2 h - 2 pi (R - r (10 - 3 pi) / (3 (4 - pi))) (1 - pi / 4) r^2.
+    for (r, want) in [(0.1, 6283.050770054479), (0.5, 6279.851997607429)] {
         for (name, body) in [("primitive", &primitive), ("extruded", &extruded)] {
             let round = fillet(body, &[rim], r).unwrap_or_else(|e| panic!("{name} cylinder, round {r}: {e}"));
             let volume = measure(&round).unwrap().volume;
