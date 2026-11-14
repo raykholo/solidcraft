@@ -1673,13 +1673,23 @@ mod tests {
         .unwrap();
         path.edit_parameterization(&Extent1d::from_min_max(3.0, 11.0))
             .unwrap();
-        for (radius, horn) in [(0.75, false), (10.0, true)] {
+        // A circle of the bend's radius passes through the bend's centre (the origin);
+        // only a seam there leaves the profile's end in place. Which seam that is follows
+        // from the sweep's start frame, so read it from the net's own corners.
+        let mut horns = 0;
+        for (radius, start) in [
+            (0.75, 0.0),
+            (10.0, 0.0),
+            (10.0, -90.0),
+            (10.0, -180.0),
+            (10.0, -270.0),
+        ] {
             let profile = BSplineCurve::create_circle_segment(
                 3,
                 &Axis2Placement::new(Vec3::ZERO, Vec3::Y, Vec3::Z),
                 radius,
-                0.0,
-                360.0,
+                start,
+                start + 360.0,
                 NurbCircleParam::Quadratic,
             )
             .unwrap();
@@ -1688,9 +1698,20 @@ mod tests {
             )
             .unwrap();
             let trace = trace.unwrap();
-            assert_eq!(trace.path_parameters, vec![horn]);
-            let definition = ProceduralSweep::create_path(&profile, &path, &trace, &net).unwrap();
             let domain = net.natural_uv_domain();
+            let horn = [domain.min().x, domain.max().x].iter().all(|&u| {
+                net.evaluate_point(Point2::new(u, domain.min().y))
+                    .unwrap()
+                    .length()
+                    <= 1e-9
+            });
+            assert_eq!(trace.path_parameters, vec![horn]);
+            if radius > 1.0 && !horn {
+                // the profile's interior meets the centre: a pole the face builder splits at
+                continue;
+            }
+            horns += usize::from(horn);
+            let definition = ProceduralSweep::create_path(&profile, &path, &trace, &net).unwrap();
             let motion = definition.path().unwrap();
             if horn {
                 assert_eq!(domain.u_interval(), path.natural_interval());
@@ -1725,6 +1746,7 @@ mod tests {
             assert!(radial_error < 2e-5 * radius, "{radial_error}");
             assert!(definition_error <= definition.bound(), "{definition_error}");
         }
+        assert_eq!(horns, 1);
     }
 
     #[test]
