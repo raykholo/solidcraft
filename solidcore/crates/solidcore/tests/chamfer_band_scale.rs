@@ -230,7 +230,7 @@ fn chamfer_top(
     let edges: Vec<EdgeId> = mids
         .iter()
         .enumerate()
-        .filter(|(i, _)| which.map_or(true, |w| w.contains(i)))
+        .filter(|(i, _)| which.is_none_or(|w| w.contains(i)))
         .map(|(_, &p)| pick(&k, &b, p))
         .collect();
     let result = {
