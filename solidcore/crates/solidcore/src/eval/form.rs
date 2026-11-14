@@ -189,8 +189,10 @@ fn face_arcs(
     a: [f64; 2],
     reach: f64,
     own: bool,
+    winds: bool,
 ) -> Option<((Vec<f64>, Vec<([f64; 2], f64)>), [f64; 2])> {
-    if a[1] - a[0] > TAU * (1.0 + MORE_THAN_A_TURN) {
+    // Only a cylinder's or cone's angle may wind: every other angle is refused past one turn.
+    if winds && a[1] - a[0] > TAU * (1.0 + MORE_THAN_A_TURN) {
         let (grid, d) = wound_quarters(a, reach)?;
         return Some((arcs(grid.0, grid.1), d));
     }
@@ -553,7 +555,12 @@ fn surface_on(
         };
     }
     let (reach_u, reach_v) = reaches(s, v, tolerance);
-    let ((u_knots, ring), fu) = face_arcs(u, reach_u, own)?;
+    let ((u_knots, ring), fu) = face_arcs(
+        u,
+        reach_u,
+        own,
+        matches!(s, Surface::Cylinder { .. } | Surface::Cone { .. }),
+    )?;
     // The ring of arcs times a profile `(control, weight)` mapped to (radial, axial) about the
     // frame: a rational tensor product, its weights the products.
     let net = |f: &Frame,
@@ -624,7 +631,7 @@ fn surface_on(
             minor_radius,
             tube_start,
         } => {
-            let ((v_knots, tube), fv) = face_arcs(v, reach_v, own)?;
+            let ((v_knots, tube), fv) = face_arcs(v, reach_v, own, false)?;
             // The tube's arcs turned on by its start (a rotation of the control points, exact).
             let (ts, tc) = tube_start.sin_cos();
             let homogeneous = net(frame, &tube, &|[c, s]| {
@@ -981,7 +988,12 @@ fn extent_in(
             if span > 0.0 && period.iter().any(Option::is_some) {
                 let mut turns = 0.0_f64;
                 for k in 0..=EXTENT_POINTS {
-                    let t = lowest + span * k as f64 / EXTENT_POINTS as f64;
+                    // Read a little inside the edge's ends: at a pole the angle round the axis is
+                    // not defined, and a point there reads as a jump of half a turn.
+                    let inset = span * 1e-3;
+                    let t = (lowest + span * k as f64 / EXTENT_POINTS as f64)
+                        .max(lowest + inset)
+                        .min(highest - inset);
                     let Some(q) = at(t, None) else { continue };
                     // The rate is read over a step short enough that the point has advanced less
                     // than a quarter of a period: a step of a whole turn or more (an edge of a
