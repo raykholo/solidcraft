@@ -1849,9 +1849,6 @@ fn recomputed_seam_curve(
     use crate::nurbs::b_spline_curve::BSplineCurve;
     use crate::nurbs::crv_fit::p1::ParamMethod;
 
-    if limit >= 0.0 {
-        return Ok(None); // EXPERIMENT 16510
-    }
     let tol = edge::tolerance(b, e)?;
     // Only an edge whose curve is farther from a face than its tolerance needs a new curve.
     let mut widest = 0.0_f64;
@@ -1877,6 +1874,9 @@ fn recomputed_seam_curve(
     // other's: a curve that is off every face is not a seam between two fitted surfaces.
     if widest <= tol || narrowest > tol {
         return Ok(None);
+    }
+    if limit >= 0.0 {
+        return Ok(None); // EXPERIMENT 16510 b
     }
     let surfaces = seam_surfaces(b, e)?;
     if surfaces.len() < 2 {
