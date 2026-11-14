@@ -3372,7 +3372,7 @@ mod view_key_tests {
         // The target (and so the camera plane) deep inside or in front of the model still picks it.
         for shift in [0.0, 100.0, 5000.0, -5000.0, 2e8, -2e8] {
             h.app.cam = Camera::default();
-            h.app.cam.target = h.app.cam.target - h.app.cam.back() * shift;
+            h.app.cam.target -= h.app.cam.back() * shift;
             let proj = projection(&h.app, rect);
             assert!(proj.cam.fov <= 0.0, "shift {shift}: the pick must use the orthographic ray");
             let hits = pick_cached(&mut h.app, &proj, rect.center());
