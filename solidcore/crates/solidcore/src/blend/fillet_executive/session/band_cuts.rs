@@ -207,7 +207,6 @@ fn edges_crossing_plane(
     origin: Point3,
     normal: Vec3,
 ) -> Result<Vec<Point3>> {
-    let __tp = std::time::Instant::now();
     let mut crossings = Vec::new();
     let x = if normal.x.abs() < 0.9 {
         Vec3::new(1.0, 0.0, 0.0).cross(normal)
@@ -220,15 +219,12 @@ fn edges_crossing_plane(
     let domain = plane.natural_uv_domain_with_nurb(k)?;
     let tol = body.tolerance();
     let plane_tol = smos_max(tol, 1.0e-4);
-    tadd(5, __tp);
     for edge in &cache.edges {
         if let Some(bbox) = &edge.bbox {
             if bbox.distance_to_plane(origin, normal).abs() > plane_tol {
                 continue;
             }
         }
-        let __tg = std::time::Instant::now();
-        TT[6].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let solutions = plane.global_curve_intersect(
             k,
             [
@@ -240,7 +236,6 @@ fn edges_crossing_plane(
             &edge.interval,
             tol,
         )?;
-        tadd(7, __tg);
         for sol in solutions.as_slice() {
             let t =
                 sol.start.parameters.first().copied().ok_or_else(|| {
@@ -459,10 +454,7 @@ fn keeps(
         return Ok(out);
     }
     let evaluated = (|| -> Result<Option<(TsectPnt, [Point3; 3])>> {
-        let __t = std::time::Instant::now();
-        let r = ball_section_at(k, target, solver, edge_curve, t, near.as_ref())?;
-        tadd(2, __t);
-        let Some(pnt) = r else {
+        let Some(pnt) = ball_section_at(k, target, solver, edge_curve, t, near.as_ref())? else {
             return Ok(None);
         };
         let uvs = [pnt.uv_pos(SrfIndex::First), pnt.uv_pos(SrfIndex::Second)];
@@ -518,7 +510,6 @@ fn keeps(
     out.found = true;
     let p = edge_curve.evaluate_point(k, t)?;
     out.setback = p.distance(rail1);
-    let __t = std::time::Instant::now();
     out.keeps = match judge {
         Judge::KeepsMaterial(crossings) => {
             keeps_material_behind(k, target, cache, centre, [rail1, rail2], chord, crossings)?
@@ -527,7 +518,6 @@ fn keeps(
             !section_breaks_through(k, target, cache, centre, [rail1, rail2], chord, faces)?
         }
     };
-    tadd(3, __t);
     Ok(out)
 }
 
@@ -898,12 +888,7 @@ pub(crate) fn band_cuts_the_part_cached(
     });
     let cache = match cache_slot {
         Some(c) => c,
-        None => {
-            let __t = std::time::Instant::now();
-            let c = BandCutCache::new(k, target)?;
-            tadd(4, __t);
-            cache_slot.insert(c)
-        }
+        None => cache_slot.insert(BandCutCache::new(k, target)?),
     };
 
     // each section: its parameter, plane crossings and section found near, and whether it keeps
@@ -930,10 +915,7 @@ pub(crate) fn band_cuts_the_part_cached(
             continue;
         }
         let normal = tangent.unitize()?;
-        let __t = std::time::Instant::now();
         let crossings = edges_crossing_plane(k, target, cache, point, normal)?;
-        tadd(0, __t);
-        let __t = std::time::Instant::now();
         let judged = keeps(
             k,
             target,
@@ -947,7 +929,6 @@ pub(crate) fn band_cuts_the_part_cached(
             Judge::KeepsMaterial(&crossings),
             &mut near,
         )?;
-        tadd(1, __t);
         all_crossings.push(crossings);
         nears.push(near.clone());
         states.push(if judged.found {
@@ -1195,9 +1176,4 @@ pub(crate) fn band_breaks_through_the_part_cached(
         }
     }
     Ok(out)
-}
-
-pub(crate) static TT: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-pub(crate) fn tadd(i: usize, t: std::time::Instant) {
-    TT[i].fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

@@ -5755,7 +5755,7 @@ impl SolverGeometryAccess<FilletObject> for SessionObjects<'_> {
                             rail_boxes.get(b).and_then(|r| r.get(ib)).map(|x| &x.1),
                         ) {
                             let reach = eb.union(box_b).size().length() + margin;
-                            let mut grown = eb;
+                            let mut grown = *eb;
                             grown.expand_absolute(reach);
                             if box_a.are_disjoint(&grown, 0.0) {
                                 continue; // no sample can fall inside the band
