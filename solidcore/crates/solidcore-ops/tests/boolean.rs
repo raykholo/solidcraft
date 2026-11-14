@@ -1565,9 +1565,9 @@ fn slab_past_spring_case(dx: f64, op: BooleanOp) {
         BooleanOp::Subtract => fillet - 150.0,
         BooleanOp::Intersect => 150.0,
     };
-    let result = boolean(filleted_cube(), slab_past_spring(dx), op)
-        .unwrap_or_else(|e| panic!("{op:?} dx {dx}: {e}"))
-        .unwrap_or_else(|| panic!("{op:?} dx {dx}: empty"));
+    let built = boolean(filleted_cube(), slab_past_spring(dx), op);
+    assert!(built.is_ok(), "{op:?} dx {dx}: {:?}", built.as_ref().err());
+    let result = built.ok().flatten().expect("the boolean leaves a body");
     let report = result.check(CheckLevel::All).unwrap();
     assert!(report.is_valid(), "{op:?} dx {dx}: {}", report.text);
     let got = volume(&result);
