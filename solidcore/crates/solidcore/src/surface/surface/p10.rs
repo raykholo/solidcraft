@@ -545,10 +545,12 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         // convex patch twice) seeded its solve from the middle of the interval, which can
         // settle on the root behind the start; that root is dropped below and the root
         // ahead was never looked for, so the ray missed a wall it leaves by.
+        let mut clipped = false;
         if self.ray_fire {
             let scaled_zero = EFF_ZERO * (1.0 + self.line_point.max_dimension());
             if bound_ivl.min() < -scaled_zero {
                 bound_ivl = Extent1d::from_min_max(-scaled_zero, bound_ivl.max());
+                clipped = true;
             }
         }
 
@@ -729,7 +731,9 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         let natural = cache.surface().natural_uv_domain_with_nurb(k)?;
         for j in 0..2 {
             // Handle curve discontinuities
-            if t_conts.get(j).copied().is_some_and(at_most_c0) {
+            // (the clip's own end is no end of the line: a ray's root at its start is the
+            // leaf solve's, as before the clip)
+            if t_conts.get(j).copied().is_some_and(at_most_c0) && !(j == 0 && clipped) {
                 let t = if j == 1 {
                     leaf.interval.max()
                 } else {
