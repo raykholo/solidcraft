@@ -1126,6 +1126,27 @@ pub fn to_active_frame(s: &Session, kind: &mut FeatureKind) {
     }
 }
 
+/// Pins where each component with bodies stands, relative to the active one, on an extrude that
+/// ends To Object or starts From Object (#16732). The pick was made against the model as shown,
+/// so the extrude keeps measuring against that: a joint that slides the drawer must not
+/// stretch a body that was built to the frame's face.
+pub fn pin_picked_placements(s: &Session, kind: &mut FeatureKind) {
+    let FeatureKind::Extrude { extent, .. } = kind else { return };
+    extent.picked_placements.clear();
+    if (extent.to.is_none() && extent.from.is_none()) || s.doc.occurrences.is_empty() {
+        return;
+    }
+    let Some(inverse) = solidcraft_doc::mat_inverse(&s.active_component_frame()) else { return };
+    let state = s.model.state();
+    let mut owners = s.doc.model_body_components(&state);
+    owners.sort_unstable();
+    owners.dedup();
+    for component in owners.into_iter().filter(|c| *c != s.active_component) {
+        let placement = solidcraft_doc::mat_mul(&inverse, &s.doc.component_transform(component));
+        extent.picked_placements.push(solidcraft_doc::PickedPlacement { component, placement });
+    }
+}
+
 fn cycle_color(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "component.cycle_color";
     let id = component(s, p, "component", cmd)?;
