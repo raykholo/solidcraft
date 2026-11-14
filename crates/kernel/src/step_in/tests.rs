@@ -1669,40 +1669,51 @@ fn torus_written_as_a_revolution_of_a_spline_circle_imports_whole() {
     assert_closed_measures(&t, volume, ring + wall + tube, &[]);
 }
 
-/// A strip two turns round a cylinder, bounded by two helices (cubic B-splines, one Bezier arc
-/// every 15 degrees) and two lines along the axis: a thread's flank. A cylinder face covers at
-/// most a turn, and the reader once clamped the face's box to one, which put its edges 4 mm off
-/// the form it made ("an edge lies 3.9 mm off the face's surface"): it says what the face is.
+/// A wire of rectangular section (radius 2 to 3, 0.5 high) wound two turns round the Z axis, rising
+/// one pitch a turn: a thread's flank. Its outer and inner walls are cylinder strips two turns
+/// long, each bounded by two helices (cubic B-splines, one Bezier arc every 15 degrees) and two
+/// lines along the axis, which a face of at most a turn cannot hold; its top and bottom are ruled
+/// B-spline surfaces between the helices, its ends planes. The reader once clamped a strip's box
+/// to a turn, which put its edges 4 mm off the form it made ("an edge lies 3.9 mm off the face's
+/// surface"); the strips now import on forms of two turns and the solid closes.
+/// V = h(R² − r²)/2·4π; the walls R·h·4π and r·h·4π, the ends 2(R − r)h, and the ruled faces
+/// 4π∫√(c² + ρ²)dρ over r to R (c = pitch/2π) between them.
 #[test]
-fn a_face_winding_two_turns_round_its_cylinder_is_refused_for_what_it_is() {
+fn a_face_winding_two_turns_round_its_cylinder_imports_whole() {
     use std::f64::consts::TAU;
-    let (radius, pitch, width, turns) = (3.0f64, 1.0f64, 0.5f64, 2usize);
+    let (outer, inner, pitch, height, turns) = (3.0f64, 2.0f64, 1.0f64, 0.5f64, 2usize);
     let rise = pitch / TAU;
     let arcs = turns * 24;
     let step = TAU * turns as f64 / arcs as f64;
-    let point = |angle: f64, z: f64| [radius * angle.cos(), radius * angle.sin(), z];
-    let slope = |angle: f64| [-radius * angle.sin(), radius * angle.cos(), rise];
+    let top = pitch * turns as f64;
     let mut t = String::from(HEAD);
-    t += "#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=DIRECTION('',(0.,0.,1.));\n#3=DIRECTION('',(1.,0.,0.));\n#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);\n#5=CYLINDRICAL_SURFACE('',#4,3.);\n";
-    // The helix from angle 0 at height `lift`: its control points, then the curve over them.
-    let mut next = 1000;
-    let mut helix = |t: &mut String, lift: f64| {
-        let mut controls = vec![point(0.0, lift)];
+    t += "#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=DIRECTION('',(0.,0.,1.));\n#3=DIRECTION('',(1.,0.,0.));\n#4=AXIS2_PLACEMENT_3D('',#1,#2,#3);\n";
+    t += "#5=CYLINDRICAL_SURFACE('',#4,3.);\n#6=CYLINDRICAL_SURFACE('',#4,2.);\n";
+    // The control points of the helix of `radius` from angle 0 at height `lift`.
+    let controls = |radius: f64, lift: f64| -> Vec<[f64; 3]> {
+        let point = |angle: f64| [radius * angle.cos(), radius * angle.sin(), rise * angle + lift];
+        let slope = |angle: f64| [-radius * angle.sin(), radius * angle.cos(), rise];
+        let mut points = vec![point(0.0)];
         for k in 0..arcs {
             let (a, b) = (k as f64 * step, (k + 1) as f64 * step);
-            let (pa, pb, ta, tb) = (point(a, rise * a + lift), point(b, rise * b + lift), slope(a), slope(b));
-            controls.push(std::array::from_fn(|i| pa[i] + step / 3.0 * ta[i]));
-            controls.push(std::array::from_fn(|i| pb[i] - step / 3.0 * tb[i]));
-            controls.push(pb);
+            let (pa, pb, ta, tb) = (point(a), point(b), slope(a), slope(b));
+            points.push(std::array::from_fn(|i| pa[i] + step / 3.0 * ta[i]));
+            points.push(std::array::from_fn(|i| pb[i] - step / 3.0 * tb[i]));
+            points.push(pb);
         }
+        points
+    };
+    let mults: Vec<String> = (0..=arcs).map(|k| if k == 0 || k == arcs { "4" } else { "3" }.to_string()).collect();
+    let knots: Vec<String> = (0..=arcs).map(|k| format!("{:.16}", k as f64 / arcs as f64)).collect();
+    let mut next = 1000;
+    // A helix as a curve: its points, then the curve over them.
+    let mut helix = |t: &mut String, radius: f64, lift: f64| {
         let first = next;
-        for c in &controls {
+        for c in controls(radius, lift) {
             *t += &format!("#{next}=CARTESIAN_POINT('',({:.16},{:.16},{:.16}));\n", c[0], c[1], c[2]);
             next += 1;
         }
         let list: Vec<String> = (first..next).map(|i| format!("#{i}")).collect();
-        let mults: Vec<String> = (0..=arcs).map(|k| if k == 0 || k == arcs { "4" } else { "3" }.to_string()).collect();
-        let knots: Vec<String> = (0..=arcs).map(|k| format!("{:.16}", k as f64 / arcs as f64)).collect();
         *t += &format!(
             "#{next}=B_SPLINE_CURVE_WITH_KNOTS('',3,({}),.UNSPECIFIED.,.F.,.F.,({}),({}),.UNSPECIFIED.);\n",
             list.join(","),
@@ -1712,26 +1723,98 @@ fn a_face_winding_two_turns_round_its_cylinder_is_refused_for_what_it_is() {
         next += 1;
         next - 1
     };
-    let (low, high) = (helix(&mut t, 0.0), helix(&mut t, width));
-    let top = rise * TAU * turns as f64;
-    for (i, z) in [0.0, width, top, top + width].into_iter().enumerate() {
-        t += &format!("#{}=CARTESIAN_POINT('',({radius:.16},0.,{z:.16}));\n#{}=VERTEX_POINT('',#{});\n", 10 + 2 * i, 11 + 2 * i, 10 + 2 * i);
-    }
-    t += "#30=DIRECTION('',(0.,0.,1.));\n#31=VECTOR('',#30,1.);\n#32=LINE('',#10,#31);\n#33=LINE('',#14,#31);\n";
-    t += &format!(
-        "#40=EDGE_CURVE('',#11,#15,#{low},.T.);\n#41=EDGE_CURVE('',#15,#17,#33,.T.);\n#42=EDGE_CURVE('',#13,#17,#{high},.T.);\n#43=EDGE_CURVE('',#11,#13,#32,.T.);\n"
-    );
-    t += "#50=ORIENTED_EDGE('',*,*,#40,.T.);\n#51=ORIENTED_EDGE('',*,*,#41,.T.);\n#52=ORIENTED_EDGE('',*,*,#42,.F.);\n#53=ORIENTED_EDGE('',*,*,#43,.F.);\n";
-    t += "#54=EDGE_LOOP('',(#50,#51,#52,#53));\n#55=FACE_OUTER_BOUND('',#54,.T.);\n#56=ADVANCED_FACE('',(#55),#5,.T.);\n";
-    t += "#57=OPEN_SHELL('',(#56));\n#58=SHELL_BASED_SURFACE_MODEL('Strip',(#57));\n#59=SHAPE_REPRESENTATION('',(#58),#70);\n";
-    t += &context(70, "(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))");
-    t += TAIL;
-    let said = match step_import(&t) {
-        Err(e) => e.to_string(),
-        Ok(imp) => imp.warnings.join("; "),
+    let (outer_low, outer_high) = (helix(&mut t, outer, 0.0), helix(&mut t, outer, height));
+    let (inner_low, inner_high) = (helix(&mut t, inner, 0.0), helix(&mut t, inner, height));
+    // The surface ruled from the helix of the inner radius to the one of the outer at `lift`.
+    let mut ruled = |t: &mut String, lift: f64| {
+        let mut rows = Vec::new();
+        for (p, q) in controls(inner, lift).iter().zip(controls(outer, lift)) {
+            let mut pair = Vec::new();
+            for c in [*p, q] {
+                *t += &format!("#{next}=CARTESIAN_POINT('',({:.16},{:.16},{:.16}));\n", c[0], c[1], c[2]);
+                pair.push(format!("#{next}"));
+                next += 1;
+            }
+            rows.push(format!("({})", pair.join(",")));
+        }
+        *t += &format!(
+            "#{next}=B_SPLINE_SURFACE_WITH_KNOTS('',3,1,({}),.UNSPECIFIED.,.F.,.F.,.F.,({}),(2,2),({}),(0.,1.),.UNSPECIFIED.);\n",
+            rows.join(","),
+            mults.join(","),
+            knots.join(",")
+        );
+        next += 1;
+        next - 1
     };
-    assert!(said.contains("winds 2.0 turns about its axis"), "{said}");
-    assert!(!said.contains("off the face's surface"), "{said}");
+    let (bottom_surface, top_surface) = (ruled(&mut t, 0.0), ruled(&mut t, height));
+    // Vertices: from 10 the outer ones (low start, high start, low end, high end), from 20 the inner.
+    for (base, radius) in [(10, outer), (20, inner)] {
+        for (i, z) in [0.0, height, top, top + height].into_iter().enumerate() {
+            t += &format!(
+                "#{}=CARTESIAN_POINT('',({radius:.16},0.,{z:.16}));\n#{}=VERTEX_POINT('',#{});\n",
+                base + 2 * i,
+                base + 2 * i + 1,
+                base + 2 * i
+            );
+        }
+    }
+    t += "#30=VECTOR('',#2,1.);\n#31=DIRECTION('',(1.,0.,0.));\n#32=VECTOR('',#31,1.);\n";
+    t += "#33=LINE('',#10,#30);\n#34=LINE('',#14,#30);\n#35=LINE('',#20,#30);\n#36=LINE('',#24,#30);\n";
+    t += "#37=LINE('',#20,#32);\n#38=LINE('',#22,#32);\n#39=LINE('',#24,#32);\n#40=LINE('',#26,#32);\n";
+    // Edges 41 to 44 the helices (outer low, outer high, inner low, inner high), 45 to 48 the
+    // lines up the axis (outer start, outer end, inner start, inner end), 49 to 52 the radial lines
+    // (bottom start, top start, bottom end, top end).
+    t += &format!(
+        "#41=EDGE_CURVE('',#11,#15,#{outer_low},.T.);\n#42=EDGE_CURVE('',#13,#17,#{outer_high},.T.);\n#43=EDGE_CURVE('',#21,#25,#{inner_low},.T.);\n#44=EDGE_CURVE('',#23,#27,#{inner_high},.T.);\n"
+    );
+    t += "#45=EDGE_CURVE('',#11,#13,#33,.T.);\n#46=EDGE_CURVE('',#15,#17,#34,.T.);\n#47=EDGE_CURVE('',#21,#23,#35,.T.);\n#48=EDGE_CURVE('',#25,#27,#36,.T.);\n";
+    t += "#49=EDGE_CURVE('',#21,#11,#37,.T.);\n#50=EDGE_CURVE('',#23,#13,#38,.T.);\n#51=EDGE_CURVE('',#25,#15,#39,.T.);\n#52=EDGE_CURVE('',#27,#17,#40,.T.);\n";
+    // An edge's uses: 101 + 2·(edge − 41) along it, the next one against it.
+    for e in 41..=52 {
+        let o = 101 + 2 * (e - 41);
+        t += &format!("#{o}=ORIENTED_EDGE('',*,*,#{e},.T.);\n#{}=ORIENTED_EDGE('',*,*,#{e},.F.);\n", o + 1);
+    }
+    let (along, against) = (|e: usize| 101 + 2 * (e - 41), |e: usize| 102 + 2 * (e - 41));
+    // The planes at the wire's start (facing -y) and end (facing +y).
+    t += "#60=DIRECTION('',(0.,-1.,0.));\n#61=AXIS2_PLACEMENT_3D('',#1,#60,#31);\n#62=PLANE('',#61);\n";
+    t += &format!(
+        "#63=CARTESIAN_POINT('',(0.,0.,{top:.16}));\n#64=DIRECTION('',(0.,1.,0.));\n#65=AXIS2_PLACEMENT_3D('',#63,#64,#31);\n#66=PLANE('',#65);\n"
+    );
+    // Each face: its surface, whether its normal is the surface's, and its loop.
+    let faces = [
+        (5, true, [along(41), along(46), against(42), against(45)]),
+        (6, false, [along(47), along(44), against(48), against(43)]),
+        (bottom_surface, true, [along(43), along(51), against(41), against(49)]),
+        (top_surface, false, [along(50), along(42), against(52), against(44)]),
+        (62, true, [along(49), along(45), against(50), against(47)]),
+        (66, true, [along(48), along(52), against(46), against(51)]),
+    ];
+    let mut shell = Vec::new();
+    for (i, (surface, same_sense, uses)) in faces.into_iter().enumerate() {
+        let n = 200 + 10 * i;
+        let list: Vec<String> = uses.iter().map(|u| format!("#{u}")).collect();
+        let sense = if same_sense { ".T." } else { ".F." };
+        t += &format!(
+            "#{n}=EDGE_LOOP('',({}));\n#{}=FACE_OUTER_BOUND('',#{n},.T.);\n#{}=ADVANCED_FACE('',(#{}),#{surface},{sense});\n",
+            list.join(","),
+            n + 1,
+            n + 2,
+            n + 1
+        );
+        shell.push(format!("#{}", n + 2));
+    }
+    t += &format!(
+        "#300=CLOSED_SHELL('',({}));\n#301=MANIFOLD_SOLID_BREP('Wire',#300);\n#302=ADVANCED_BREP_SHAPE_REPRESENTATION('',(#301),#310);\n",
+        shell.join(",")
+    );
+    t += &context(310, "(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))");
+    t += TAIL;
+    let angle = TAU * turns as f64;
+    let c = pitch / TAU;
+    let ruled_area = |r: f64| 0.5 * (r * (r * r + c * c).sqrt() + c * c * (r + (r * r + c * c).sqrt()).ln());
+    let volume = height * (outer * outer - inner * inner) / 2.0 * angle;
+    let area = (outer + inner) * height * angle + 2.0 * (outer - inner) * height + 2.0 * angle * (ruled_area(outer) - ruled_area(inner));
+    assert_closed_measures(&t, volume, area, &[]);
 }
 
 /// Booleans and blends build the same body every time, so an export is byte-identical from

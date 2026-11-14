@@ -23,6 +23,10 @@ impl CurveEval {
     pub(crate) fn point(&self, t: f64) -> Option<Vec3> {
         self.0.point(t).map(c::record_vec3)
     }
+    /// The point and first derivative at `t`; `None` for a traced intersection.
+    pub(crate) fn derivs(&self, t: f64) -> Option<(Vec3, Vec3)> {
+        self.0.derivs(t).map(|(p, d)| (c::record_vec3(p), c::record_vec3(d)))
+    }
 }
 
 /// A closed spline or polyline with its seam moved to `start`, exactly.
@@ -91,7 +95,8 @@ pub(crate) mod form {
         c::record_curve(cv).ok()
     }
 
-    pub(crate) use solidcore::eval::form::param;
+    pub(crate) use solidcore::eval::form::MORE_THAN_A_TURN;
+    pub(crate) use solidcore::eval::form::{angle, param};
 
     pub(crate) fn frame_of(s: &Surface) -> Option<Frame> {
         k::form::frame_of(&surface_in(s)?).map(|f| c::record_frame(&f))

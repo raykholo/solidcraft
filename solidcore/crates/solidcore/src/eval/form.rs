@@ -17,6 +17,10 @@
 //! parameter is the eccentric angle). A cylinder or cone is the arcs times a degree-1 line along the
 //! axis; a sphere the arcs times arcs of latitude (from `−π/2` to `π/2`); a torus the arcs times
 //! the arcs of its tube. A line is the degree-1 B-spline on its own parameter.
+//!
+//! A face that winds round its axis more than a turn (a thread's flank) has a form of as many
+//! quarters as it winds, up to 64 turns ([`wound_quarters`]): it does not close on itself, and a
+//! turn more is four more form parameters.
 
 #![allow(clippy::neg_cmp_op_on_partial_ord)] // NaN-refusing tests
 #![allow(clippy::type_complexity)] // knots with weighted arc points
@@ -33,7 +37,7 @@ const SLACK: f64 = 1e-12;
 /// How far past one turn (as a fraction of it) a boundary's box may run and still be one turn:
 /// rounding and an edge's distance off its surface ([`extent`]); a wider one is a face that
 /// winds.
-const MORE_THAN_A_TURN: f64 = 0.01;
+pub const MORE_THAN_A_TURN: f64 = 0.01;
 
 /// The quarter arc's parameter `u` in `[0, 1]` at angle `ψ` in `[0, π/2]` from its start: the
 /// arc with ends `±π/4` from its bisector and middle weight `cos π/4` has
@@ -116,6 +120,27 @@ fn face_quarters(a: [f64; 2], reach: f64) -> Option<((f64, usize), [f64; 2])> {
     Some((grid, params(a, grid)))
 }
 
+/// The most quarters a face that winds round its axis may take (64 turns).
+const MAX_WOUND_QUARTERS: usize = 256;
+
+/// The quarters of an angle interval of more than a turn (a face that winds round its axis, a
+/// thread's flank), and its domain on them. The form is not closed on itself: its quarters run
+/// on from the one the face starts in, so a whole turn more is exactly four more form
+/// parameters, and a pcurve moved a turn is moved four.
+fn wound_quarters([a0, a1]: [f64; 2], reach: f64) -> Option<((f64, usize), [f64; 2])> {
+    if !valid_interval([a0, a1]) {
+        return None;
+    }
+    let (a0, a1) = (on_quarter_line(a0, reach), on_quarter_line(a1, reach));
+    let q0 = quarter_of(a0);
+    let n = ((a1 / FRAC_PI_2 - SLACK).ceil() - q0).max(1.0);
+    if !(n <= MAX_WOUND_QUARTERS as f64) {
+        return None;
+    }
+    let grid = (q0, n as usize);
+    Some((grid, params([a0, a1], grid)))
+}
+
 /// The form parameters of an angle interval on the quarters `quarters` chose for it (its ends kept
 /// on them: an end within rounding past a quarter's end stays in that quarter).
 fn params([a0, a1]: [f64; 2], (q0, n): (f64, usize)) -> [f64; 2] {
@@ -165,6 +190,10 @@ fn face_arcs(
     reach: f64,
     own: bool,
 ) -> Option<((Vec<f64>, Vec<([f64; 2], f64)>), [f64; 2])> {
+    if a[1] - a[0] > TAU * (1.0 + MORE_THAN_A_TURN) {
+        let (grid, d) = wound_quarters(a, reach)?;
+        return Some((arcs(grid.0, grid.1), d));
+    }
     if !valid_angles(a) {
         return None;
     }

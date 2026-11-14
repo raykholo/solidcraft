@@ -250,6 +250,7 @@ const MAX_LEFT_OUT_ROUNDS: usize = 8;
 ///    refusal names, as one sheet whose faces share their edges as the file has them, and made
 ///    by SMLib; a refusal of that naming another face of the solid leaves it out too (up to
 ///    [`MAX_LEFT_OUT_ROUNDS`] reads). A face is only ever left out where a refusal names it.
+///    A shell the file leaves open is read this way with no face left out.
 /// 2. Where a refusal names no face of the solid: the faces that read alone, stitched by SMLib
 ///    into one surface body (their edges sewn at ten times their tolerance).
 ///
@@ -272,13 +273,21 @@ fn surface_part(ex: &Exchange, item: u64, units: Units, refused: Failure) -> std
             None if rounds > 0 => break,
             None => {}
         }
-        if left_out.is_empty() || left_out.len() >= faces.len() || rounds >= MAX_LEFT_OUT_ROUNDS {
+        // A shell the file leaves open (an edge only one face uses) is one sheet of all its faces,
+        // which share the edges they do: read without leaving any out.
+        let open_shell = rounds == 0 && left_out.is_empty() && refused.msg.contains("shell is not closed");
+        if (left_out.is_empty() && !open_shell) || left_out.len() >= faces.len() || rounds >= MAX_LEFT_OUT_ROUNDS {
             break;
         }
         rounds += 1;
         let skip: std::collections::HashSet<u64> = left_out.iter().map(|(f, _)| *f).collect();
-        let read =
-            solidcraft_profile::scope("import", "step.read_without", || solidcore_step::topology::read_solid_without(ex, item, units, trims, &skip));
+        let read = solidcraft_profile::scope("import", "step.read_without", || {
+            if open_shell {
+                solidcore_step::topology::read_solid_as_sheets(ex, item, units, trims)
+            } else {
+                solidcore_step::topology::read_solid_without(ex, item, units, trims, &skip)
+            }
+        });
         match read.map_err(|msg| Failure { read: true, msg }).and_then(|solid| {
             let part = solid_part(&solid)?;
             Ok((part, solid.notes.into_iter().map(Note::Repaired).collect::<Vec<_>>()))

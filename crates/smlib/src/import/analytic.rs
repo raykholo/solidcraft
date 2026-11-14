@@ -48,11 +48,10 @@ pub(super) fn analytic(brep: &b::Brep) -> R<Cow<'_, b::Brep>> {
             }
             b::Surface::RationalSpline { u_knots, v_knots, homogeneous } => {
                 let found = extruded_circle(u_knots, v_knots, homogeneous, trimmed(brep, f)?, 1e-9 * size.max(1.0));
-                // A face's trims run at most one turn round a cylinder (SMLib refuses more).
-                if found.as_ref().is_some_and(|(_, range)| range[0][1] - range[0][0] > TAU * (1.0 + 1e-9)) {
-                    return Err(Unsupported::Invalid("a cylinder's face whose trims run more than one turn round"));
-                }
-                found
+                // A face's trims run at most one turn round a cylinder (SMLib refuses more): one
+                // that winds further (a thread's flank) stays the spline it is, which holds any
+                // number of turns.
+                found.filter(|(_, range)| range[0][1] - range[0][0] <= TAU * (1.0 + 1e-9))
             }
             _ => None,
         };
