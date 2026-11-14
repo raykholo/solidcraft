@@ -1545,8 +1545,15 @@ fn vertex_gaps_within_xsect(body: &Body, max_tol: f64) {
 /// #16532: a slab whose near face is `dx` past a fillet spring. The cube less one rounded edge is
 /// `960 + 10 PI`; the overlap is the slab's 6 by 5 section over the 5 mm both bodies share, 150
 /// (the offset keeps both of the slab's x faces inside the cube). The result must check valid and
-/// no vertex may grow past 5e-5. The volume may differ by the offset over the slab's 5 by 5 face
-/// inside the cube: the vertices that join the slab to the round are placed within that of the face.
+/// no vertex may grow past 5e-5.
+///
+/// The volume bound is derived from the move. The join places the vertex between the round and
+/// the slab face within `dx` of the slab face (the round meets the flat face at x = 2, the slab
+/// face stands at x = 2 + dx), so the notch's near face is displaced by at most `dx`, and
+/// displacing a face by `d` changes the volume by at most `d` times its area. That face is the
+/// slab's x face inside the cube: `width` (the slab's y extent -5..5 cut to the cube's 0..10,
+/// so 5) by `height` (z 0..5, so 5). The bound is that, plus the file's `near` tolerance for the
+/// volume integral itself.
 fn slab_past_spring_case(dx: f64, op: BooleanOp) {
     all_fixes();
     let block = filleted_cube();
@@ -1564,9 +1571,11 @@ fn slab_past_spring_case(dx: f64, op: BooleanOp) {
     let report = result.check(CheckLevel::All).unwrap();
     assert!(report.is_valid(), "{op:?} dx {dx}: {}", report.text);
     let got = volume(&result);
+    let (width, height) = (5.0, 5.0);
+    let moved_volume = dx * width * height;
     assert!(
-        (got - expected).abs() <= 1e-7 * expected.abs() + 25.0 * dx,
-        "{op:?} dx {dx}: {got} vs {expected}"
+        near(got, expected) || (got - expected).abs() <= moved_volume + 1e-7 * expected.abs(),
+        "{op:?} dx {dx}: {got} vs {expected}, bound {moved_volume}"
     );
     vertex_gaps_within_xsect(&result, 5e-5 + 1e-12);
 }
