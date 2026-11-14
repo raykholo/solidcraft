@@ -7183,7 +7183,7 @@ fn feature_tools_with_constructor(
             {
                 let start = if hi > 0.0 { lo + off } else { hi + off };
                 let far = if hi > 0.0 { hi + off } else { lo + off };
-                tools = trim_to_face(tools, tb, fi, (&ss.plane, far), start)?;
+                tools = trim_to_face(tools, tb, fi, &ss.plane, start, far)?;
             }
             // A join's profile grows into the material it joins; its sketch plane and depth as drawn
             // still serve a join into sheet metal (`sheet_join`), which takes the sketch's regions.
@@ -9226,60 +9226,17 @@ fn trim_to_body(tools: Vec<Traced>, target: &ModelBody, dist_to_start: impl Fn(V
     Ok(out)
 }
 
-/// Whether `part` has a planar face square to the extrusion `plane` at height `at` along its normal.
-fn has_cap_at(part: &Body, plane: &Plane, at: f64) -> bool {
-    let n = plane.normal();
-    (0..part.face_count())
-        .filter_map(|i| part.planar_face(i))
-        .any(|p| p.normal().cross(n).len() < 1e-9 && ((p.origin - plane.origin).dot(n) - at).abs() < 1e-6 * (1.0 + at.abs()))
-}
-
-/// Whether the part of a split tool that touches the start ends, on the far side, anywhere but on
-/// the target's boundary: the section the split made (the face with no origin) has an edge point
-/// the target does not have a face at, so the profile reaches past the picked face. Decided by
-/// the exact classification of those points against the target.
-fn reaches_past_face(part: &Body, target: &ModelBody, end: (&Plane, f64)) -> Result<bool> {
-    // The tool's own end cap is still there: the surface cut only a part of the prism.
-    if has_cap_at(part, end.0, end.1) {
-        return Ok(true);
-    }
-    let Some(history) = part.history() else { return Ok(false) };
-    let record = part.record();
-    let mut edges = std::collections::BTreeSet::new();
-    for (face, prov) in history.faces.iter().enumerate() {
-        if !prov.origins.is_empty() {
-            continue;
-        }
-        for l in record.faces.get(face).map(|f| f.loops.as_slice()).unwrap_or_default() {
-            if let solidcore_record::brep::Loop::Edges { edges: used } = l {
-                edges.extend(used.iter().map(|e| e.edge as usize));
-            }
-        }
-    }
-    if edges.is_empty() {
-        return Ok(false);
-    }
-    let all = part.edges((part.size() * 1e-3).max(1e-3))?;
-    let points: Vec<Vec3> = all.iter().filter(|e| edges.contains(&e.index)).flat_map(|e| e.points.iter().copied()).collect();
-    Ok(target.body.classify_points(&points)?.iter().any(|c| *c != kernel::PointClass::OnBoundary))
-}
-
 /// Tools bounded by the surface of `face` of `target` (extended): each tool, a prism run long
-/// enough to pass the face, is split by that surface and the piece that touches the start
-/// (its cap at `start`) is kept, whether the start lies in air or inside the target's
-/// material. A piece whose far end is not on the target's boundary all round would run on past
-/// the face where the profile is not over it: refused.
-fn trim_to_face(tools: Vec<Traced>, target: &ModelBody, face: usize, end: (&Plane, f64), start: f64) -> Result<Vec<Traced>> {
+/// enough to pass the face, cut at that surface, the piece that starts at `start` kept (the
+/// kernel's [`kernel::split_prism_to_face`]), whether the start lies in air or inside the
+/// target's material. A profile that is not over the face is refused.
+fn trim_to_face(tools: Vec<Traced>, target: &ModelBody, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Vec<Traced>> {
     let mut out = Vec::new();
     for t in &tools {
-        for part in kernel::split_body(&t.body, &kernel::SplitTool::Face { body: &target.body, face })? {
-            if has_cap_at(&part, end.0, start) {
-                if reaches_past_face(&part, target, end)? {
-                    return Err(DocError::Invalid("the profile reaches past the To face".into()));
-                }
-                out.push(Traced::step(part, &[t]));
-            }
-        }
+        let Some(parts) = kernel::split_prism_to_face(&t.body, &target.body, face, plane, start, far)? else {
+            return Err(DocError::Invalid("the profile reaches past the To face".into()));
+        };
+        out.extend(parts.into_iter().map(|part| Traced::step(part, &[t])));
     }
     if out.is_empty() {
         return Err(DocError::Invalid("nothing lies between the profile and the To object".into()));

@@ -563,6 +563,60 @@ pub fn split_body(body: &Body, tool: &SplitTool) -> Result<Vec<Body>> {
     sliced(body, patch.flip, |sb| sb.split_body(&surface))
 }
 
+/// `tool`, a prism through the surface of `face` of `target` (run on past it), cut at that
+/// surface (extended), keeping the pieces that start at `start`: the planar faces square to
+/// `plane`'s normal at that height along it. Whether the start lies in air or inside the
+/// target's material does not matter, and a piece never passes the face. `Ok(None)` when a kept
+/// piece reaches past the face where the profile is not over it: its own end cap at `far` is still
+/// there, or an edge of the cut section lies off the target's boundary. No piece: empty.
+///
+/// The two heights are told apart by a tolerance of the body's own, never more than a quarter of
+/// the distance between them.
+pub fn split_prism_to_face(tool: &Body, target: &Body, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Option<Vec<Body>>> {
+    let n = plane.normal();
+    let mut out = Vec::new();
+    for part in split_body(tool, &SplitTool::Face { body: target, face })? {
+        let tol = part.record().tolerance.min(0.25 * (far - start).abs());
+        let cap_at = |height: f64| {
+            (0..part.face_count())
+                .filter_map(|i| part.planar_face(i))
+                .any(|p| p.normal().cross(n).len() < 1e-9 && ((p.origin - plane.origin).dot(n) - height).abs() <= tol)
+        };
+        if !cap_at(start) {
+            continue;
+        }
+        if cap_at(far) || section_off_boundary(&part, target)? {
+            return Ok(None);
+        }
+        out.push(part);
+    }
+    Ok(Some(out))
+}
+
+/// Whether an edge of the section a split made (the face with no origin) has a point that is not
+/// on `target`'s boundary, by the exact classification of those points.
+fn section_off_boundary(part: &Body, target: &Body) -> Result<bool> {
+    let Some(history) = part.history() else { return Ok(false) };
+    let record = part.record();
+    let mut edges = std::collections::BTreeSet::new();
+    for (face, prov) in history.faces.iter().enumerate() {
+        if !prov.origins.is_empty() {
+            continue;
+        }
+        for l in record.faces.get(face).map(|f| f.loops.as_slice()).unwrap_or_default() {
+            if let brep::Loop::Edges { edges: used } = l {
+                edges.extend(used.iter().map(|e| e.edge as usize));
+            }
+        }
+    }
+    if edges.is_empty() {
+        return Ok(false);
+    }
+    let all = part.edges((part.size() * 1e-3).max(1e-3))?;
+    let points: Vec<Vec3> = all.iter().filter(|e| edges.contains(&e.index)).flat_map(|e| e.points.iter().copied()).collect();
+    Ok(target.classify_points(&points)?.iter().any(|c| *c != crate::PointClass::OnBoundary))
+}
+
 const SPLIT_BODY: &str = "split body";
 
 /// `body` cut in two by `cut` (SMLib's slice of its tagged copy, giving the parts behind and in

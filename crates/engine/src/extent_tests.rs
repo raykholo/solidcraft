@@ -314,9 +314,10 @@ fn cut_to_a_curved_face_from_inside_the_material_takes_the_material_between() {
     run(&mut s, "solid.extrude", json!({"sketch": "Slot", "to": [0, 0, 4], "operation": "cut"}));
     assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
     let removed = before - body(&mut s, "Block")["volume_mm3"].as_f64().unwrap_or(0.0);
-    // Under the bore over x in [-1, 1]: the area between z = 0 and z = 6 - sqrt(4 - x^2), times 10.
-    let arc = 2.0 * (0.5 * 3.0_f64.sqrt() + 2.0 * (0.5_f64).asin());
-    let want = (12.0 - arc) * 10.0;
+    // The slot's material under the bore: over x in [-1, 1] the area between z = 0 and the
+    // bore's underside z = 6 - sqrt(4 - x^2) is 12 - (sqrt(3) + 2 pi / 3) = 8.173554, times
+    // the slot's 10 mm length.
+    let want = 81.73554;
     assert!((removed - want).abs() < want * 1e-2, "removed {removed}, want {want}");
 }
 
