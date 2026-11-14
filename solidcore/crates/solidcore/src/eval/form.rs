@@ -879,6 +879,10 @@ pub fn edge_on<'a>(
 /// Points per edge along a loop taken for a face's extent.
 const EXTENT_POINTS: usize = 32;
 
+/// The most samples one edge takes: 2048 turns at eight a turn (an edge that winds more is not
+/// measured).
+const MAX_EXTENT_POINTS: usize = 1 << 14;
+
 /// The largest value of `f` on `[a, b]`, where it rises to one peak and falls (golden section, to
 /// rounding; the ends count).
 fn golden_max(f: &dyn Fn(f64) -> f64, a: f64, b: f64) -> f64 {
@@ -963,10 +967,44 @@ fn extent_in(
                 }
                 Some(q)
             };
+            // Samples enough that each step is well under a turn round a periodic direction: a
+            // step of a turn or more reads as none (a thread's flank wound 32 times, sampled 32
+            // times, would be one point). Each sample's rate round the direction is taken at the
+            // sample itself, a step along the edge apart, so no aliasing is in it.
+            let (lowest, highest) = (t0.min(*t1), t0.max(*t1));
+            let span = highest - lowest;
+            let mut points = EXTENT_POINTS;
+            if span > 0.0 && period.iter().any(Option::is_some) {
+                let step = span * 1e-6;
+                let mut turns = 0.0_f64;
+                for k in 0..=EXTENT_POINTS {
+                    let t = lowest + span * k as f64 / EXTENT_POINTS as f64;
+                    let other = if t + step <= highest {
+                        t + step
+                    } else {
+                        t - step
+                    };
+                    let Some(q) = at(t, None) else { continue };
+                    let Some(r) = at(other, Some(q)) else {
+                        continue;
+                    };
+                    for d in 0..2 {
+                        if let Some(Some(per)) = period.get(d) {
+                            turns = turns.max((ix(&r, d) - ix(&q, d)).abs() / step * span / per);
+                        }
+                    }
+                }
+                // Eight samples a turn: no step is more than an eighth.
+                let needed = (8.0 * turns).ceil();
+                if !needed.is_finite() || needed > MAX_EXTENT_POINTS as f64 {
+                    return None;
+                }
+                points = points.max(needed as usize);
+            }
             let mut samples: Vec<(f64, [f64; 2], [bool; 2], usize)> =
-                Vec::with_capacity(EXTENT_POINTS + 1);
-            for k in 0..=EXTENT_POINTS {
-                let f = k as f64 / EXTENT_POINTS as f64;
+                Vec::with_capacity(points + 1);
+            for k in 0..=points {
+                let f = k as f64 / points as f64;
                 let t = if *forward {
                     t0 * (1.0 - f) + t1 * f
                 } else {

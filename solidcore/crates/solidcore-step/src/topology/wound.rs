@@ -30,6 +30,10 @@ const LIFT: f64 = 0.1;
 const MAX_PIECES: usize = 4000;
 /// Times a piece may be halved.
 const MAX_HALVINGS: u32 = 30;
+/// Cells of a use's parameter in which a crossing of a ray is looked for, and the bisections that
+/// place it.
+const CROSSING_CELLS: usize = 64;
+const BISECTIONS: u32 = 60;
 
 /// The angle about the axis, the height along it, and their first derivatives in the curve's
 /// parameter, at `t`.
@@ -129,6 +133,14 @@ impl Axis {
     }
 }
 
+/// The knots of a spline `curve` strictly inside `(a, b)` (none for any other curve).
+fn knots_within(curve: &BCurve, a: f64, b: f64) -> Vec<f64> {
+    match curve {
+        BCurve::Spline { knots, .. } | BCurve::RationalSpline { knots, .. } => knots.iter().copied().filter(|k| *k > a && *k < b).collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// The pcurve of the edge on `curve` over `interval` in the form's parameters, at `tol`.
 ///
 /// # Errors
@@ -147,11 +159,24 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
         last = now;
     }
     let n = ((total / FRAC_PI_8).ceil() as usize).clamp(16, MAX_PIECES / 4);
+    // ... and each knot span of the edge's curve its own pieces (a short span between two grid
+    // points would otherwise lie wholly between a piece's probes).
+    let mut stops: Vec<f64> = (1..=n).map(|i| a + (b - a) * i as f64 / n as f64).collect();
+    if a < b {
+        stops.extend(knots_within(curve, a, b));
+        stops.sort_by(f64::total_cmp);
+        stops.dedup_by(|x, y| (*x - *y).abs() <= 1e-12 * (b - a));
+        if let Some(last) = stops.last_mut() {
+            *last = b;
+        }
+    }
+    if stops.len() > MAX_PIECES / 4 {
+        return Err(unsupported("an edge of a face that winds round its axis, whose curve has too many knot spans"));
+    }
     let mut ends = vec![first];
-    for i in 1..=n {
-        let t = a + (b - a) * i as f64 / n as f64;
+    for &t in &stops {
         let prev = ends.last().copied().ok_or("pcurve ends")?;
-        let guess = prev.theta + 0.5 * (b - a) / n as f64 * (prev.d_theta + ax.spot(&c, t)?.d_theta);
+        let guess = prev.theta + 0.5 * (t - prev.t) * (prev.d_theta + ax.spot(&c, t)?.d_theta);
         ends.push(ax.end(&c, t, Some(guess))?);
     }
     let mut pieces: Vec<[End; 2]> = ends.windows(2).map(|w| [w[0], w[1]]).collect();
@@ -210,13 +235,18 @@ pub(super) fn pcurve(label: &BSurface, curve: &BCurve, [a, b]: [f64; 2], tol: f6
 /// use's pcurve moved by whole turns so that it starts where the one before it ends, the loop
 /// then moved by whole turns to start on the form's range `range` in u. A pcurve moved a turn is
 /// moved four parameters: the form's control points are the same on each. A loop that does not
-/// close once unwrapped, or that runs further than the form does, is refused.
+/// close once unwrapped, or that runs further than the form does, is refused. The loop that runs
+/// furthest (the outer) is put on the form's first turn; each other loop (a hole) goes on the turn
+/// of the form where it is inside the outer, and is refused where that is no turn or more than one.
 pub(super) fn unwind(edge_loops: &[Vec<(u32, bool)>], pcs: &mut [Vec<Curve2>], range: [f64; 2]) -> R<()> {
     let at = |c: &Curve2, end: bool| -> R<[f64; 2]> {
         let [a, b] = c.interval().ok_or("pcurve interval")?;
         solidcore_ops::pcurve::eval(c, if end { b } else { a }).ok_or_else(|| "pcurve end".to_string())
     };
-    for (l, loop_pcs) in edge_loops.iter().zip(pcs.iter_mut()) {
+    // Each loop on its own: its uses' moves to run on from one another, and its extent in u.
+    let mut moves_of = Vec::with_capacity(pcs.len());
+    let mut extent_of = Vec::with_capacity(pcs.len());
+    for (l, loop_pcs) in edge_loops.iter().zip(pcs.iter()) {
         let mut previous: Option<f64> = None;
         let mut first = 0.0;
         let mut moves = Vec::with_capacity(loop_pcs.len());
@@ -246,15 +276,94 @@ pub(super) fn unwind(edge_loops: &[Vec<(u32, bool)>], pcs: &mut [Vec<Curve2>], r
                 hi = hi.max(q[0] + by);
             }
         }
-        let whole = ((range[0] - FORM_SLACK - lo) / FORM_TURN).ceil() * FORM_TURN;
-        if !(hi + whole <= range[1] + FORM_SLACK) {
+        moves_of.push(moves);
+        extent_of.push((lo, hi));
+    }
+    // The outer loop is the one that runs furthest in u (a hole lies inside it): it is moved to
+    // the form's first turn. Each other loop is a closed curve that goes round no turn, so it
+    // may lie on any turn of the form: it goes on the turn where it is inside the outer loop.
+    let outer = (0..extent_of.len()).max_by(|&i, &j| {
+        let width = |k: usize| extent_of.get(k).map_or(0.0, |(lo, hi)| hi - lo);
+        width(i).total_cmp(&width(j)).then(j.cmp(&i))
+    });
+    let Some(outer) = outer else { return Ok(()) };
+    let (lo, hi) = *extent_of.get(outer).ok_or("loop extent")?;
+    let outer_whole = ((range[0] - FORM_SLACK - lo) / FORM_TURN).ceil() * FORM_TURN;
+    if !(hi + outer_whole <= range[1] + FORM_SLACK) {
+        return Err(unsupported("a loop that winds further round its axis than its face's form"));
+    }
+    let outer_moves: Vec<f64> = moves_of.get(outer).ok_or("loop moves")?.iter().map(|by| by + outer_whole).collect();
+    let mut whole_of = vec![outer_whole; pcs.len()];
+    for k in (0..pcs.len()).filter(|&k| k != outer) {
+        let (lo, hi) = *extent_of.get(k).ok_or("loop extent")?;
+        let first = ((range[0] - FORM_SLACK - lo) / FORM_TURN).ceil() * FORM_TURN;
+        if !(hi + first <= range[1] + FORM_SLACK) {
             return Err(unsupported("a loop that winds further round its axis than its face's form"));
         }
+        // Where the loop's first use starts, on each turn the form has room for.
+        let start = {
+            let c = pcs.get(k).and_then(|l| l.first()).ok_or("loop pcurves")?;
+            let by = moves_of.get(k).and_then(|m| m.first()).ok_or("loop moves")?;
+            let q = at(c, false)?;
+            [q[0] + by, q[1]]
+        };
+        let outer_pcs = pcs.get(outer).ok_or("loop pcurves")?;
+        let mut on = None;
+        let mut turn = 0.0;
+        while hi + first + turn <= range[1] + FORM_SLACK {
+            if inside(outer_pcs, &outer_moves, [start[0] + first + turn, start[1]])? {
+                if on.is_some() {
+                    return Err(unsupported("a loop inside the face's outer loop on more than one turn of its form"));
+                }
+                on = Some(first + turn);
+            }
+            turn += FORM_TURN;
+        }
+        *whole_of.get_mut(k).ok_or("loop turn")? =
+            on.ok_or_else(|| unsupported("a loop that is inside the face's outer loop on no turn of its form"))?;
+    }
+    for ((loop_pcs, moves), whole) in pcs.iter_mut().zip(moves_of).zip(whole_of) {
         for (c, by) in loop_pcs.iter_mut().zip(moves) {
             shift_u(c, by + whole);
         }
     }
     Ok(())
+}
+
+/// Whether the point `q` of the form's (u, v) is inside the loop whose uses are `loop_pcs`, each
+/// moved along u by the matching entry of `moves`: the parity of the loop's crossings of the ray
+/// from `q` up the v direction. Each use is cut into [`CROSSING_CELLS`] cells of its parameter;
+/// a cell whose ends lie either side of `q`'s u holds a crossing, which is bisected on the
+/// pcurve itself for its v.
+fn inside(loop_pcs: &[Curve2], moves: &[f64], q: [f64; 2]) -> R<bool> {
+    let mut crossings = 0_usize;
+    for (c, by) in loop_pcs.iter().zip(moves) {
+        let [a, b] = c.interval().ok_or("pcurve interval")?;
+        let point = |t: f64| solidcore_ops::pcurve::eval(c, t).ok_or("pcurve point");
+        let mut t0 = a;
+        let mut left = point(t0)?[0] + by < q[0];
+        for i in 1..=CROSSING_CELLS {
+            let t1 = if i == CROSSING_CELLS { b } else { a + (b - a) * i as f64 / CROSSING_CELLS as f64 };
+            let now = point(t1)?[0] + by < q[0];
+            if now != left {
+                let (mut lo, mut hi) = (t0, t1);
+                for _ in 0..BISECTIONS {
+                    let mid = 0.5 * (lo + hi);
+                    if (point(mid)?[0] + by < q[0]) == left {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                if point(0.5 * (lo + hi))?[1] > q[1] {
+                    crossings += 1;
+                }
+            }
+            t0 = t1;
+            left = now;
+        }
+    }
+    Ok(crossings % 2 == 1)
 }
 
 /// `c` moved by `by` along u.
@@ -267,5 +376,49 @@ fn shift_u(c: &mut Curve2, by: f64) {
                 h[0] += by * w;
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    /// A straight pcurve from `a` to `b` in the form's (u, v).
+    fn line(a: [f64; 2], b: [f64; 2]) -> Curve2 {
+        Curve2::Spline { knots: vec![0.0, 0.0, 1.0, 1.0], points: vec![a, b] }
+    }
+
+    fn polygon(corners: &[[f64; 2]]) -> Vec<Curve2> {
+        (0..corners.len()).map(|i| line(corners[i], corners[(i + 1) % corners.len()])).collect()
+    }
+
+    /// A two-turn strip (a thread's flank: the band between two helices, v rising by 1 a turn) with
+    /// a hole in its second turn. The hole's pcurves come in the first turn's u, as an angle does;
+    /// it goes where the strip is: at the height it has, the strip is there on the second turn
+    /// only, not on the first.
+    #[test]
+    fn a_hole_goes_on_the_turn_of_the_strip_it_is_inside() {
+        let strip = polygon(&[[0.0, 0.0], [8.0, 2.0], [8.0, 3.0], [0.0, 1.0]]);
+        let hole = polygon(&[[0.5, 1.4], [0.75, 1.4], [0.75, 1.6], [0.5, 1.6]]);
+        let loops = vec![vec![(0, true), (1, true), (2, true), (3, true)], vec![(4, true), (5, true), (6, true), (7, true)]];
+        let mut pcs = vec![strip, hole];
+        unwind(&loops, &mut pcs, [0.0, 8.0]).unwrap();
+        let start = solidcore_ops::pcurve::eval(&pcs[1][0], 0.0).unwrap();
+        assert!((start[0] - 4.5).abs() < 1e-12 && (start[1] - 1.4).abs() < 1e-12, "{start:?}");
+        let outer = solidcore_ops::pcurve::eval(&pcs[0][0], 0.0).unwrap();
+        assert!(outer[0].abs() < 1e-12, "{outer:?}");
+    }
+
+    /// The same hole low in the strip is on its first turn.
+    #[test]
+    fn a_hole_low_in_the_strip_stays_on_the_first_turn() {
+        let strip = polygon(&[[0.0, 0.0], [8.0, 2.0], [8.0, 3.0], [0.0, 1.0]]);
+        let hole = polygon(&[[0.5, 0.4], [0.75, 0.4], [0.75, 0.6], [0.5, 0.6]]);
+        let loops = vec![vec![(0, true), (1, true), (2, true), (3, true)], vec![(4, true), (5, true), (6, true), (7, true)]];
+        let mut pcs = vec![strip, hole];
+        unwind(&loops, &mut pcs, [0.0, 8.0]).unwrap();
+        let start = solidcore_ops::pcurve::eval(&pcs[1][0], 0.0).unwrap();
+        assert!((start[0] - 0.5).abs() < 1e-12, "{start:?}");
     }
 }

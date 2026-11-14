@@ -1615,7 +1615,8 @@ impl<'b, 'a> Builder<'b, 'a> {
         let mut pairs: Vec<(u32, u32)> =
             by_vertices.into_values().filter_map(|mut v| if let [a, b] = v.as_mut_slice() { Some((*a.min(b), *a.max(b))) } else { None }).collect();
         pairs.sort_unstable();
-        let mut merged = 0;
+        // Each edge is in at most one pair, so no redirect meets another: all are applied in one pass.
+        let mut redirect: HashMap<u32, (u32, bool)> = HashMap::new();
         for (a, b) in pairs {
             let (ea, eb) = (self.edges.get(a as usize).ok_or("edge reference")?, self.edges.get(b as usize).ok_or("edge reference")?);
             let against = ea.vertices[0] != eb.vertices[0];
@@ -1626,18 +1627,20 @@ impl<'b, 'a> Builder<'b, 'a> {
             if !(lies_on(&ea.curve, ea.interval, &eb.curve, eb.interval, reach)? && lies_on(&eb.curve, eb.interval, &ea.curve, ea.interval, reach)?) {
                 continue;
             }
-            for face in &mut self.faces {
-                for l in &mut face.loops {
-                    if let LoopB::Edges(es) = l {
-                        for u in es.iter_mut().filter(|u| u.0 == b) {
+            redirect.insert(b, (a, against));
+        }
+        for face in &mut self.faces {
+            for l in &mut face.loops {
+                if let LoopB::Edges(es) = l {
+                    for u in es.iter_mut() {
+                        if let Some(&(a, against)) = redirect.get(&u.0) {
                             *u = (a, u.1 != against);
                         }
                     }
                 }
             }
-            merged += 1;
         }
-        Ok(merged)
+        Ok(redirect.len())
     }
 
     /// Every edge of the shell's faces used at least twice among them.
