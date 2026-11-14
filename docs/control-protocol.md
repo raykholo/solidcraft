@@ -1013,6 +1013,7 @@ One setting per line, sorted by name. A change that adds a setting adds its own 
 - `navigator_style` (`axes` (default), `cube`, `custom`: the body chosen with `view.navigator`, the cube until one is chosen)
 - `navigator_texture` (`themed` (default): the custom view navigator in the cube's colours; `modeled`: in its body's own appearance and edge colour)
 - `offer_stand_up`
+- `orbit_free_view_middle` (default false: with `orbit_around` at `view_centre`, the view turns about the camera's target; true turns it about the point Home puts the model on, in the middle of the part of the view the panels leave free; #14651, #16641)
 - `orbit_around` (`view_centre` (default: what Pan moves and Fit frames), `origin` (the world origin stays still on screen), `cursor` (the model point under the pointer when the drag began); the older `orbit_cursor` boolean still sets `cursor` when true)
 - `orbit_cursor_wrap` (default true: an orbit drag that reaches the edge of the view moves the cursor to the opposite edge and keeps turning)
 - `orbit_reverse` (default false: Shift with two-finger scrolling orbits the other way)
