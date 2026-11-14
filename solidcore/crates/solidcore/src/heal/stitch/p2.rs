@@ -1933,6 +1933,14 @@ fn recomputed_seam_curve(
         }
         params.push(next);
     }
+    // The curve keeps the edge's own parameter range (the chord lengths, scaled onto it), so the
+    // edge's interval and everything read off it stay where they were.
+    let Some(total) = params.last().copied() else {
+        return Ok(None);
+    };
+    for p in params.iter_mut() {
+        *p = lo + (hi - lo) * (*p / total);
+    }
     let interpolate = |points: &[Vec3], params: &[f64]| {
         BSplineCurve::interpolate_points(
             points,
