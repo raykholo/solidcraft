@@ -197,6 +197,17 @@ fn vertex_ball_must_not_reach_non_incident_topology() {
         let mut k = Kernel::default();
         let mut b = box_body(&mut k);
         b.set_tolerance(1.0 / 1500.0);
+        // Tests 6 and 83 hold the face and vertex zones above 0.99 x the body's, so the
+        // coarser body takes its zones with it.
+        for f in b.face_list().to_vec() {
+            b.face_mut(f).unwrap().tolerance = 1.0 / 1500.0;
+        }
+        for e in b.edge_list().to_vec() {
+            b.edge_mut(e).unwrap().tolerance = 1.0 / 1500.0;
+        }
+        for w in b.vertex_list().to_vec() {
+            b.vertex_mut(w).unwrap().tolerance = 1.0 / 1500.0;
+        }
         let v = b.vertex_list()[0];
         b.vertex_mut(v).unwrap().tolerance = radius;
         let result = check_brep(&mut k, &mut b, CheckLevel::Level2);
