@@ -1217,9 +1217,7 @@ impl Stitch<'_> {
                     // (not upstream) a seam is recomputed only for a pair whose edges are each
                     // exact on their own face's surface, whose curves differ, and whose faces
                     // stay apart: tested here, before the glue merges the two
-                    let separately_fitted = choice.max_distance > 0.0
-                        && edge_exact_on_faces(k, b, e)?
-                        && edge_exact_on_faces(k, b, test_e)?;
+                    let separately_fitted = choice.max_distance > 0.0;
 
                     // branch on which edge to keep
                     let (keep, delete, deleted_slot) = if choice.keep_first {
@@ -1821,30 +1819,6 @@ fn nearest_on_surface(
     )))
 }
 
-/// (Not upstream.) Whether the curve of `e` lies within the edge's own tolerance of every face
-/// it borders, measured on the faces' surfaces without caching; `false` when any use cannot be
-/// measured.
-fn edge_exact_on_faces(k: &Kernel, b: &mut Brep, e: EdgeId) -> Result<bool> {
-    let tol = edge::tolerance(b, e)?;
-    let mut any = false;
-    for eu in edge::edgeuses(b, e, None, None)? {
-        if !crate::topology::edgeuse::p1::has_edge_face_gap(b, eu)? {
-            continue;
-        }
-        let Some(gap) = ignored(crate::topology::edgeuse::p1::calc_max_edge_face_gap(
-            k, b, eu, false,
-        ))?
-        else {
-            return Ok(false);
-        };
-        if !(gap.gap_3d.is_finite() && gap.gap_3d <= tol) {
-            return Ok(false);
-        }
-        any = true;
-    }
-    Ok(any)
-}
-
 /// A seam's recomputed curve and the proved bound on its distance from every face's surface.
 struct RecomputedSeam {
     curve: Curve,
@@ -1878,6 +1852,7 @@ fn recomputed_seam_curve(
     let tol = edge::tolerance(b, e)?;
     // Only an edge whose curve is farther from a face than its tolerance needs a new curve.
     let mut widest = 0.0_f64;
+    let mut narrowest = f64::INFINITY;
     for eu in edge::edgeuses(b, e, None, None)? {
         if !crate::topology::edgeuse::p1::has_edge_face_gap(b, eu)? {
             continue;
@@ -1892,9 +1867,12 @@ fn recomputed_seam_curve(
         };
         if gap.gap_3d.is_finite() {
             widest = widest.max(gap.gap_3d);
+            narrowest = narrowest.min(gap.gap_3d);
         }
     }
-    if widest <= tol {
+    // Only an edge that is exact on one face's surface (the face it came from) and off the
+    // other's: a curve that is off every face is not a seam between two fitted surfaces.
+    if widest <= tol || narrowest > tol {
         return Ok(None);
     }
     let surfaces = seam_surfaces(b, e)?;
