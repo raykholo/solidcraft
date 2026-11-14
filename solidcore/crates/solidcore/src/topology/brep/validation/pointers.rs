@@ -27,7 +27,6 @@
 //! new UV trim curve on a neighbour that had none. The 3D evaluation, its drop onto
 //! the existing face and every status are kept.
 use super::{invalid, required, Object, Reports, ERROR, SUCCESS};
-use crate::curve::curve::Curve;
 use crate::error::{EntityRef, Result};
 use crate::geom::assert_array::{AssertArray, AssertReport, ReportSpec};
 use crate::geom::extent1d::Extent1d;
@@ -53,6 +52,7 @@ use crate::topology::{
     VertexId, VertexuseId, VertexuseOwner,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use Curve;
 
 const MAX_WALK: usize = 100_000;
 
@@ -1091,7 +1091,7 @@ fn vertex_neighbourhood_edges(k: &Kernel, b: &Brep, v: VertexId) -> Result<Verte
             false,
         ))?
         .and_then(|bounds| bounds.normal)
-        .filter(crate::geom::extent3d::Extent3d::is_defined);
+        .filter(Extent3d::is_defined);
         for &(point, zone) in &anchors {
             let limit = tol::xsect_tol_3d_from_zones(k, zone, tol::zone_tol3d(k, data.tolerance));
             if bbox.is_some_and(|bbox| !bbox.contains_point(point, limit)) {
@@ -1421,7 +1421,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
         let bbox = exclusion_probe(crate::query::face::p1::calculate_bounding_box(
             k, &mut *b, f, false,
         ))?
-        .filter(crate::geom::extent3d::Extent3d::is_defined);
+        .filter(Extent3d::is_defined);
         for &v in &vertices {
             k.check_cancelled("topology::brep::validation::vertex_exclusion")?;
             if incident.contains(&v) || excluded.contains(&v) {
@@ -1522,7 +1522,7 @@ fn check_vertex_exclusion(k: &Kernel, b: &mut Brep, r: &mut Reports<'_>) -> Resu
             false,
         ))?
         .and_then(|bounds| bounds.normal)
-        .filter(crate::geom::extent3d::Extent3d::is_defined);
+        .filter(Extent3d::is_defined);
         let first = edge::vertex(b, e)?;
         let last = edge::other_vertex(b, e, first)?;
         let data = b.edge(e)?;
@@ -1619,7 +1619,7 @@ fn check_edgeuse_geometry(k: &Kernel, b: &mut Brep, eu: EdgeuseId) -> Result<()>
     Ok(())
 }
 
-fn fix_reversed(k: &Kernel, c: &mut crate::curve::curve::Curve) -> Result<()> {
+fn fix_reversed(k: &Kernel, c: &mut Curve) -> Result<()> {
     fix_reversed_on(k, c, None)
 }
 
@@ -1670,11 +1670,7 @@ fn first_fundamental_form(
 /// at each end is judged on the surface, from its first fundamental form there (the
 /// fork's `PassesReverseDirectionCheckOn`): a trim whose end the surface cannot
 /// evaluate is left unfixed, and a 3D curve takes the plain test.
-fn fix_reversed_on(
-    k: &Kernel,
-    c: &mut crate::curve::curve::Curve,
-    surface: Option<&Surface>,
-) -> Result<()> {
+fn fix_reversed_on(k: &Kernel, c: &mut Curve, surface: Option<&Surface>) -> Result<()> {
     use crate::curve::curve::CurveKind;
     let owner = c.owner();
     let edge_zone_tol_3d = c.owner_zone_tol_3d();
@@ -1875,7 +1871,7 @@ fn edge_geometry(
                 None,
                 0,
             )?;
-            let on_surface = crate::curve::curve::Curve::from(on_surface);
+            let on_surface = Curve::from(on_surface);
             if let Err(err) = required(b.edge(e)?.curve.as_ref())?.curve_max_distance_between(
                 k,
                 &ivl,
@@ -1982,10 +1978,10 @@ mod issue_891_tests {
 
     #[test]
     fn vertex_ball_cannot_reach_a_separate_wire_edge() {
-        use crate::curve::curve::Curve;
         use crate::curve::line::Line;
         use crate::geom::extent1d::Extent1d;
         use crate::topology::brep::p5::create_wire_edge_from_curve;
+        use Curve;
 
         let mut k = Kernel::default();
         let mut body = Brep::new_with_infinite_region().unwrap();
@@ -2018,10 +2014,10 @@ mod issue_891_tests {
 
     #[test]
     fn distinct_boundary_ids_in_the_edge_zones_are_local_neighbours() {
-        use crate::curve::curve::Curve;
         use crate::curve::line::Line;
         use crate::geom::extent1d::Extent1d;
         use crate::topology::brep::p5::create_wire_edge_from_curve;
+        use Curve;
 
         for gap in [0.0, 1.5e-5] {
             let mut k = Kernel::default();
@@ -2300,7 +2296,7 @@ mod issue_891_tests {
                 ..Default::default()
             },
             plane,
-            &crate::geom::extent2d::Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
+            &Extent2d::from_bounds(0.0, 0.0, 1.0, 1.0),
             OrientType::Same,
             None,
             &face_key,
