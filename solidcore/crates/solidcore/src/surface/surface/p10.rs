@@ -546,7 +546,6 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         // settle on the root behind the start; that root is dropped below and the root
         // ahead was never looked for, so the ray missed a wall it leaves by.
         let mut clipped = false;
-        let unclipped_mid = bound_ivl.evaluate(0.5);
         if self.ray_fire {
             // (a band behind the start as wide as the one the interval is expanded by, so a
             // root on the surface the ray starts on is found where it was, and dropped below
@@ -590,13 +589,7 @@ impl<'t, 's, O: SolutionObject + 't> LsiGlobalSolver<'t, 's, O> {
         };
 
         // let guess = LineInterval/SurfaceDomain CenterPoints
-        // (a seed that was ahead of the start stays where it was: the clip moves only a
-        // seed that lay behind it)
-        let mut first_t = if clipped && unclipped_mid >= ivl.min() && unclipped_mid <= ivl.max() {
-            unclipped_mid
-        } else {
-            ivl.evaluate(0.5)
-        };
+        let mut first_t = ivl.evaluate(0.5);
         let first_uv_guess = uv_domain.evaluate(0.5, 0.5);
         let mut uv_guesses = Vec::new();
         let mut t_guesses = Vec::new();
