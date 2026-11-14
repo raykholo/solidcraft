@@ -1186,8 +1186,17 @@ fn sweep_ends_coincide(
     // R_end[i] = R_start[i] * ratio[i] / sum(R_start * ratio).
     // Thus sum |R_end - R_start| <= (ratio_max - ratio_min) / ratio_min.
     // Subtracting an anchor makes the bound independent of world coordinates.
-    let weight_gap = (ratio_max - ratio_min) / ratio_min;
-    let bound = gap_bound + radius * weight_gap;
+    // Every bound includes its rounding: each computed ratio is within a factor
+    // (1 +- gamma(1)) of the exact one, so the exact ratios lie in [lo, hi] below,
+    // and two ratios that round to the same value still leave a weight gap. Each
+    // distance carries at most gamma(4) relative error, and the subtraction,
+    // division, product and sum here at most gamma(4) more: the computed bound
+    // times (1 + gamma(8)) encloses the exact one.
+    use crate::nurbs::math::gamma;
+    let lo = ratio_min * (1.0 - gamma(1));
+    let hi = ratio_max * (1.0 + gamma(1));
+    let weight_gap = (hi - lo) / lo;
+    let bound = (gap_bound + radius * weight_gap) * (1.0 + gamma(8));
     Ok(bound.is_finite() && bound <= tol)
 }
 
@@ -1246,6 +1255,25 @@ mod tests {
                 expected
             );
         }
+        // Equal control points far from the anchor whose weight ratios both round to 3:
+        // the exact bases differ, and the sections lie about 1.85e-7 apart midway.
+        let far = 1e10 * Vec3::X;
+        let points = [Vec3::ZERO, far, Vec3::ZERO, far];
+        let surface = BSplineSurface::create_canonical(&CanonicalSurfaceData {
+            u_degree: 1,
+            v_degree: 1,
+            control_points: &points,
+            form: BSplineSurfaceForm::Unspecified,
+            u_multiplicities: &[2, 2],
+            v_multiplicities: &[2, 2],
+            u_knots: &[0.0, 1.0],
+            v_knots: &[0.0, 1.0],
+            knot_type: KnotType::Unspecified,
+            weights: Some(&[1.0, 1.0 + f64::EPSILON, 3.0, 3.0 + 2.0 * f64::EPSILON]),
+            uv_domain: None,
+        })
+        .unwrap();
+        assert!(!sweep_ends_coincide(&k, &surface, false, 1e-8).unwrap());
     }
 
     // An imported line may have last-bit differences between its analytic data
