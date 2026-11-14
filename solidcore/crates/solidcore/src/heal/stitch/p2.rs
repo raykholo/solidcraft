@@ -1980,7 +1980,7 @@ fn seam_point(
                 return Ok(None);
             };
             *guess = Some(uv);
-            sum = sum + on;
+            sum += on;
             nearest.push(on);
         }
         centre = sum * (1.0 / nearest.len() as f64);

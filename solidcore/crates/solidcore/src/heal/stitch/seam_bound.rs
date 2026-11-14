@@ -46,6 +46,9 @@ use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::surface::surface::Surface;
 use crate::{Result, SolidError};
 
+/// A direction's knot samples (parameter, spacing, span index) and its slack.
+type KnotSamples = (Vec<(f64, f64, usize)>, f64);
+
 const OP: &str = "heal::stitch::seam_bound";
 
 /// The most pieces the bisection may make before the gap is called not enclosed.
@@ -146,7 +149,7 @@ impl NetSurface {
                    lo: f64,
                    hi: f64,
                    continues: bool|
-         -> Result<(Vec<(f64, f64, usize)>, f64)> {
+         -> Result<KnotSamples> {
             let (d0, d1) = (knot(knots, p as isize), knot(knots, count as isize));
             if !(lo <= hi && lo.is_finite() && hi.is_finite()) {
                 return Err(refused("an unordered parameter box"));
@@ -191,12 +194,12 @@ impl NetSurface {
         // bound needs the slack, and it has the first partials)
         let mut slack = 0.0_f64;
         if lk >= 1 && (over_u > 0.0 || over_v > 0.0) {
-            slack = self.slack(&out, over_u, over_v)?;
+            slack = Self::slack(&out, over_u, over_v)?;
         }
         Ok((out, slack))
     }
 
-    fn slack(&self, p: &Partials<Ivl>, over_u: f64, over_v: f64) -> Result<f64> {
+    fn slack(p: &Partials<Ivl>, over_u: f64, over_v: f64) -> Result<f64> {
         let (Some(su), Some(sv)) = (norm_upper(p.at(1, 0)), norm_upper(p.at(0, 1))) else {
             return Err(SolidError::Unsupported {
                 operation: OP,
@@ -276,13 +279,13 @@ fn piece(
     let h = Ivl::from(b) - Ivl::from(a);
     // The second order, where the surface is C^1 across every knot line the box crosses:
     // (S o W)'' = S_uu u'^2 + 2 S_uv u'v' + S_vv v'^2 + S_u u'' + S_v v''
-    let second = s.partials(&wd, 2, 1).and_then(|(p, slack)| {
+    let second = s.partials(&wd, 2, 1).map(|(p, slack)| {
         let mut swpp = scaled(p.at(2, 0), u1 * u1);
         swpp = plus(swpp, scaled(p.at(1, 1), Ivl::from(2.0) * u1 * v1));
         swpp = plus(swpp, scaled(p.at(0, 2), v1 * v1));
         swpp = plus(swpp, scaled(p.at(1, 0), u2));
         swpp = plus(swpp, scaled(p.at(0, 1), v2));
-        Ok((minus(*c2, swpp), slack))
+        (minus(*c2, swpp), slack)
     });
     let term = match second {
         Ok((gpp, slack)) => {
