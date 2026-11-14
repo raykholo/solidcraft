@@ -1716,6 +1716,11 @@ const SEAM_SAMPLES: usize = 33;
 const SEAM_CORRESPONDENCE: usize = 257;
 /// Rounds of projecting a seam point onto the faces' surfaces in turn.
 const SEAM_ROUNDS: usize = 40;
+/// The share of an offset to a surface that may run along the surface (the cosine of the angle
+/// from the normal's perpendicular) before the nearest point is taken as held by the domain.
+const SEAM_TANGENTIAL: f64 = 0.05;
+/// Offsets shorter than this have no direction worth testing.
+const SEAM_NORMAL_FLOOR: f64 = 1e-9;
 
 /// The faces' surfaces at `e`, with their parameter domains: one entry per loop edge use of
 /// `e` on a distinct face.
@@ -1777,13 +1782,28 @@ fn nearest_on_surface(
         only_upper_half: true,
         non_zero_tangents: true,
     };
-    let Some(on) = ignored(surface.evaluate(k, drop.result_uv, 0, 0, flags))?
-        .and_then(|d| d.into_iter().next().and_then(|row| row.into_iter().next()))
-    else {
+    let Some(d) = ignored(surface.evaluate(k, drop.result_uv, 1, 1, flags))? else {
+        return Ok(None);
+    };
+    let at = |i: usize, j: usize| d.get(i).and_then(|row| row.get(j)).copied();
+    let (Some(on), Some(su), Some(sv)) = (at(0, 0), at(1, 0), at(0, 1)) else {
         return Ok(None);
     };
     if !(on.x.is_finite() && on.y.is_finite() && on.z.is_finite()) {
         return Ok(None);
+    }
+    // A distance to the surface lies along its normal. Where the nearest point is held at the
+    // edge of the domain, the offset runs along the surface instead (a point just outside the
+    // face on its own plane): that is not a gap between surfaces, and the point is refused.
+    let r = point - on;
+    let len = r.length();
+    if len > SEAM_NORMAL_FLOOR {
+        for tangent in [su, sv] {
+            let t = tangent.length();
+            if t > 0.0 && r.dot(tangent).abs() > SEAM_TANGENTIAL * len * t {
+                return Ok(None);
+            }
+        }
     }
     Ok(Some((on, drop.result_uv, point.distance(on))))
 }
