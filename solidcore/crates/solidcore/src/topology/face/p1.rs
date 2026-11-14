@@ -2586,18 +2586,18 @@ pub fn split_at_seam_notified<O: LoopObject>(
     )
 }
 
-/// WR-599 (`Kernel::fixes.cover_wraps_across_closed_seam`, the fork's
-/// tangency-labs/smlib@16bf1cb): a face just merged with a face its surface covers across a
+/// WR-599 (the fork's tangency-labs/smlib@16bf1cb): a face just merged with a face its surface covers across a
 /// seam the surface wraps completed as a face on a periodic surface has it: `HasSeamProblem`
 /// (its classification status passed on, as the fork's `SER`), then, when a seam is crossed
 /// or missing, [`split_at_seam_notified`] with its optional arguments left out, notifying
 /// through `env` when given. The cover keeps the merged domain within the period it spans,
 /// so the trims of the covered part cross the seam; without the seam edges the loops'
-/// UV trims jump by the period where they cross it. Both merges that cover across a seam
-/// call this after each face merge: `SmMerge::BooleanPostProcess`
-/// ([`crate::boolean::merge::p1::boolean_post_process`]) and
+/// UV trims jump by the period where they cross it. `SmMerge::BooleanPostProcess`
+/// ([`crate::boolean::merge::p1::boolean_post_process`]) calls this after each face merge
+/// under `Kernel::fixes.cover_wraps_across_closed_seam`, and
 /// `SmBrep::RemoveTopologicalEdgesAndVertices`
-/// ([`crate::topology::brep::p5::remove_topological_edges_and_vertices`]).
+/// ([`crate::topology::brep::p5::remove_topological_edges_and_vertices`]) after each one
+/// (#16866).
 ///
 /// # Errors
 ///
