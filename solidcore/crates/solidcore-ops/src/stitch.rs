@@ -558,4 +558,61 @@ mod tests {
             [6, 12, 8]
         );
     }
+
+    /// #16866, #15715, #15661: a rod of radius 6 threaded M12 x 1.75 (cut by the screw sweep of
+    /// a 60-degree groove: root flat P/4 wide at radius 6 - 5H/8, H = sqrt(3)/2 P, flanks out
+    /// past the crest), then merged as SolidCraft cleans a body up before Offset Faces. The
+    /// sweep's root wall is a cylinder in half-turn faces, each on its own cylinder turned half
+    /// a turn from the last: merged, a face takes in the next one across its surface's seam.
+    /// The merged face keeps a seam, as a face on a periodic surface has it (WR-599): without
+    /// it, its loop's UV trims jumped by the period and the check found the loop's orientation
+    /// wrong. The merge leaves a valid solid of the same volume.
+    #[test]
+    fn a_thread_s_root_merged_across_its_seam_stays_valid() {
+        use crate::CheckLevel;
+        all_fixes();
+        let pitch = 1.75;
+        let h = 3.0_f64.sqrt() / 2.0 * pitch;
+        let (root, out) = (6.0 - 5.0 * h / 8.0, 6.0 + pitch / 20.0);
+        let flank = (out - root) * (std::f64::consts::PI / 6.0).tan();
+        let (low, high) = (-pitch - pitch / 8.0, -pitch + pitch / 8.0);
+        let corners = [
+            [0.0, root, low],
+            [0.0, out, low - flank],
+            [0.0, out, high + flank],
+            [0.0, root, high],
+        ];
+        let groove: Vec<crate::sweep::Curve> = (0..4)
+            .map(|i| crate::sweep::Curve::Line {
+                start: corners[i],
+                end: corners[(i + 1) % 4],
+            })
+            .collect();
+        // past both ends of the rod (z 0 to 25): from z -2.6 to 27.3
+        let tool = crate::sweep::screw_sweep(
+            &groove,
+            [0.0, 0.0, -pitch],
+            [0.0, 0.0, 1.0],
+            pitch,
+            16.5,
+            None,
+            pitch / 1e4,
+        )
+        .unwrap();
+        let rod = crate::make_cylinder([0.0; 3], 6.0, 25.0).unwrap();
+        let cut = boolean(rod, tool, BooleanOp::Subtract).unwrap().unwrap();
+        assert!(cut.check(CheckLevel::All).unwrap().is_valid());
+        // each volume within its relative accuracy: the two agree within twice it
+        let accuracy = 1e-8;
+        let volume = cut.volume(accuracy).unwrap();
+        let order = kernel_order(&cut);
+        let merged = merge_faces(cut, &order, &[]).unwrap();
+        let report = merged.check(CheckLevel::All).unwrap();
+        assert!(report.is_valid(), "{report}");
+        let merged_volume = merged.volume(accuracy).unwrap();
+        assert!(
+            (merged_volume - volume).abs() <= 2.0 * accuracy * volume,
+            "{merged_volume} != {volume}"
+        );
+    }
 }

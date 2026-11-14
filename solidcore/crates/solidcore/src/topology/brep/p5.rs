@@ -73,6 +73,11 @@
 //! topological vertices, each surviving edge on a line and its vertices grow to the
 //! certified gaps the joins left between the line's ends and the vertices
 //! (`cover_joined_line_gaps`; the boolean cleanup does the same).
+//! Opt-in `Kernel::fixes.cover_wraps_across_closed_seam` (WR-599, #16866): after each face
+//! merge [`remove_topological_edges_and_vertices`] completes the merged face's seam
+//! (`HasSeamProblem`, then `SplitAtSeam`: [`crate::topology::face::p1::complete_merged_face_seam`]),
+//! as the boolean cleanup does: the same `IsTopological` cover takes in faces across a seam
+//! the kept surface wraps.
 
 use crate::curve::curve::Curve;
 use crate::error::{Result, SolidError};
@@ -2568,6 +2573,10 @@ pub fn remove_topological_with_notifications(
     let mut joined = Vec::new();
     let result = (|| {
         for edge in brep_edges(b)? {
+            // An edge of the list a seam completion below removed is gone.
+            if b.edge(edge).is_err() {
+                continue;
+            }
             // IsTopological can expand a surface even when this edge is on the
             // keep list. Do not move the keep-list test before this call.
             let Some(topological) =
@@ -2617,6 +2626,19 @@ pub fn remove_topological_with_notifications(
                 delete_edge_keep_surface(k, b, edge, keep, notifications.as_deref_mut())?;
             let domain = topological.merged_face_domain.unwrap_or_default();
             crate::topology::face::p2::set_uv_domain(b, current_face, &domain)?;
+            if k.fixes.cover_wraps_across_closed_seam {
+                // WR-599, as `boolean_post_process` (#16866): `IsTopological`'s cover may
+                // have taken in a face straddling the kept surface's seam, and the merged
+                // domain stays the period it spans; the merged face gets the seam a face
+                // on a periodic surface has, or its loops' UV trims jump by the period
+                // and the check finds their orientation wrong.
+                crate::topology::face::p1::complete_merged_face_seam(
+                    k,
+                    b,
+                    notifications.as_deref_mut(),
+                    current_face,
+                )?;
+            }
         }
         for vertex in brep_vertices(b)? {
             if vertex::is_loop_vertex(b, vertex)? {
