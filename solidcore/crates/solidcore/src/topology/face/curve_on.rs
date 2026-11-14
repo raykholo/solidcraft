@@ -16,6 +16,7 @@ use crate::geom::extent1d::Extent1d;
 use crate::geom::solution_array::SolutionType;
 use crate::intersect::point_class::PointClassType;
 use crate::kernel::Kernel;
+use crate::query::brep::BrepFaceServices;
 use crate::topology::brep_cache::CacheObject;
 use crate::topology::face::{p1, p2};
 use crate::topology::{Brep, FaceId};
@@ -52,17 +53,23 @@ pub fn curve_lies_on_face(
         return Err(SolidError::invalid_input(OP, "the face has no surface"));
     };
     let surface = surface.clone_for_evaluation()?;
-    // Full coincidence (no partial), so a part of the interval off the surface is no.
-    let Some(found) = surface.simple_coincidence_checker(
-        k,
-        &domain,
-        curve,
-        &interval,
-        tol,
-        false,
-        [None::<CacheObject>, None],
-    )?
-    else {
+    // Full coincidence (no partial), so a part of the interval off the surface is no. The
+    // face's own surface: its trimmed-surface services come from the B-rep.
+    let found = {
+        let mut services = BrepFaceServices::new(b);
+        surface.simple_coincidence_checker_with_context(
+            k,
+            &domain,
+            curve,
+            &interval,
+            tol,
+            false,
+            [None::<CacheObject>, Some(CacheObject::Surface(f))],
+            None,
+            &mut services,
+        )?
+    };
+    let Some(found) = found else {
         return Ok(false);
     };
     if found.solution_type != SolutionType::RangeOfValues
