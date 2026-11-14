@@ -4498,7 +4498,7 @@ fn split_face_dialog_keeps_a_sketch_split_and_its_loops() {
 fn three_point_plane_dialog_takes_points_on_a_mesh_body() {
     let mut h = crate::scenario::Harness::new();
     let path = h.dir.join("box.stl");
-    h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20})).unwrap();
+    h.app.run("solid.box", json!({"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]})).unwrap();
     h.app.run("file.save_mesh", json!({"path": path})).unwrap();
     h.app.run("file.new", json!({})).unwrap();
     h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
@@ -4506,7 +4506,7 @@ fn three_point_plane_dialog_takes_points_on_a_mesh_body() {
     h.app.start("construct.plane.three_points");
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
     let proj = crate::viewport::projection(&h.app, rect);
-    for point in [[20.0, 15.0, 20.0], [10.0, 5.0, 20.0], [30.0, 25.0, 20.0]] {
+    for point in [[20.0, 15.0, 20.0], [10.0, 5.0, 20.0], [30.0, 5.0, 20.0]] {
         let pos = proj.to_screen(Vec3::new(point[0], point[1], point[2])).unwrap();
         let hits = crate::viewport::pick(&h.app, &proj, pos);
         let mut d = h.app.dialog.take().unwrap();
