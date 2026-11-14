@@ -1716,6 +1716,9 @@ const SEAM_SAMPLES: usize = 33;
 const SEAM_CORRESPONDENCE: usize = 257;
 /// Rounds of projecting a seam point onto the faces' surfaces in turn.
 const SEAM_ROUNDS: usize = 40;
+/// The largest sine of the angle between the faces' normals at a seam that is a gap between
+/// surfaces running alongside each other.
+const SEAM_PARALLEL: f64 = 0.5;
 /// The share of an offset to a surface that may run along the surface (the cosine of the angle
 /// from the normal's perpendicular) before the nearest point is taken as held by the domain.
 const SEAM_TANGENTIAL: f64 = 0.05;
@@ -1759,7 +1762,7 @@ fn nearest_on_surface(
     domain: &crate::geom::extent2d::Extent2d,
     point: Vec3,
     guess: Option<crate::math::Point2>,
-) -> Result<Option<(Vec3, crate::math::Point2, f64)>> {
+) -> Result<Option<(Vec3, crate::math::Point2, f64, Vec3)>> {
     use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
     use crate::nurbs::knots::Side;
     use crate::surface::surface::p5::DropPointOptions;
@@ -1805,7 +1808,17 @@ fn nearest_on_surface(
             }
         }
     }
-    Ok(Some((on, drop.result_uv, point.distance(on))))
+    let normal = su.cross(sv);
+    let n = normal.length();
+    if !(n.is_finite() && n > 0.0) {
+        return Ok(None);
+    }
+    Ok(Some((
+        on,
+        drop.result_uv,
+        point.distance(on),
+        normal * (1.0 / n),
+    )))
 }
 
 /// (Not upstream.) Whether the curve of `e` lies within the edge's own tolerance of every face
@@ -2004,7 +2017,7 @@ fn recomputed_seam_curve(
         let mut uvs = Vec::new();
         let mut guess = None;
         for point in &along {
-            let Some((_, uv, _)) = nearest_on_surface(k, surface, domain, *point, guess)? else {
+            let Some((_, uv, _, _)) = nearest_on_surface(k, surface, domain, *point, guess)? else {
                 return Ok(None);
             };
             guess = Some(uv);
@@ -2060,7 +2073,7 @@ fn seam_point(
         let mut sum = Vec3::new(0.0, 0.0, 0.0);
         let mut nearest = Vec::new();
         for ((surface, domain), guess) in surfaces.iter().zip(guesses.iter_mut()) {
-            let Some((on, uv, _)) = nearest_on_surface(k, surface, domain, q, *guess)? else {
+            let Some((on, uv, _, _)) = nearest_on_surface(k, surface, domain, q, *guess)? else {
                 return Ok(None);
             };
             *guess = Some(uv);
@@ -2082,10 +2095,24 @@ fn seam_point(
     }
     // not met: the centre stands where no surface is farther than twice the stitch tolerance
     let mut worst = 0.0_f64;
+    let mut normals: Vec<Vec3> = Vec::new();
     for (surface, domain) in surfaces {
         match nearest_on_surface(k, surface, domain, centre, None)? {
-            Some((_, _, d)) => worst = worst.max(d),
+            Some((_, _, d, n)) => {
+                worst = worst.max(d);
+                normals.push(n);
+            }
             None => return Ok(None),
+        }
+    }
+    // Surfaces a constant gap apart run alongside each other. Faces that cross at an angle
+    // (a cube's corner, with noise on both sides) are not within reach of a midline: their
+    // unit normals differ by more than SEAM_PARALLEL.
+    if let Some(first) = normals.first() {
+        for n in &normals {
+            if first.cross(*n).length() > SEAM_PARALLEL {
+                return Ok(None);
+            }
         }
     }
     // and the faces stay apart: the centre is farther than the edge's tolerance from a surface
