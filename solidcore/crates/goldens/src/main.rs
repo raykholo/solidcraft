@@ -402,7 +402,7 @@ fn goldens_main(
 }
 
 /// Lines printed per kind of change for one unit.
-const MAX_GOLDEN_LINES: usize = 10;
+const MAX_GOLDEN_LINES: usize = 100_000;
 
 fn print_golden_changes(res: &goldens::golden::GoldenResult) {
     for (name, c) in res.changed.iter().take(MAX_GOLDEN_LINES) {
