@@ -1967,6 +1967,21 @@ fn recomputed_seam_curve(
         return Ok(None);
     };
     let curve_now = Curve::from(again);
+    // The new seam lies within the stitch tolerance of the edge's own curve, over the whole
+    // curve and in both directions (enclosed under the edge's own parameter range): a seam that
+    // moved farther than the tolerance the surfaces were allowed to be apart is not a midline.
+    let Some(moved) = ignored(super::bounds::curves(
+        curve_of(b, e)?,
+        [lo, hi],
+        &curve_now,
+        [lo, hi],
+    ))?
+    else {
+        return Ok(None);
+    };
+    if !(moved.is_finite() && moved <= limit) {
+        return Ok(None);
+    }
     let dense: Vec<f64> = (0..SEAM_CORRESPONDENCE)
         .map(|i| {
             if i + 1 == SEAM_CORRESPONDENCE {
