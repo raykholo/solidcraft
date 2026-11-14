@@ -1817,6 +1817,29 @@ fn a_face_winding_two_turns_round_its_cylinder_imports_whole() {
     assert_closed_measures(&t, volume, area, &[]);
 }
 
+/// A solid whose shell the file leaves open (a unit cube written without its top face, as a
+/// MANIFOLD_SOLID_BREP of a CLOSED_SHELL) was refused as a whole when sewing its faces did not
+/// close it. It is now read as one sheet with all five of its faces, which share the edges they
+/// do (12 minus the 4 of the top face are each used twice, the top's 4 once).
+#[test]
+fn an_open_shell_the_sewing_leaves_open_is_read_as_a_sheet_with_all_its_faces() {
+    let cube = cube_entities();
+    assert!(cube.contains("#431,"), "the cube's top face");
+    let mut t = String::from(HEAD);
+    t += &cube.replacen("#431,", "", 1);
+    t += &context(10, "(LENGTH_UNIT()NAMED_UNIT(*)SI_UNIT(.MILLI.,.METRE.))");
+    t += "#9=ADVANCED_BREP_SHAPE_REPRESENTATION('Box',(#101),#10);\n";
+    t += TAIL;
+    let imp = step_import(&t).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(imp.bodies.len(), 1, "{:?}", imp.warnings);
+    let open = &imp.bodies[0];
+    assert!(open.body.is_surface() && !open.closed && open.refused.is_none(), "{:?}", imp.warnings);
+    assert_eq!((open.file_faces, open.body.face_count()), (5, 5), "{:?}", imp.warnings);
+    assert!(!imp.warnings.iter().any(|w| w.contains("left out")), "{:?}", imp.warnings);
+    // Five unit faces, each once.
+    assert!(rel(measure(&open.body).unwrap().area, 5.0) < 1e-9, "{}", measure(&open.body).unwrap().area);
+}
+
 /// Booleans and blends build the same body every time, so an export is byte-identical from
 /// run to run (an export once listed a boolean's faces in hash order of their addresses). The
 /// tee of oracle 35 with its rolling-ball fillet round the junction.

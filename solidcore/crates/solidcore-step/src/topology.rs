@@ -1589,9 +1589,8 @@ impl<'b, 'a> Builder<'b, 'a> {
     }
 
     /// Edges the file writes twice: two EDGE_CURVEs on the same two vertices and the same curve
-    /// (each within the tolerance of the other along its interval), each used by one face of the
-    /// solid. The faces share one boundary, so they share one edge: the second is the first,
-    /// run the way its vertices run against the first's. An edge used more than once, or one whose
+    /// record over the same interval (equal, not near), each used by one face of the solid. The
+    /// faces share one boundary, so they share one edge: the second is the first, run the way its vertices run against the first's. An edge used more than once, or one whose
     /// twin is another curve, is left as the file has it. Returns how many.
     fn merge_twin_edges(&mut self) -> R<usize> {
         let mut uses: HashMap<u32, usize> = HashMap::new();
@@ -1620,11 +1619,9 @@ impl<'b, 'a> Builder<'b, 'a> {
         for (a, b) in pairs {
             let (ea, eb) = (self.edges.get(a as usize).ok_or("edge reference")?, self.edges.get(b as usize).ok_or("edge reference")?);
             let against = ea.vertices[0] != eb.vertices[0];
-            let mut reach = self.tol.max(ea.tolerance).max(eb.tolerance);
-            for v in ea.vertices {
-                reach = reach.max(self.vertices.get(v as usize).ok_or("vertex reference")?.tolerance);
-            }
-            if !(lies_on(&ea.curve, ea.interval, &eb.curve, eb.interval, reach)? && lies_on(&eb.curve, eb.interval, &ea.curve, ea.interval, reach)?) {
+            // Only the same curve record over the same interval: the two edges then coincide
+            // exactly, and nothing is decided by how near two different curves come.
+            if ea.curve != eb.curve || ea.interval != eb.interval {
                 continue;
             }
             redirect.insert(b, (a, against));
@@ -1981,36 +1978,6 @@ impl Builder<'_, '_> {
         }
         Ok(TrimFace { surface, nurbs, domain, edges, vertices, loops, tolerance: self.tol })
     }
-}
-
-/// Whether the curve `a` over `ia` lies within `reach` of the curve `b` over `ib` at nine points
-/// along it (the nearest point of `b` found by a scan and a golden-section search).
-fn lies_on(a: &BCurve, ia: [f64; 2], b: &BCurve, ib: [f64; 2], reach: f64) -> R<bool> {
-    const SCAN: usize = 64;
-    let (ca, cb) = (CurveEval::new(a)?, CurveEval::new(b)?);
-    let near = |p: Vec3| -> Option<f64> {
-        let step = (ib[1] - ib[0]) / SCAN as f64;
-        let d = |t: f64| cb.point(t).map_or(f64::INFINITY, |q| q.dist(p));
-        let k = (0..=SCAN).min_by(|&i, &j| d(ib[0] + step * i as f64).total_cmp(&d(ib[0] + step * j as f64)))?;
-        let (mut lo, mut hi) = (ib[0] + step * k.saturating_sub(1) as f64, (ib[0] + step * (k + 1) as f64).min(ib[1]));
-        let g = 0.5 * (5f64.sqrt() - 1.0);
-        for _ in 0..100 {
-            let (x, y) = (hi - g * (hi - lo), lo + g * (hi - lo));
-            if d(x) <= d(y) {
-                hi = y;
-            } else {
-                lo = x;
-            }
-        }
-        Some(d(0.5 * (lo + hi)))
-    };
-    for i in 0..=8 {
-        let p = ca.point(ia[0] + (ia[1] - ia[0]) * f64::from(i) / 8.0).ok_or("edge point")?;
-        if !near(p).is_some_and(|d| d <= reach) {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }
 
 /// A face's uses on their edges' NURBS forms, with `given` pcurves where a kernel made them.
