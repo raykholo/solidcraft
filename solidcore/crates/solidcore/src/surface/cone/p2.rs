@@ -1126,6 +1126,7 @@ impl Cone {
         let height = ruling.length();
         if !height.is_finite() || height < EFF_ZERO || top.start_ang != 0.0 || bot.start_ang != 0.0
         {
+            eprintln!("DBG16488 A height={height:e} ts={:e} bs={:e}", top.start_ang, bot.start_ang);
             return Ok(None);
         }
         let z_axis = ruling.unitize_or_z();
@@ -1137,6 +1138,7 @@ impl Cone {
         if centre_line.length() < EFF_ZERO
             || !centre_line.is_parallel_to(bot.frame.z_axis(), ang_tol)
         {
+            eprintln!("DBG16488 B {:?} {:?}", centre_line, bot.frame.z_axis());
             return Ok(None);
         }
         // A top row turned about the axis by up to `ang_tol` (the arcs' X axes are held to it
@@ -1144,6 +1146,7 @@ impl Cone {
         // ruling is held to the normal within that.
         let tilt = z_axis.angle_between(bot.frame.z_axis()).unwrap_or(PI);
         if tilt.min(PI - tilt) > EFF_ZERO_SQRT * (1.0 + bot.radius / height) {
+            eprintln!("DBG16488 C tilt={tilt:e} r={} h={height}", bot.radius);
             return Ok(None);
         }
 
@@ -1166,6 +1169,7 @@ impl Cone {
         // segment's tangent, which a very short first segment rounds.
         let origin = centre + (corner - centre).dot(z_axis) * z_axis;
         let Ok(x_axis) = (corner - origin).unitize() else {
+            eprintln!("DBG16488 D");
             return Ok(None);
         };
 
