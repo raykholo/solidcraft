@@ -9229,14 +9229,25 @@ fn trim_to_body(tools: Vec<Traced>, target: &ModelBody, dist_to_start: impl Fn(V
 /// Tools bounded by the surface of `face` of `target` (extended): each tool, a prism run long
 /// enough to pass the face, cut at that surface, the piece that starts at `start` kept (the
 /// kernel's [`kernel::split_prism_to_face`]), whether the start lies in air or inside the
-/// target's material. A profile that is not over the face is refused.
+/// target's material. A profile that is only partly over the face is trimmed to the target
+/// body, as [`trim_to_body`] does; it is refused when a piece still reaches the far end.
 fn trim_to_face(tools: Vec<Traced>, target: &ModelBody, face: usize, plane: &Plane, start: f64, far: f64) -> Result<Vec<Traced>> {
     let mut out = Vec::new();
+    let mut partial = false;
     for t in &tools {
         let Some(parts) = kernel::split_prism_to_face(&t.body, &target.body, face, plane, start, far)? else {
-            return Err(DocError::Invalid("the profile reaches past the To face".into()));
+            partial = true;
+            break;
         };
         out.extend(parts.into_iter().map(|part| Traced::step(part, &[t])));
+    }
+    if partial {
+        let n = plane.normal();
+        let trimmed = trim_to_body(tools, target, |q: Vec3| ((q - plane.origin).dot(n) - start).abs())?;
+        if trimmed.iter().any(|t| kernel::has_cap_at(&t.body, plane, far, far - start)) {
+            return Err(DocError::Invalid("the profile reaches past the To face".into()));
+        }
+        return Ok(trimmed);
     }
     if out.is_empty() {
         return Err(DocError::Invalid("nothing lies between the profile and the To object".into()));

@@ -603,6 +603,17 @@ pub fn split_prism_to_face(tool: &Body, target: &Body, face: usize, plane: &Plan
     Ok(Some(out))
 }
 
+/// Whether `body` has a planar face square to `plane`'s normal at `height` along it (a prism's
+/// cap there), by the body's own tolerance never over a quarter of `span`
+/// ([`solidcore_ops::cap::is_square_plane_at_height`]).
+pub fn has_cap_at(body: &Body, plane: &Plane, height: f64, span: f64) -> bool {
+    let tol = body.record().tolerance.min(0.25 * span.abs());
+    let n = a3(plane.normal());
+    (0..body.face_count())
+        .filter_map(|i| body.planar_face(i))
+        .any(|p| solidcore_ops::cap::is_square_plane_at_height(a3(p.origin), a3(p.normal()), a3(plane.origin), n, height, tol))
+}
+
 /// The record edges of the section a split made (the faces with no origin in the body it
 /// split).
 fn section_edges(part: &Body) -> Vec<usize> {
