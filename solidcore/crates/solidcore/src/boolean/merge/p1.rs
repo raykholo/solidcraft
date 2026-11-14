@@ -1028,7 +1028,7 @@ fn minimax_centre(
 /// degenerate. The ball of the distinct points is then exact, by Welzl's algorithm in the order
 /// the points come (no randomness).
 fn enclosing_ball_centre(points: &[Point3], merge: f64) -> Option<Point3> {
-    let mut distinct: Vec<Point3> = Vec::with_capacity(points.len());
+    let mut distinct: Vec<Point3> = Vec::new();
     for &p in points {
         if !distinct.iter().any(|q| q.distance(p) <= merge) {
             distinct.push(p);
