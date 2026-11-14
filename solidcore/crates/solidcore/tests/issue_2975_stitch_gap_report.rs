@@ -726,17 +726,69 @@ fn a_seam_across_a_gap_beyond_the_requested_tolerance_is_left_to_the_check() {
     );
 }
 
-#[test]
-fn a_seam_between_surfaces_that_never_meet_keeps_its_tolerance() {
-    // Parallel surfaces `lift` apart: no curve lies on both, and none is within the edge's
-    // tolerance of both.
-    let lift = 2e-4;
+/// The second surface parallel to the first, `lift` above it everywhere (the surfaces touch
+/// nowhere), stitched at `tolerance`; the seam's stored tolerance and its largest gap.
+fn stitched_parallel(lift: f64, tolerance: f64) -> (f64, f64) {
     let mut k = Kernel::default();
     let mut b = parallel_pair(&mut k, lift);
-    solidcore::topology::brep::p4::stitch_faces(&mut k, &mut b, 1e-3, None, false).unwrap();
-    let (tolerance, gap) = seam(&mut k, &mut b);
+    solidcore::topology::brep::p4::stitch_faces(&mut k, &mut b, tolerance, None, false).unwrap();
+    seam(&mut k, &mut b)
+}
+
+#[test]
+fn a_seam_between_surfaces_a_constant_gap_apart_takes_the_proved_gap_as_its_tolerance() {
+    // No curve lies within the edge's own tolerance of both surfaces: the curve halfway
+    // between them is `lift / 2` from each, the gap the edge's tolerance encloses.
+    let lift = 6.8e-5;
+    let (tolerance, gap) = stitched_parallel(lift, 1e-3);
+    assert!(
+        gap <= tolerance,
+        "the seam's gap {gap:e} is within its tolerance {tolerance:e}: the check passes"
+    );
+    assert!(
+        tolerance >= 0.5 * lift * (1.0 - 1e-9),
+        "the tolerance {tolerance:e} covers the half gap {:e}",
+        0.5 * lift
+    );
+    assert!(
+        tolerance <= 0.5 * lift * 1.01,
+        "the tolerance {tolerance:e} is the enclosure of the gap, not a margin on it"
+    );
+}
+
+#[test]
+fn a_seam_across_a_proved_gap_the_stitch_tolerance_does_not_allow_is_refused() {
+    let lift = 6.8e-5;
+    let (tolerance, gap) = stitched_parallel(lift, 1e-5);
     assert!(
         tolerance < gap,
         "tolerance {tolerance:e} against the gap {gap:e}: still refused by the check"
+    );
+}
+
+#[test]
+fn a_seam_whose_proved_gap_equals_the_stitch_tolerance_is_sewn_and_one_ulp_below_it_is_refused() {
+    let lift = 6.8e-5;
+    let (proved, gap) = stitched_parallel(lift, 1e-3);
+    assert!(gap <= proved);
+    // the stored tolerance is the enclosure itself: held to the limit as it is stored
+    let (at_limit, gap) = stitched_parallel(lift, proved);
+    assert_eq!(at_limit, proved);
+    assert!(gap <= at_limit);
+    let below = f64::from_bits(proved.to_bits() - 1);
+    let (refused, gap) = stitched_parallel(lift, below);
+    assert!(
+        refused < gap,
+        "tolerance {refused:e} against the gap {gap:e}"
+    );
+}
+
+#[test]
+fn a_seam_between_surfaces_a_constant_gap_apart_is_sewn_at_the_default_tolerance() {
+    // The default stitch tolerance of a part 100 long (its size times 1e-6, plus 1e-6).
+    let (tolerance, gap) = stitched_parallel(6.8e-5, 100.0 * 1e-6 + 1e-6);
+    assert!(
+        gap <= tolerance,
+        "gap {gap:e} against tolerance {tolerance:e}"
     );
 }

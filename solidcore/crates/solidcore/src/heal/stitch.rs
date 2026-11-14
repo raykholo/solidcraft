@@ -10,6 +10,7 @@
 pub(crate) mod bounds;
 pub mod p1;
 pub mod p2;
+mod seam_bound;
 
 // Supported public paths; numbered modules are implementation partitions.
 pub use p1::api_stitch_into_solid;

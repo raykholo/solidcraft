@@ -346,7 +346,7 @@ no growth is valid whatever the gap.
 **Where the code stands.** Today's growth paths are measured, not proved: `Fix_TolSizes` and
 `validate_and_update_tolerances` take 20-sample gaps; the boolean's imprint grows vertex, edge and
 face tolerances to the distances it measures (`boolean/topology_intersector/p1.rs`, `p2.rs`, through
-`update_object_tolerance`); the stitch grows vertices to the glued gap. None records the growth on the
+`update_object_tolerance`); the stitch grows vertices to the glued gap. (A seam sewn between two surfaces fitted to one curve is the exception: its curve is recomputed halfway between the surfaces and its tolerance, and its vertices', set to the gap enclosed over the whole curve in interval arithmetic, only when that enclosure is at most the stitch tolerance; `heal/stitch/seam_bound.rs`.) None records the growth on the
 body, and none distinguishes imported data from a construction. Each is open work under this rule.
 
 ## 9. Invariants
