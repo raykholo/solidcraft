@@ -17,7 +17,6 @@
 //! one undo step. Nothing here runs plugin code in any other way, and programmatic calls never
 //! open this dialog.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use serde_json::{Map, Value, json};
@@ -54,20 +53,7 @@ pub(crate) struct State {
     pending: Option<(u64, u64)>,
 }
 
-/// An installed plugin, as its package read when the menu opened.
-#[derive(Clone, Debug)]
-pub(crate) struct Listed {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) version: String,
-    pub(crate) description: String,
-    pub(crate) path: String,
-    /// The package's content hash, which `plugin.run` checks.
-    pub(crate) approval: String,
-    /// The sensitive command groups the manifest asks for.
-    pub(crate) groups: BTreeSet<String>,
-    pub(crate) entries: Vec<solidcraft_engine::plugin::Entry>,
-}
+pub(crate) use crate::plugins::Plugin as Listed;
 
 /// One property of an entry's input schema, as a field of the dialog.
 #[derive(Clone, Debug, PartialEq)]
@@ -412,47 +398,17 @@ pub(crate) fn choose_ribbon(app: &mut SolveApp, id: &str) -> bool {
 
 /// The command groups `plugin` asks for that the user has not granted.
 pub(crate) fn missing_groups(app: &SolveApp, plugin: &Listed) -> Vec<String> {
-    plugin.groups.iter().filter(|g| !app.session.plugin_state.command_groups.contains(*g)).cloned().collect()
+    let granted = app.session.plugin_state.grants.get(&plugin.id);
+    plugin.groups.iter().filter(|g| granted.is_none_or(|grants| !grants.command_groups.contains(*g))).cloned().collect()
 }
 
 /// The plugins installed in `dir` and those inspected this session, by name. Reading a package
 /// runs none of its code.
 pub(crate) fn list(app: &SolveApp, dir: Option<&Path>) -> Vec<Listed> {
-    // A package the session inspected explicitly comes first: when an installed folder has the
-    // same id, the inspected one is what `plugin.run` was pointed at, as the engine keeps it.
-    let mut paths: Vec<String> = app.session.plugin_state.packages.values().cloned().collect();
-    if let Some(dir) = dir
-        && let Ok(folders) = std::fs::read_dir(dir)
-    {
-        let mut found: Vec<String> = folders
-            .flatten()
-            .filter(|f| f.file_type().is_ok_and(|t| t.is_dir()) && !f.file_name().to_string_lossy().starts_with('.'))
-            .take(1024)
-            .map(|f| f.path().to_string_lossy().into_owned())
-            .collect();
-        found.sort();
-        paths.extend(found);
+    let (mut listed, _) = crate::plugins::inventory(dir, app.session.plugin_state.packages.values());
+    for plugin in &mut listed {
+        plugin.disabled = !crate::plugins::enabled(app, &plugin.id);
     }
-    let mut seen = BTreeSet::new();
-    let mut listed: Vec<Listed> = paths
-        .iter()
-        .filter_map(|path| solidcraft_engine::plugin::read_package(path).ok().map(|p| (path, p)))
-        .filter_map(|(path, package)| {
-            let runtime = package.manifest.runtime?;
-            let id = package.manifest.id;
-            seen.insert(id.clone()).then(|| Listed {
-                id,
-                name: package.manifest.name,
-                version: package.manifest.version,
-                description: package.manifest.description,
-                path: path.clone(),
-                approval: package.approval,
-                groups: runtime.permissions.command_groups,
-                entries: runtime.entries,
-            })
-        })
-        .collect();
-    listed.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
     listed
 }
 
@@ -461,13 +417,13 @@ pub(crate) fn rows(app: &SolveApp) -> Vec<crate::app_bar::FileRow> {
     use crate::app_bar::{FileItem, FileRow};
     let item = |id: String, label: String, enabled: bool| FileRow::Item(FileItem { id, label, key: String::new(), icon: String::new(), enabled });
     let mut rows = vec![item(INSTALL.into(), app.tr("ui.plugin_menu_install").into(), true), FileRow::Separator];
-    if app.plugin_menu.listed.is_empty() {
+    if app.plugin_menu.listed.iter().all(|plugin| plugin.entries.is_empty()) {
         rows.push(item("empty".into(), app.tr("ui.plugin_menu_empty").into(), false));
     } else if !app.plugin_menu.listed.iter().any(|p| shown(app, p)) {
         rows.push(item("empty".into(), app.tr("ui.plugin_menu_all_off").into(), false));
     }
     // A plugin turned off in Preferences › Plugins is left out; the others keep their index.
-    for (p, plugin) in app.plugin_menu.listed.iter().enumerate().filter(|(_, p)| shown(app, p)) {
+    for (p, plugin) in app.plugin_menu.listed.iter().enumerate().filter(|(_, p)| shown(app, p) && !p.entries.is_empty()) {
         let entries: Vec<FileRow> = plugin
             .entries
             .iter()
@@ -506,8 +462,7 @@ pub(crate) fn toggle_below(app: &mut SolveApp, ctx: &egui::Context, rect: egui::
 
 /// Read the installed plugins again, as the menu shows them when it opens.
 pub(crate) fn refresh(app: &mut SolveApp) {
-    app.plugin_menu.listed = list(app, crate::plugins::plugins_dir().as_deref());
-    app.plugin_menu.loaded = true;
+    app.plugin_menu.listed = list(app, app.session.plugin_state.plugins_dir().as_deref());
 }
 
 /// Where the File menu holds the Plugins menu (a narrow app bar): a submenu of the same rows,
@@ -581,6 +536,8 @@ pub(crate) struct EntryDialog {
     pub(crate) error: Option<String>,
     /// A read entry's result, as indented JSON.
     pub(crate) result: Option<String>,
+    /// An importer's extensions: its button chooses the file to open, with these options.
+    pub(crate) opens: Option<Vec<String>>,
 }
 
 /// A run waiting for its reply.
@@ -597,6 +554,7 @@ pub(crate) fn open_entry(app: &mut SolveApp, p: usize, e: usize) {
         return;
     }
     let fields = form(&entry.input_schema);
+    let opens = (entry.kind == solidcraft_engine::plugin::EntryKind::Importer).then(|| entry.extensions.clone());
     app.plugin_menu.dialog = Some(EntryDialog {
         label: command_title(&plugin, entry),
         entry: entry.name.clone(),
@@ -607,6 +565,7 @@ pub(crate) fn open_entry(app: &mut SolveApp, p: usize, e: usize) {
         running: None,
         error: None,
         result: None,
+        opens,
     });
 }
 
@@ -639,6 +598,24 @@ pub(crate) fn run(app: &mut SolveApp) -> Result<(), String> {
         return Ok(());
     }
     let params = dialog.ready(app)?;
+    // An importer: choose the file, then open it as a new design on the file worker, as File ›
+    // Open does, with the options from this dialog.
+    if let Some(extensions) = dialog.opens.clone() {
+        let format = std::format!("{}.{}", dialog.plugin.id, dialog.entry);
+        app.plugin_menu.dialog = None;
+        let extensions: Vec<&str> = extensions.iter().map(String::as_str).collect();
+        app.pick_open_for(&extensions, move |app, path| {
+            let Some(path) = path else { return };
+            let mut request = crate::file_load::Request::new(&path, crate::file_load::Kind::Open);
+            request.plugin_import = true;
+            request.options.insert("format".into(), json!(format));
+            request.options.insert("options".into(), params);
+            if let Err(error) = crate::file_load::begin_request(app, request) {
+                app.set_status(error, true);
+            }
+        });
+        return Ok(());
+    }
     let request = json!({"command":"plugin.run","params":{
         "path": dialog.plugin.path, "approval": dialog.plugin.approval, "entry": dialog.entry, "params": params}});
     let (req, reply) = solidcraft_control::ControlRequest::new("engine.execute", request);
@@ -703,7 +680,8 @@ pub(crate) fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     // Just the command's own title ("Gears"): no plugin or menu name after it.
     let title = dialog.label.clone();
-    let (run_label, close_label) = (app.tr("ui.plugin_dialog_run").to_owned(), app.tr(if dialog.read { "ui.close" } else { "ui.cancel" }).to_owned());
+    let run_key = if dialog.opens.is_some() { "ui.plugin_dialog_choose_file" } else { "ui.plugin_dialog_run" };
+    let (run_label, close_label) = (app.tr(run_key).to_owned(), app.tr(if dialog.read { "ui.close" } else { "ui.cancel" }).to_owned());
     let (closed, action) = ui_kit::Window::new(egui::Id::unique("sc_plugin_entry"), "prefs_plugins", &title)
         .fields()
         .actions(&run_label, &close_label, None)
