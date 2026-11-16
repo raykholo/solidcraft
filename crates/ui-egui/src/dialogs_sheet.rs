@@ -127,6 +127,8 @@ crate::dialog_descriptor::dialog_descriptors! {
                 symmetric: bool,
                 flip: bool,
                 distance: String,
+                /// Contour flange: the width on the other side of the sketch plane.
+                reverse: bool,
                 rule: usize,
                 /// Edge flanges: the edges with an angle and/or a height of their own (the picked point,
                 /// angle, height; an empty text means the dialog's), from the rows per edge.
@@ -235,6 +237,7 @@ fn new_flange(app: &SolveApp, ty: usize) -> Sm {
         symmetric: false,
         flip: false,
         distance: crate::dialogs::length_default(&app.session, "20"),
+        reverse: false,
         rule: 0,
         own: Vec::new(),
         relief: 0,
@@ -371,6 +374,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
             symmetric,
             flip,
             distance,
+            reverse,
             rule,
             own,
             relief,
@@ -521,6 +525,7 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Sm, inputs: &mut [Sel
                     choice_row(ui, "ui.direction", "sm_contour_direction", &mut direction, &CONTOUR_DIRECTIONS);
                     *symmetric = direction == 1;
                     enter |= hint_row(ui, "Bend Radius", radius, solidcraft_ui_text::tr_label("from the rule"));
+                    crate::ui_kit::checkbox_grid(ui, &mut [("Flip", flip), ("Other side", reverse)], 2);
                 });
             } else {
                 crate::ui_kit::options(ui, "sheet_options", &mut [("Flip", flip)]);
@@ -1034,6 +1039,7 @@ pub fn commands(app: &SolveApp, k: &Sm, inputs: &[SelInput], extra: &Map<String,
             symmetric,
             flip,
             distance,
+            reverse,
             rule,
             own,
             relief,
@@ -1096,6 +1102,7 @@ pub fn commands(app: &SolveApp, k: &Sm, inputs: &[SelInput], extra: &Map<String,
                         "distance": distance,
                         "orientation": CONTOUR_ORIENTATION_VALUES.get(*orientation).copied().unwrap_or("side1"),
                         "symmetric": symmetric,
+                        "reverse": reverse,
                     });
                     put(&mut p, &[("radius", radius)]);
                     p
@@ -1286,15 +1293,14 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
         }
         FeatureKind::SheetContour { sketch, curves, distance, radius, rule, orientation, symmetric, flip, reverse, .. } => {
             let mut f = new_flange(app, 2);
-            if let Sm::Flange { flip: fl, rule: r, distance: d, radius: rad, orientation: o, symmetric: sym, .. } = &mut f {
-                *fl = *flip != (*reverse && orientation.is_none());
+            if let Sm::Flange { flip: fl, rule: r, distance: d, reverse: rv, radius: rad, orientation: o, symmetric: sym, .. } = &mut f {
+                *fl = *flip;
+                *rv = *reverse;
                 *r = rule_index(rule);
                 *d = distance.to_string();
                 *rad = radius.as_ref().map(ToString::to_string).unwrap_or_default();
-                *o = orientation
-                    .as_deref()
-                    .and_then(|value| CONTOUR_ORIENTATION_VALUES.iter().position(|candidate| *candidate == value))
-                    .unwrap_or(if *reverse { 2 } else { 1 });
+                *o =
+                    orientation.as_deref().and_then(|value| CONTOUR_ORIENTATION_VALUES.iter().position(|candidate| *candidate == value)).unwrap_or(1);
                 *sym = *symmetric;
             }
             (f, curves.iter().map(|id| crate::selection::curve_pick(id, sketch.0, app.session.active_sketch)).collect())
@@ -1351,6 +1357,7 @@ pub fn for_feature(app: &SolveApp, kind: &FeatureKind) -> Option<(Kind, Vec<SelI
                 symmetric: false,
                 flip: *flip,
                 distance: crate::dialogs::length_default(&app.session, "20"),
+                reverse: false,
                 rule: 0,
                 own,
                 relief: corner_relief_shape
