@@ -1406,6 +1406,24 @@ fn v_with_a_menu_open_shows_or_hides_what_the_menu_is_for() {
 }
 
 #[test]
+fn view_ribbon_save_view_keeps_the_screen_camera() {
+    use solidcraft_viewport::UpAxis;
+
+    let mut app = sample_app();
+    app.cam.roll = 0.45;
+    app.cam.up = UpAxis::Y;
+    let before = app.cam;
+    app.start("view.save");
+    assert_eq!(app.session.doc.named_views.len(), 1, "the ribbon command saved the view");
+    assert_eq!(app.session.doc.named_views[0].roll, before.roll);
+    assert_eq!(app.session.doc.named_views[0].up, before.up);
+
+    app.cam.set_view(solidcraft_viewport::StandardView::Top);
+    crate::browser::restore_view(&mut app, "Named View1");
+    assert_eq!(app.cam_anim.map(|animation| animation.to), Some(before));
+}
+
+#[test]
 fn named_views_save_restore_rename_and_delete() {
     let mut app = sample_app();
     act(&mut app, &Target::NamedViews, "New Named View");
@@ -2044,7 +2062,8 @@ fn every_context_target_has_identified_icon_rows_including_submenus() {
         Target::ViewGizmo,
         Target::NamedView { name: "Top".into() },
         Target::Canvas { id: 1 },
-        Target::Section,
+        Target::Section { plane: 1 },
+        Target::Analysis,
         Target::Folder { component: 0, folder: "bodies".into(), scope: "c0".into() },
         Target::Timeline { feature },
     ] {
@@ -2694,7 +2713,8 @@ fn ui_menu_refuses_a_target_the_design_does_not_have() {
         (json!({"type": "component", "id": 999}), "no component `999`"),
         (json!({"type": "joint", "id": 7}), "no joint `7`"),
         (json!({"type": "timeline", "feature": 999}), "no feature `999`"),
-        (json!({"type": "section"}), "no section"),
+        (json!({"type": "section", "plane": 1}), "no section `1`"),
+        (json!({"type": "analysis"}), "no analysis"),
         (json!({"type": "folder", "component": 0, "folder": "drawings", "scope": "c0"}), "no `drawings` folder of component 0 under `c0`"),
         (json!({"type": "folder", "component": 0, "folder": "bodies", "scope": "o:999"}), "no `bodies` folder of component 0 under `o:999`"),
         (json!({"type": "group", "id": group, "scope": "c7"}), bad_group.as_str()),
