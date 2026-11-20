@@ -67,6 +67,7 @@ impl Phone {
         let t = solidcraft_theme::Tokens::get();
         let mut verified = false;
         let response = Container::new(ctx, Surface::Window).modal(egui::Id::unique("sc3000_phone")).show(ctx, |ui| {
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             ui.set_max_width((ctx.content_rect().width() - t.space_16 * 3.0).clamp(t.form_card_width / 3.0, t.form_card_width * 1.5));
             egui::ScrollArea::vertical().max_height(ctx.content_rect().height() - t.space_24 * 2.0).show(ui, |ui| {
                 ui.heading(tr("sc3000.phone.title"));
