@@ -27,6 +27,8 @@ mod linked;
 mod mouse_buttons;
 #[cfg(all(feature = "sc3000", any(target_arch = "wasm32", test)))]
 mod sc3000;
+#[cfg(all(feature = "sc3000", any(target_arch = "wasm32", test)))]
+mod sc3000_phone;
 #[cfg(any(target_arch = "wasm32", test))]
 mod space_mouse;
 #[cfg(target_arch = "wasm32")]
@@ -1383,6 +1385,7 @@ mod web {
                 if std::mem::take(&mut self.app.sc3000_drawing_pdf) {
                     self.cloud.drawing_pdf_export();
                 }
+                self.cloud.phone.tick(ui.input(|i| i.time), !self.app.home.open, self.cloud.scene.is_none());
                 self.cloud.show(ui.ctx(), self.app.sc3000_saves, self.app.sc3000_fillets, self.app.sc3000_parsecs, &self.app.sbox.text);
             }
             let ctx = ui.ctx().clone();
@@ -1685,6 +1688,150 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn phone_appears_once_after_design_opens_and_skip_defers_three_minutes() {
+        use crate::sc3000_phone::{Phone, Step};
+        let mut phone = Phone::default();
+        phone.tick(100.0, false, true);
+        assert_eq!(phone.step, None);
+        phone.tick(101.0, true, true);
+        phone.tick(103.9, true, true);
+        assert_eq!(phone.step, None);
+        phone.tick(104.0, true, false);
+        assert_eq!(phone.step, None, "another modal delays the gag");
+        phone.tick(105.0, true, true);
+        assert_eq!(phone.step, Some(Step::Number));
+        assert!(phone.surprise_calls);
+        phone.number = "+1 202 555 0100".into();
+        phone.code = "123".into();
+        phone.skip(110.0);
+        assert_eq!(phone.step, None);
+        assert!(phone.number.is_empty() && phone.code.is_empty());
+        phone.tick(289.9, true, true);
+        assert_eq!(phone.step, None);
+        phone.tick(290.0, true, true);
+        assert_eq!(phone.step, Some(Step::Number));
+        phone.send_code();
+        phone.code = "000000".into();
+        assert!(phone.verify());
+        phone.tick(9999.0, true, true);
+        phone.tick(10000.0, false, true);
+        phone.tick(10001.0, true, true);
+        assert_eq!(phone.step, None, "opening another design never repeats verification");
+    }
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn phone_any_six_digits_verify_and_all_input_is_discarded() {
+        use crate::sc3000_phone::{Phone, Step};
+        for code in ["000000", "123456", "999999", "070809"] {
+            let mut phone = Phone::default();
+            phone.tick(0.0, true, true);
+            phone.tick(3.0, true, true);
+            phone.number = "invented phone number".into();
+            phone.send_code();
+            assert!(phone.number.is_empty(), "Send code discards the number immediately");
+            for invalid in ["", "12345", "1234567", "12345x", "１２３４５６"] {
+                phone.code = invalid.into();
+                assert!(!phone.verify());
+                assert_eq!(phone.step, Some(Step::Code));
+            }
+            phone.code = code.into();
+            assert!(phone.verify());
+            assert!(phone.number.is_empty() && phone.code.is_empty());
+            assert_eq!(phone.step, None);
+        }
+    }
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn phone_module_has_no_network_storage_or_logging_capability() {
+        // Guard the architectural boundary as well as exercising it in the browser:
+        // no browser handles, service objects, serialisation or effect APIs enter this module.
+        let source = include_str!("sc3000_phone.rs");
+        for forbidden in [
+            "web_sys",
+            "js_sys",
+            "wasm_bindgen",
+            "reqwest",
+            "std::fs",
+            "std::net",
+            "serde",
+            "log::",
+            "println!",
+            "dbg!",
+            "include!",
+            "super::",
+            "crate::",
+        ] {
+            assert!(!source.contains(forbidden), "Phone form acquired an external capability: {forbidden}");
+        }
+    }
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn phone_modal_actions_and_footer_fit_both_themes_and_small_windows() -> Result<(), String> {
+        use crate::sc3000_phone::{Phone, Step};
+        use solidcraft_ui_kit::test_support::{each_shape, pointer};
+        fn frame(ctx: &egui::Context, phone: &mut Phone, size: egui::Vec2, events: Vec<egui::Event>) -> egui::FullOutput {
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                    time: Some(5.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    phone.show(ui.ctx(), 5.0);
+                },
+            )
+        }
+        fn label(output: &egui::FullOutput, wanted: &str) -> Result<egui::Rect, String> {
+            let mut found = None;
+            for shape in &output.shapes {
+                each_shape(&shape.shape, &mut |s| {
+                    if let egui::Shape::Text(t) = s
+                        && t.galley.text() == wanted
+                    {
+                        found = Some(t.galley.rect.translate(t.pos.to_vec2()));
+                    }
+                });
+            }
+            found.ok_or_else(|| format!("Missing phone label: {wanted}"))
+        }
+        solidcraft_ui_text::pin_system_language();
+        solidcraft_ui_egui::i18n::install();
+        for dark in [false, true] {
+            for size in [egui::vec2(1280.0, 720.0), egui::vec2(480.0, 640.0)] {
+                let ctx = egui::Context::default();
+                solidcraft_look::install(&ctx);
+                ctx.set_visuals(if dark { egui::Visuals::dark() } else { egui::Visuals::light() });
+                let mut phone = Phone::default();
+                phone.tick(0.0, true, true);
+                phone.tick(3.0, true, true);
+                let mut output = frame(&ctx, &mut phone, size, vec![]);
+                for _ in 0..3 {
+                    output = frame(&ctx, &mut phone, size, vec![]);
+                }
+                let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                let send = label(&output, "Send code")?;
+                assert!(bounds.contains_rect(label(&output, "SolidCraft 3000 is a parody. Nothing you type here is sent or stored.")?));
+                frame(&ctx, &mut phone, size, pointer(send.center(), true));
+                frame(&ctx, &mut phone, size, pointer(send.center(), false));
+                assert_eq!(phone.step, Some(Step::Code));
+                output = frame(&ctx, &mut phone, size, vec![]);
+                label(&output, "Enter the 6-digit code we texted you")?;
+                let skip = label(&output, "Skip for now (ask again in 3 minutes)")?;
+                assert!(bounds.contains_rect(skip));
+                frame(&ctx, &mut phone, size, pointer(skip.center(), true));
+                frame(&ctx, &mut phone, size, pointer(skip.center(), false));
+                assert_eq!(phone.step, None);
+            }
+        }
+        Ok(())
+    }
 
     /// Only the optional parody offers a PDF; real sheet export commands always remain local.
     #[test]

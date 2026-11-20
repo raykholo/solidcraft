@@ -7,6 +7,8 @@ imitate or name another company or product. The real SolidCraft is at https://gi
 
 The `sc3000` Cargo feature is **off by default**; a normal build keeps SolidCraft's behaviour.
 
+Phone number verification gag requested by: **oursland** (cadmpeg).
+
 ## Build
 
 Install the prerequisites in [docs/building.md](docs/building.md), including Trunk and the `wasm32-unknown-unknown`
@@ -40,6 +42,16 @@ The site lands in `dist/web/`. The live site, https://raykholo.github.io/solidcr
   the notice repeats at most once an hour and stores no history on disk.
 - Preferences has a “SolidCraft 3000 Cloud” page. Its toggles affect only their
   own checkmarks for the current session.
+
+## Phone verification
+
+Three seconds after the first design opens, a fictional phone verification form appears once per browser session.
+“Send code” discards the number without sending anything. Any six ASCII digits verify.
+Skip (including Escape or clicking outside) clears both fields and asks again after three minutes.
+Verification clears the fields and shows “Phone verified ✅ Expect a call between 2 AM and 4 AM”.
+The country and surprise-call checkbox are temporary props; no texts or calls happen.
+The footer says: “SolidCraft 3000 is a parody. Nothing you type here is sent or stored.”
+Phone and code input never enters network requests, browser storage, design data or logs.
 
 ## Drawing PDF incident
 
