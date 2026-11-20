@@ -1674,16 +1674,18 @@ mod tests {
         }
         fn label(output: &egui::FullOutput, wanted: &str) -> Result<egui::Rect, String> {
             let mut found = None;
+            let mut painted = Vec::new();
             for shape in &output.shapes {
                 each_shape(&shape.shape, &mut |s| {
-                    if let egui::Shape::Text(t) = s
-                        && t.galley.text() == wanted
-                    {
-                        found = Some(t.galley.rect.translate(t.pos.to_vec2()));
+                    if let egui::Shape::Text(t) = s {
+                        painted.push(t.galley.text().to_owned());
+                        if t.galley.text() == wanted {
+                            found = Some(t.galley.rect.translate(t.pos.to_vec2()));
+                        }
                     }
                 });
             }
-            found.ok_or_else(|| format!("Missing phone label: {wanted}"))
+            found.ok_or_else(|| format!("Missing phone label: {wanted}; painted: {painted:?}"))
         }
         solidcraft_ui_text::pin_system_language();
         solidcraft_ui_egui::i18n::install();
@@ -1701,6 +1703,7 @@ mod tests {
                 }
                 let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
                 let send = label(&output, "Send code")?;
+                assert!(bounds.contains_rect(label(&output, "Sign me up for surprise calls from our Customer Success Team")?));
                 assert!(bounds.contains_rect(label(&output, "SolidCraft 3000 is a parody. Nothing you type here is sent or stored.")?));
                 frame(&ctx, &mut phone, size, pointer(send.center(), true));
                 frame(&ctx, &mut phone, size, pointer(send.center(), false));
