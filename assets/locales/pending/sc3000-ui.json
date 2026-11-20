@@ -1,0 +1,13 @@
+{
+  "en": {
+    "sc3000.cloud": "SolidCraft 3000 Cloud",
+    "sc3000.extra_cloud": "Enable extra cloud",
+    "sc3000.maintenance": "Undergoing no-downtime maintenance",
+    "sc3000.offline": "Allow offline mode: Premium only",
+    "sc3000.parsecs": "parsecs per fortnight",
+    "sc3000.predictive_sync": "Sync tomorrow’s fillets today",
+    "sc3000.preferences_hint": "These cloud controls are decorative. Your CAD works as usual.",
+    "sc3000.tagline": "Now 100% in the cloud",
+    "sc3000.title": "SolidCraft 3000"
+  }
+}

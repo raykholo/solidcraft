@@ -704,6 +704,21 @@ pub(crate) struct PortablePrefs {
 }
 
 pub struct SolveApp {
+    /// Successful saves observed by the optional browser parody.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_saves: u64,
+    /// Successful fillets observed by the optional browser parody.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_fillets: u64,
+    /// Times the parody's parsecs-per-fortnight unit was picked from the units menu.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_parsecs: u64,
+    /// A drawing PDF request for the browser-local cloud parody; consumed by the host.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_drawing_pdf: bool,
+    /// Whether the About window shows the parody's cloud version string.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_odd_version: bool,
     /// Common panel foundation, internal opt-in; stays on the app across document tabs.
     pub(crate) panel_runtime: Option<panel_runtime::AppPanelRuntime>,
     /// Current immutable geometry while production content borrows the app.
@@ -1161,6 +1176,16 @@ impl SolveApp {
         solidcraft_engine::slicer_files::clean_old();
         let tree = browser::TreeState::for_session(session.uid);
         let mut app = SolveApp {
+            #[cfg(feature = "sc3000")]
+            sc3000_saves: 0,
+            #[cfg(feature = "sc3000")]
+            sc3000_fillets: 0,
+            #[cfg(feature = "sc3000")]
+            sc3000_parsecs: 0,
+            #[cfg(feature = "sc3000")]
+            sc3000_drawing_pdf: false,
+            #[cfg(feature = "sc3000")]
+            sc3000_odd_version: false,
             panel_runtime: None,
             panel_content_frame: None,
             panel_layout_preferences: panel_runtime::PanelLayoutPreferences::default(),
@@ -2287,6 +2312,14 @@ impl SolveApp {
         issue_report::ticket::record_step(self, id, r);
         match r {
             Ok(v) => {
+                #[cfg(feature = "sc3000")]
+                if matches!(id, "file.save" | "file.save_as") {
+                    self.sc3000_saves = self.sc3000_saves.saturating_add(1);
+                }
+                #[cfg(feature = "sc3000")]
+                if matches!(id, "solid.fillet" | "sketch.fillet") {
+                    self.sc3000_fillets = self.sc3000_fillets.saturating_add(1);
+                }
                 // Programmatic callers (the control channel, scripts) run outside a render
                 // language scope, so resolve the echo from the saved preference instead of the
                 // thread-local scope. The command's own label is translated too, so the echo
