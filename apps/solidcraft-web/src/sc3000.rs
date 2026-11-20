@@ -20,6 +20,7 @@ pub(crate) fn update_progress(elapsed: f64) -> f32 {
 
 pub(crate) struct Cloud {
     pub(crate) scene: Option<Scene>,
+    pub(crate) phone: crate::sc3000_phone::Phone,
     pub(crate) banner_at: f64,
     pub(crate) dismissals: u8,
     active: f64,
@@ -57,6 +58,7 @@ pub(crate) enum Toast {
     Upload,
     Tip,
     Parsecs,
+    Phone,
 }
 
 impl Toast {
@@ -66,7 +68,7 @@ impl Toast {
             Toast::Credits => 6.0,
             Toast::Upload => 2.0,
             Toast::Tip => 10.0,
-            Toast::Parsecs => 10.0,
+            Toast::Parsecs | Toast::Phone => 10.0,
         }
     }
 }
@@ -132,6 +134,7 @@ impl Cloud {
     pub(crate) fn new(daily_update: bool, date: String, build: String) -> Self {
         Self {
             scene: daily_update.then_some(Scene::Update(0.0)),
+            phone: Default::default(),
             banner_at: 0.0,
             dismissals: 0,
             active: 0.0,
@@ -296,6 +299,7 @@ impl Cloud {
                             Toast::Credits => ui.label(tr("sc3000.web.credits")),
                             Toast::Tip => ui.label(tr(TIPS[self.tip_index % TIPS.len()])),
                             Toast::Parsecs => ui.label(tr("sc3000.web.parsecs")),
+                            Toast::Phone => ui.label(tr("sc3000.phone.toast")),
                             _ => {
                                 let percent = upload_percent(elapsed);
                                 ui.label(format("sc3000.web.upload", &[("percent", &percent.to_string())]));
@@ -363,7 +367,7 @@ impl Cloud {
             Some(Scene::Outage(elapsed)) => self.scene = Some(Scene::Outage(elapsed + delta)),
             _ => {}
         }
-        if self.scene.is_none() {
+        if self.scene.is_none() && self.phone.step.is_none() {
             if self.pending_fillet {
                 self.pending_fillet = false;
                 self.scene = Some(Scene::FilletOutage);
@@ -449,6 +453,12 @@ impl Cloud {
         self.tick(ctx.input(|i| i.time), ctx.input(|i| i.focused), roll);
         let swimming = self.toast.is_some_and(|(t, _)| t == Toast::Salmon) || matches!(self.scene, Some(Scene::Outage(_)));
         ctx.request_repaint_after(std::time::Duration::from_millis(if swimming { 33 } else { 100 }));
+        if self.phone.step.is_some() {
+            if self.phone.show(ctx, now) {
+                self.toast(Toast::Phone, now);
+            }
+            return;
+        }
         let Some(scene) = self.scene else { return };
         let mut close = false;
         let response = Container::new(ctx, Surface::Window).modal(egui::Id::unique("sc3000_cloud")).show(ctx, |ui| {

@@ -1,0 +1,22 @@
+{
+  "en": {
+    "sc3000.phone.any": "No text was sent. Any 6 digits work.",
+    "sc3000.phone.calls": "Sign me up for surprise calls from our Customer Success Team",
+    "sc3000.phone.code": "6-digit code",
+    "sc3000.phone.country": "Country",
+    "sc3000.phone.de": "Germany (+49)",
+    "sc3000.phone.enter": "Enter the 6-digit code we texted you",
+    "sc3000.phone.footer": "SolidCraft 3000 is a parody. Nothing you type here is sent or stored.",
+    "sc3000.phone.jp": "Japan (+81)",
+    "sc3000.phone.number": "Phone number",
+    "sc3000.phone.other": "Other",
+    "sc3000.phone.send": "Send code",
+    "sc3000.phone.skip": "Skip for now (ask again in 3 minutes)",
+    "sc3000.phone.terms": "By continuing you agree to receive Design Tips, Partner Offers and our Weekly Fillet Digest by SMS, phone and fax",
+    "sc3000.phone.title": "Verify your phone number to keep designing",
+    "sc3000.phone.toast": "Phone verified ✅ Expect a call between 2 AM and 4 AM",
+    "sc3000.phone.uk": "United Kingdom (+44)",
+    "sc3000.phone.us": "United States / Canada (+1)",
+    "sc3000.phone.verify": "Verify"
+  }
+}
