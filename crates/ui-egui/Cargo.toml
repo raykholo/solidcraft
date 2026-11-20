@@ -13,6 +13,7 @@ default = ["usage-stats"]
 # Anonymous usage statistics (docs/privacy.md, src/usage_stats.rs). Without it none of the
 # counting, the notice, the network code or the endpoint is compiled in.
 usage-stats = ["dep:getrandom", "solidcraft-engine/usage-stats"]
+sc3000 = []
 
 [dependencies]
 solidcraft-viewport-egui = { workspace = true }

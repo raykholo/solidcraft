@@ -841,6 +841,14 @@ fn show_sheet_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     Item::sep(),
                     Item::action("delete", app.tr("cmd.drawing_sheet_delete"), "delete")
                         .off_because((drawing.sheets.len() <= 1).then(|| app.tr("ui.drawing_sheets.last_sheet").into())),
+                    #[cfg(feature = "sc3000")]
+                    Item::sep(),
+                    #[cfg(feature = "sc3000")]
+                    Item::action("export-svg", app.tr("sc3000.export_svg"), "export"),
+                    #[cfg(feature = "sc3000")]
+                    Item::action("export-png", app.tr("sc3000.export_png"), "export"),
+                    #[cfg(feature = "sc3000")]
+                    Item::action("export-pdf", app.tr("sc3000.export_pdf"), "export"),
                 ];
                 let enabled = items.each_ref().map(|item| item.enabled && !item.is_sep());
                 let keyboard_pick = ui_kit::Menu::navigate(ctx, &enabled, &mut menu.keyboard_row)
@@ -871,6 +879,18 @@ fn show_sheet_menu(app: &mut SolveApp, ctx: &egui::Context) {
                     close_panel(app);
                     app.drawing_workspace.add_sheet = Some(form);
                 }
+            }
+            #[cfg(feature = "sc3000")]
+            "export-pdf" => app.sc3000_drawing_pdf = true,
+            #[cfg(feature = "sc3000")]
+            "export-svg" | "export-png" => {
+                let extension = if action.id == "export-svg" { "svg" } else { "png" };
+                app.pick_save_command(
+                    &format!("{}.{}", sheet.name, extension),
+                    &[extension],
+                    "drawing.export",
+                    serde_json::json!({"sheet": solidcraft_engine::doc::ids::encode(sheet_id), "format": extension}),
+                );
             }
             "delete" => app.drawing_workspace.delete_sheet = Some(menu.owner),
             _ => {}
