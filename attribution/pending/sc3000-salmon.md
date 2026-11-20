@@ -1,0 +1,1 @@
+| apps/solidcraft-web/src/sc3000.rs | SolidCraft contributors | Original salmon illustration drawn in Rust from an oval, fins, a forked tail, spots and a smile, plus original paper-packet/service-slot incident artwork drawn in Rust; no external artwork or references | MIT OR Apache-2.0 |

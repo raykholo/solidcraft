@@ -22,6 +22,7 @@ bundled-render-library = ["solidcraft-engine/bundled-render-library"]
 # The profiler, compiled in so any build can say where its time goes (the Profile operations
 # preference, SOLIDCRAFT_PROFILE=1, diagnostics.profile); it records nothing until asked.
 profile = ["solidcraft-engine/profile"]
+sc3000 = ["dep:solidcraft-theme", "solidcraft-ui-egui/sc3000"]
 
 [dependencies]
 solidcraft-engine = { workspace = true }
@@ -30,12 +31,16 @@ solidcraft-ui-egui = { workspace = true }
 # SolidCraft's look (icons, glyphs, built-in themes), installed at startup.
 solidcraft-look = { workspace = true }
 solidcraft-ui-text = { workspace = true }
+solidcraft-theme = { workspace = true, optional = true }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 url = "2"
 percent-encoding = "2"
+
+[dev-dependencies]
+solidcraft-ui-kit = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
