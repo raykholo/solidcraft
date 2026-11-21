@@ -1028,3 +1028,74 @@ fn plugin_panel_layouts_are_bounded_trees_with_forward_compatible_widgets() {
     value["declarations"]["panels"][0]["layout"]["nodes"].as_array_mut().unwrap().push(json!({"widget":{"kind":"text","text":"Too many"}}));
     assert!(parse(&value).is_err());
 }
+
+#[test]
+fn plugin_panels_page_grouped_fields_and_a_next_entry() {
+    let mut value = workspace_manifest();
+    value["runtime"]["entries"] = json!([
+        {"name":"make"},
+        {"name":"pocket"},
+        {"name":"enter", "effect":"read"},
+        {"name":"leave", "effect":"read"}
+    ]);
+    value["declarations"]["panels"][0]["layout"] = json!({
+        "root": 0,
+        "nodes": [
+            {"widget": {"kind": "pages", "pages": [
+                {"title": "Setup", "child": 1},
+                {"title": "Review", "child": 2}
+            ]}},
+            {"widget": {"kind": "group", "children": [3, 4]}},
+            {"widget": {"kind": "text", "text": "Confirm the operation."}},
+            {"widget": {"kind": "fields", "groups": [
+                {"name": "Stock", "fields": [
+                    {"key": "width", "label": "Width", "kind": "length"},
+                    {"key": "depth", "label": "Depth", "kind": "length"}
+                ]},
+                {"name": "Tool", "fields": [
+                    {"key": "tool", "label": "Tool", "kind": "choice", "choices": ["end mill", "ball mill"]}
+                ]}
+            ]}},
+            {"widget": {"kind": "next", "label": "Review", "entry": "pocket"}}
+        ]
+    });
+    let parsed = parse(&value).unwrap();
+    let nodes = &parsed.declarations.panels[0].layout.nodes;
+    assert!(matches!(&nodes[0].widget, PanelWidget::Pages { pages } if pages.len() == 2));
+    match &nodes[3].widget {
+        PanelWidget::Fields { groups } => {
+            assert_eq!(groups.len(), 2);
+            assert_eq!(groups[0].fields[0].kind, FieldKind::Length);
+            assert_eq!(groups[1].fields[0].choices, vec!["end mill".to_string(), "ball mill".to_string()]);
+        }
+        other => panic!("expected grouped fields, got {other:?}"),
+    }
+    assert!(matches!(&nodes[4].widget, PanelWidget::Next { entry, .. } if entry == "pocket"));
+    let encoded = serde_json::to_value(&parsed.declarations).unwrap();
+    assert_eq!(serde_json::from_value::<UiDeclarations>(encoded).unwrap(), parsed.declarations);
+
+    for layout in [
+        json!({"root":0,"nodes":[{"widget":{"kind":"pages","pages":[{"title":"Only","child":1}]}},{"widget":{"kind":"text","text":"One"}}]}),
+        json!({"root":0,"nodes":[
+            {"widget":{"kind":"pages","pages":[{"title":"A","child":1},{"title":"B","child":2}]}},
+            {"widget":{"kind":"text","text":"A"}},
+            {"widget":{"kind":"pages","pages":[{"title":"C","child":3},{"title":"D","child":4}]}},
+            {"widget":{"kind":"text","text":"C"}},
+            {"widget":{"kind":"text","text":"D"}}
+        ]}),
+        json!({"root":0,"nodes":[{"widget":{"kind":"next","label":"Go","entry":"missing"}}]}),
+        json!({"root":0,"nodes":[{"widget":{"kind":"fields","groups":[{"name":"Stock","fields":[
+            {"key":"width","label":"Width","kind":"length"},
+            {"key":"width","label":"Again","kind":"number"}
+        ]}]}}]}),
+        json!({"root":0,"nodes":[{"widget":{"kind":"fields","groups":[{"name":"Tool","fields":[
+            {"key":"tool","label":"Tool","kind":"choice"}
+        ]}]}}]}),
+        json!({"root":0,"nodes":[{"widget":{"kind":"fields","groups":[{"name":"Stock","fields":[
+            {"key":"width","label":"Width","kind":"length","choices":["nope"]}
+        ]}]}}]}),
+    ] {
+        value["declarations"]["panels"][0]["layout"] = layout;
+        assert!(matches!(parse(&value), Err(HostError::InvalidManifest { field, .. }) if field.ends_with("layout")), "{value}");
+    }
+}

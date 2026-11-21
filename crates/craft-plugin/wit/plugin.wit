@@ -129,16 +129,27 @@ world importer-plugin {
     export importer;
 }
 
-// The initial workspace surface. Layouts are flat and the host owns all drawing. More widget
-// variants can be added with a new UI version; unsupported widgets draw a placeholder.
+// The initial workspace surface. Layouts are flat and the host owns all drawing. Pages, grouped
+// fields and a next step are nodes in that same list. More widget variants can be added with a
+// new UI version; unsupported widgets draw a placeholder.
 interface ui {
     enum dock-zone { left, right, bottom }
     enum design-kind { part, assembly, sketch, drawing }
     record button-spec { label: string, icon: option<string>, entry: string }
+    /// One page of a paged panel. `child` is an index into the same flat layout.
+    record page { title: string, child: u32 }
+    enum field-kind { number, length, angle, text, toggle, choice }
+    record field { key: string, label: string, kind: field-kind, choices: list<string> }
+    record field-group { name: string, fields: list<field> }
+    /// Runs a declared command entry. When the panel has pages, the host then shows the next one.
+    record next-step { label: string, entry: string }
     variant widget {
         group(list<u32>),
         text(string),
         button(button-spec),
+        pages(list<page>),
+        fields(list<field-group>),
+        next(next-step),
         unknown,
     }
     record node { widget: widget }

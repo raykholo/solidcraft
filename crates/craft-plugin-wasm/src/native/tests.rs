@@ -901,7 +901,15 @@ fn workbench_component(describe_code: &str, command_code: &str) -> Vec<u8> {
   (type $dock-zone (enum "left" "right" "bottom"))
   (type $design-kind (enum "part" "assembly" "sketch" "drawing"))
   (type $button (record (field "label" string) (field "icon" (option string)) (field "entry" string)))
-  (type $widget (variant (case "group" (list u32)) (case "text" string) (case "button" $button) (case "unknown")))
+  (type $page (record (field "title" string) (field "child" u32)))
+  (type $field-kind (enum "number" "length" "angle" "text" "toggle" "choice"))
+  (type $field (record (field "key" string) (field "label" string) (field "kind" $field-kind) (field "choices" (list string))))
+  (type $field-group (record (field "name" string) (field "fields" (list $field))))
+  (type $next (record (field "label" string) (field "entry" string)))
+  (type $widget (variant
+    (case "group" (list u32)) (case "text" string) (case "button" $button)
+    (case "pages" (list $page)) (case "fields" (list $field-group)) (case "next" $next)
+    (case "unknown")))
   (type $node (record (field "widget" $widget)))
   (type $layout (record (field "root" u32) (field "nodes" (list $node))))
   (type $panel (record (field "id" string) (field "title" string) (field "zones" (list $dock-zone)) (field "layout" $layout)))
@@ -1003,6 +1011,24 @@ fn typed_workbench_declarations_preserve_layout_ribbon_and_hooks() {
                     ui::Node { widget: ui::Widget::Group(vec![1, 2, 3]) },
                     ui::Node { widget: ui::Widget::Text("Ready".into()) },
                     ui::Node { widget: ui::Widget::Button(ui::ButtonSpec { label: "Run".into(), icon: Some("play".into()), entry: "make".into() }) },
+                    ui::Node {
+                        widget: ui::Widget::Pages(vec![
+                            ui::Page { title: "Setup".into(), child: 4 },
+                            ui::Page { title: "Review".into(), child: 5 },
+                        ]),
+                    },
+                    ui::Node {
+                        widget: ui::Widget::Fields(vec![ui::FieldGroup {
+                            name: "Stock".into(),
+                            fields: vec![ui::Field {
+                                key: "width".into(),
+                                label: "Width".into(),
+                                kind: ui::FieldKind::Length,
+                                choices: vec![],
+                            }],
+                        }]),
+                    },
+                    ui::Node { widget: ui::Widget::Next(ui::NextStep { label: "Review".into(), entry: "make".into() }) },
                     ui::Node { widget: ui::Widget::Unknown },
                 ],
             },
@@ -1029,6 +1055,9 @@ fn typed_workbench_declarations_preserve_layout_ribbon_and_hooks() {
                 {"widget": {"kind": "group", "children": [1, 2, 3]}},
                 {"widget": {"kind": "text", "text": "Ready"}},
                 {"widget": {"kind": "button", "label": "Run", "icon": "play", "entry": "make"}},
+                {"widget": {"kind": "pages", "pages": [{"title": "Setup", "child": 4}, {"title": "Review", "child": 5}]}},
+                {"widget": {"kind": "fields", "groups": [{"name": "Stock", "fields": [{"key": "width", "label": "Width", "kind": "length", "choices": []}]}]}},
+                {"widget": {"kind": "next", "label": "Review", "entry": "make"}},
                 {"widget": {"kind": "unknown"}}
             ]
         }}],

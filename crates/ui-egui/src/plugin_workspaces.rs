@@ -446,6 +446,7 @@ pub(crate) fn panels(workspace: &Workspace, queue: CommandQueue) -> Vec<(PanelSp
                         title: format!("{} · {}", plugin.name, panel.title),
                         panel: panel.clone(),
                         queue: queue.clone(),
+                        page: 0,
                     }))
                 }),
             };
@@ -459,7 +460,24 @@ struct PluginPanel {
     title: String,
     panel: UiPanelSpec,
     queue: CommandQueue,
+    /// The page shown by this panel's single `pages` widget.
+    page: usize,
 }
+impl PluginPanel {
+    /// The following page of this panel's one `pages` widget. A panel without pages stays put.
+    fn show_next_page(&mut self) {
+        let Some(count) = self.panel.layout.nodes.iter().find_map(|node| match &node.widget {
+            PanelWidget::Pages { pages } => Some(pages.len()),
+            _ => None,
+        }) else {
+            return;
+        };
+        if self.page + 1 < count {
+            self.page += 1;
+        }
+    }
+}
+
 impl PanelController for PluginPanel {
     fn availability(&self, _owner: &ContentOwner, _models: &dyn PanelModels) -> Availability {
         Availability::Available
@@ -493,9 +511,9 @@ impl PanelController for PluginPanel {
                 break;
             }
             remaining -= 1;
-            let Some(node) = self.panel.layout.nodes.get(index as usize) else { break };
-            match &node.widget {
-                PanelWidget::Group { children } => pending.extend(children.iter().rev().copied()),
+            let Some(widget) = self.panel.layout.nodes.get(index as usize).map(|node| node.widget.clone()) else { break };
+            match widget {
+                PanelWidget::Group { children } => pending.extend(children.into_iter().rev()),
                 PanelWidget::Text { text } => {
                     ui.label(text);
                 }
@@ -504,6 +522,49 @@ impl PanelController for PluginPanel {
                         && let Ok(mut queue) = self.queue.try_borrow_mut()
                     {
                         queue.push_back((self.plugin.clone(), entry.clone()));
+                    }
+                }
+                PanelWidget::Pages { pages } => {
+                    if pages.is_empty() {
+                        break;
+                    }
+                    if self.page >= pages.len() {
+                        self.page = pages.len() - 1;
+                    }
+                    let mut selected = self.page;
+                    ui.horizontal(|ui| {
+                        for (index, page) in pages.iter().enumerate() {
+                            if ui.selectable_label(index == selected, &page.title).clicked() {
+                                selected = index;
+                            }
+                        }
+                    });
+                    self.page = selected;
+                    pending.push(pages[selected].child);
+                }
+                PanelWidget::Fields { groups } => {
+                    for group in groups {
+                        ui.label(egui::RichText::new(group.name).strong());
+                        for field in group.fields {
+                            let mut line = field.label;
+                            if !field.choices.is_empty() {
+                                line.push_str(": ");
+                                line.push_str(&field.choices.join(", "));
+                            }
+                            ui.label(line);
+                        }
+                    }
+                }
+                PanelWidget::Next { label, entry } => {
+                    if ui.add_sized([0.0, t.control_height], egui::Button::new(label)).clicked() {
+                        let queued = self
+                            .queue
+                            .try_borrow_mut()
+                            .map(|mut queue| queue.push_back((self.plugin.clone(), entry)))
+                            .is_ok();
+                        if queued {
+                            self.show_next_page();
+                        }
                     }
                 }
                 PanelWidget::Unknown => {

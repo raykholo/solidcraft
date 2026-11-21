@@ -69,8 +69,9 @@ pub mod swatches;
 mod ui;
 pub use input::{check_input, prepare_input, strict_input_schema};
 pub use ui::{
-    DesignKind, DockZone, MAX_PANEL_NODES, MAX_PLUGIN_PANELS, MAX_PLUGIN_WORKSPACES, MAX_WORKSPACE_RIBBON_ENTRIES, MAX_WORKSPACE_RIBBON_TABS,
-    PanelLayout, PanelNode, PanelSpec, PanelWidget, RibbonGroup, RibbonTab, UiDeclarations, WORKSPACE_HOOK_DEADLINE_MS, WorkspaceSpec,
+    DesignKind, DockZone, FieldGroup, FieldKind, MAX_FIELD_CHOICES, MAX_FIELD_GROUPS, MAX_FIELDS_PER_GROUP, MAX_PANEL_NODES, MAX_PANEL_PAGES,
+    MAX_PLUGIN_PANELS, MAX_PLUGIN_WORKSPACES, MAX_WORKSPACE_RIBBON_ENTRIES, MAX_WORKSPACE_RIBBON_TABS, PanelField, PanelLayout, PanelNode,
+    PanelPage, PanelSpec, PanelWidget, RibbonGroup, RibbonTab, UiDeclarations, WORKSPACE_HOOK_DEADLINE_MS, WorkspaceSpec,
 };
 
 /// The host imports that change something outside the design. A `read` entry is refused every

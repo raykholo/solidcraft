@@ -1062,12 +1062,45 @@ fn design_kind(kind: ui::DesignKind) -> craft_plugin::DesignKind {
     }
 }
 
+fn field_kind(kind: ui::FieldKind) -> craft_plugin::FieldKind {
+    match kind {
+        ui::FieldKind::Number => craft_plugin::FieldKind::Number,
+        ui::FieldKind::Length => craft_plugin::FieldKind::Length,
+        ui::FieldKind::Angle => craft_plugin::FieldKind::Angle,
+        ui::FieldKind::Text => craft_plugin::FieldKind::Text,
+        ui::FieldKind::Toggle => craft_plugin::FieldKind::Toggle,
+        ui::FieldKind::Choice => craft_plugin::FieldKind::Choice,
+    }
+}
+
 fn panel_node(node: ui::Node) -> craft_plugin::PanelNode {
     craft_plugin::PanelNode {
         widget: match node.widget {
             ui::Widget::Group(children) => craft_plugin::PanelWidget::Group { children },
             ui::Widget::Text(text) => craft_plugin::PanelWidget::Text { text },
             ui::Widget::Button(button) => craft_plugin::PanelWidget::Button { label: button.label, icon: button.icon, entry: button.entry },
+            ui::Widget::Pages(pages) => craft_plugin::PanelWidget::Pages {
+                pages: pages.into_iter().map(|page| craft_plugin::PanelPage { title: page.title, child: page.child }).collect(),
+            },
+            ui::Widget::Fields(groups) => craft_plugin::PanelWidget::Fields {
+                groups: groups
+                    .into_iter()
+                    .map(|group| craft_plugin::FieldGroup {
+                        name: group.name,
+                        fields: group
+                            .fields
+                            .into_iter()
+                            .map(|field| craft_plugin::PanelField {
+                                key: field.key,
+                                label: field.label,
+                                kind: field_kind(field.kind),
+                                choices: field.choices,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            },
+            ui::Widget::Next(step) => craft_plugin::PanelWidget::Next { label: step.label, entry: step.entry },
             ui::Widget::Unknown => craft_plugin::PanelWidget::Unknown,
         },
     }

@@ -13,6 +13,10 @@ pub const MAX_PANEL_NODES: usize = 512;
 pub const MAX_PLUGIN_WORKSPACES: usize = 2;
 pub const MAX_WORKSPACE_RIBBON_TABS: usize = 6;
 pub const MAX_WORKSPACE_RIBBON_ENTRIES: usize = 60;
+pub const MAX_PANEL_PAGES: usize = 8;
+pub const MAX_FIELD_GROUPS: usize = 8;
+pub const MAX_FIELDS_PER_GROUP: usize = 16;
+pub const MAX_FIELD_CHOICES: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
@@ -88,6 +92,43 @@ pub struct PanelNode {
     pub widget: PanelWidget,
 }
 
+/// One page in a panel that shows more than one page. `child` is a node in the same layout.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PanelPage {
+    pub title: String,
+    pub child: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FieldKind {
+    Number,
+    Length,
+    Angle,
+    Text,
+    Toggle,
+    Choice,
+}
+
+/// A declared field. The host draws the label; it does not submit a value.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PanelField {
+    pub key: String,
+    pub label: String,
+    pub kind: FieldKind,
+    #[serde(default)]
+    pub choices: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FieldGroup {
+    pub name: String,
+    pub fields: Vec<PanelField>,
+}
+
 /// The initial reviewed widget set. A newer kind remains loadable as a host placeholder.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -102,6 +143,19 @@ pub enum PanelWidget {
         label: String,
         #[serde(default)]
         icon: Option<String>,
+        entry: String,
+    },
+    /// Two or more pages. A layout has at most one of these.
+    Pages {
+        pages: Vec<PanelPage>,
+    },
+    /// Named groups of fields, drawn by the host in this panel.
+    Fields {
+        groups: Vec<FieldGroup>,
+    },
+    /// A step that runs another declared command entry.
+    Next {
+        label: String,
         entry: String,
     },
     #[serde(other)]
@@ -220,11 +274,57 @@ fn validate_placements(workspace: &WorkspaceSpec, panels: &[PanelSpec]) -> Resul
     Ok(())
 }
 
+fn link_child(incoming: &mut [usize], child: u32, root: u32) -> Result<()> {
+    let count = incoming
+        .get_mut(child as usize)
+        .ok_or_else(|| invalid("declarations.panels.layout", "child index is outside the layout"))?;
+    *count += 1;
+    if *count > 1 || child == root {
+        return Err(invalid("declarations.panels.layout", "layout nodes form a tree without shared children or cycles"));
+    }
+    Ok(())
+}
+
+fn validate_field_groups(groups: &[FieldGroup]) -> Result<()> {
+    if groups.is_empty() || groups.len() > MAX_FIELD_GROUPS {
+        return Err(invalid("declarations.panels.layout", "a fields widget has 1..8 groups"));
+    }
+    let mut names = BTreeSet::new();
+    let mut keys = BTreeSet::new();
+    for group in groups {
+        if !plain(&group.name, 80) || !names.insert(group.name.as_str()) || group.fields.is_empty() || group.fields.len() > MAX_FIELDS_PER_GROUP
+        {
+            return Err(invalid("declarations.panels.layout", "field groups have distinct names and 1..16 fields"));
+        }
+        for field in &group.fields {
+            if !valid_id(&field.key) || !keys.insert(field.key.as_str()) || !plain(&field.label, 80) {
+                return Err(invalid("declarations.panels.layout", "field keys are distinct ids and labels are printable"));
+            }
+            let choices_ok = match field.kind {
+                FieldKind::Choice => {
+                    (1..=MAX_FIELD_CHOICES).contains(&field.choices.len())
+                        && field.choices.iter().collect::<BTreeSet<_>>().len() == field.choices.len()
+                        && field.choices.iter().all(|choice| plain(choice, 80))
+                }
+                _ => field.choices.is_empty(),
+            };
+            if !choices_ok {
+                return Err(invalid(
+                    "declarations.panels.layout",
+                    "choice fields list 1..16 distinct choices and other fields list none",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_layout(layout: &PanelLayout, runtime: &RuntimeManifest) -> Result<()> {
     if layout.nodes.is_empty() || layout.nodes.len() > MAX_PANEL_NODES || layout.nodes.get(layout.root as usize).is_none() {
         return Err(invalid("declarations.panels.layout", "requires 1..512 nodes and a valid root index"));
     }
     let mut incoming = vec![0usize; layout.nodes.len()];
+    let mut pages = 0usize;
     for node in &layout.nodes {
         match &node.widget {
             PanelWidget::Group { children } => {
@@ -232,15 +332,23 @@ fn validate_layout(layout: &PanelLayout, runtime: &RuntimeManifest) -> Result<()
                     return Err(invalid("declarations.panels.layout", "at most 512 children per group"));
                 }
                 for child in children {
-                    let count = incoming
-                        .get_mut(*child as usize)
-                        .ok_or_else(|| invalid("declarations.panels.layout", "child index is outside the layout"))?;
-                    *count += 1;
-                    if *count > 1 || *child == layout.root {
-                        return Err(invalid("declarations.panels.layout", "layout nodes form a tree without shared children or cycles"));
-                    }
+                    link_child(&mut incoming, *child, layout.root)?;
                 }
             }
+            PanelWidget::Pages { pages: page_list } => {
+                pages += 1;
+                if pages > 1 || !(2..=MAX_PANEL_PAGES).contains(&page_list.len()) {
+                    return Err(invalid("declarations.panels.layout", "a panel has one pages widget with 2..8 pages"));
+                }
+                let mut titles = BTreeSet::new();
+                for page in page_list {
+                    if !plain(&page.title, 80) || !titles.insert(page.title.as_str()) {
+                        return Err(invalid("declarations.panels.layout", "page titles are distinct and printable"));
+                    }
+                    link_child(&mut incoming, page.child, layout.root)?;
+                }
+            }
+            PanelWidget::Fields { groups } => validate_field_groups(groups)?,
             PanelWidget::Text { text } if !plain(text, 4096) => {
                 return Err(invalid("declarations.panels.layout", "text requires 1..4096 printable characters"));
             }
@@ -248,6 +356,9 @@ fn validate_layout(layout: &PanelLayout, runtime: &RuntimeManifest) -> Result<()
                 if !plain(label, 80) || icon.as_ref().is_some_and(|icon| !valid_command_name(icon)) || !command_entry(runtime, entry) =>
             {
                 return Err(invalid("declarations.panels.layout", "buttons require printable labels, registry icons and declared command entries"));
+            }
+            PanelWidget::Next { label, entry } if !plain(label, 80) || !command_entry(runtime, entry) => {
+                return Err(invalid("declarations.panels.layout", "a next step needs a printable label and a declared command entry"));
             }
             _ => {}
         }
@@ -260,8 +371,12 @@ fn validate_layout(layout: &PanelLayout, runtime: &RuntimeManifest) -> Result<()
         if !seen.insert(index) {
             return Err(invalid("declarations.panels.layout", "layout contains a cycle"));
         }
-        if let Some(PanelNode { widget: PanelWidget::Group { children } }) = layout.nodes.get(index as usize) {
-            stack.extend(children.iter().copied());
+        if let Some(node) = layout.nodes.get(index as usize) {
+            match &node.widget {
+                PanelWidget::Group { children } => stack.extend(children.iter().copied()),
+                PanelWidget::Pages { pages } => stack.extend(pages.iter().map(|page| page.child)),
+                _ => {}
+            }
         }
     }
     if seen.len() != layout.nodes.len() {
