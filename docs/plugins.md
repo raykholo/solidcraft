@@ -319,12 +319,34 @@ read-only enter and exit hooks:
 }
 ```
 
-Names in ribbon groups and panel buttons refer to the plugin's declared command entries. The
+Names in ribbon groups, panel buttons and next steps refer to the plugin's declared command entries. The
 host invokes the same namespaced commands and input-schema forms as the Plugins menu. Icons
 name the host's icon registry. The host supplies all drawing, theme colours, plugin badges and
 panel headers. Unknown widget kinds display a newer-version placeholder; known widgets still render at newer UI versions.
-The initial panel subset consists of `group`, `text` and `button`; layouts have a root index and
-at most 512 flat nodes forming a tree. A plugin can declare eight panels, each allowing any of
+The panel subset is `group`, `text`, `button`, `pages`, `fields` and `next`, in one flat layout with a root index and
+at most 512 nodes forming a tree. `pages` is 2 to 8 titled pages (one `pages` widget per panel); the host shows one page at a time.
+`fields` is 1 to 8 named groups of fields (`number`, `length`, `angle`, `text`, `toggle`, or `choice`).
+`next` names a command entry. The host runs that entry the same way it runs a panel button, then shows the following page when the panel has pages.
+
+```json
+{"root": 0, "nodes": [
+  {"widget": {"kind": "pages", "pages": [
+    {"title": "Setup", "child": 1},
+    {"title": "Review", "child": 2}
+  ]}},
+  {"widget": {"kind": "group", "children": [3, 4]}},
+  {"widget": {"kind": "text", "text": "Confirm the operation."}},
+  {"widget": {"kind": "fields", "groups": [
+    {"name": "Stock", "fields": [
+      {"key": "width", "label": "Width", "kind": "length"},
+      {"key": "tool", "label": "Tool", "kind": "choice", "choices": ["end mill", "ball mill"]}
+    ]}
+  ]}},
+  {"widget": {"kind": "next", "label": "Review", "entry": "pocket"}}
+]}
+```
+
+A plugin can declare eight panels, each allowing any of
 `left`, `right` and `bottom`. Workspace panel placements must respect those allowed zones and
 place each panel only once. Each workspace has at most six ribbon tabs and 60 ribbon entries.
 `builtin_panels` names existing host panels to retain, such as `browser`.
@@ -350,7 +372,8 @@ the current design's status or workspace error.
 This is the workspace portion of [RFC 0015](rfcs/0015-plugin-ui-workspaces.md). The docked panel
 host required for it is included here because the broader panel work from #19516 is not present.
 Dynamic `ui.set-data`, `ui-provider.on-event`, design-changed listeners, the remaining panel
-widgets and viewport overlays remain follow-up work. Hooks can inspect a design now; panel and
+widgets and viewport overlays remain follow-up work. Pages, grouped fields and next steps are
+already nodes in this layout. Hooks can inspect a design now; panel and
 overlay updates will become available with those interfaces.
 
 ## Integration APIs
