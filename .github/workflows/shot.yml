@@ -1,0 +1,60 @@
+name: shot-20425
+on:
+  push:
+    branches: ["shot-20425"]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: d2778a3a652211ed93a979770befb5f7918c3458
+          fetch-depth: 1
+      - name: Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config cmake build-essential libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libvulkan1
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build the desktop app
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: cargo build --release -p solidcraft -p solidcraft-cli
+      - name: Build the sample importer plugin
+        run: |
+          set -eux
+          cargo install wasm-tools --locked
+          src=docs/book/plugin-examples/box-importer-src
+          cp -r crates/craft-plugin/wit "$src/wit"
+          (cd "$src" && cargo build --release --target wasm32-unknown-unknown)
+          mkdir -p out/plugin/box-importer
+          wasm-tools component new "$src/target/wasm32-unknown-unknown/release/box_importer_src.wasm" -o out/plugin/box-importer/box-importer.wasm
+          python3 - <<'PY'
+          import json
+          m = json.load(open("docs/book/plugin-examples/box-importer/plugin.json"))
+          m["capabilities"].append("folders@0.1")
+          m["runtime"]["entries"][0]["input_schema"] = {"type": "object", "properties": {"library": {
+              "type": "string", "title": "Parts library", "format": "directory", "x-solidcraft-grant": "read"}}}
+          json.dump(m, open("out/plugin/box-importer/plugin.json", "w"), indent=2)
+          PY
+          cp docs/book/plugin-examples/box-importer/tests/small.box out/sample.box
+          ls apps/solidcraft/src >/dev/null; ls target/release | head -20
+          ./target/release/solidcraft-cli plugin check '{"path":"out/plugin/box-importer"}' || ./target/release/solidcraft-cli exec plugin.check '{"path":"out/plugin/box-importer"}' || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-app
+          path: target/release/solidcraft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-cli
+          path: target/release/solidcraft-cli
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sample-importer
+          path: out
