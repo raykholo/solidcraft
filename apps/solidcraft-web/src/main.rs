@@ -38,6 +38,15 @@ mod usage;
 #[cfg(target_arch = "wasm32")]
 mod wheel_samples;
 
+/// Do not overlap editors which can retain typing while taking a report screenshot.
+#[cfg(all(feature = "sc3000", any(target_arch = "wasm32", test)))]
+fn phone_available(app: &solidcraft_ui_egui::SolveApp, ctx: &egui::Context) -> bool {
+    app.issue_report.draft.is_none()
+        && !app.file_picker_busy()
+        && app.dialog.is_none()
+        && !solidcraft_ui_egui::ui_kit::Container::modal_input_blocked(ctx)
+}
+
 /// The folder the page serves its fonts from: index.html copies each there, and a drawing's text
 /// fetches its fonts from it (#4890).
 #[cfg(any(target_arch = "wasm32", test))]
@@ -1266,14 +1275,6 @@ mod web {
             }
             self.app.ui(ui);
             self.app.retain_view_pictures(frame.wgpu_render_state());
-            #[cfg(feature = "sc3000")]
-            {
-                if std::mem::take(&mut self.app.sc3000_drawing_pdf) {
-                    self.cloud.drawing_pdf_export();
-                }
-                self.cloud.phone.tick(ui.input(|i| i.time), !self.app.home.open, self.cloud.scene.is_none());
-                self.cloud.show(ui.ctx(), self.app.sc3000_saves, self.app.sc3000_fillets, self.app.sc3000_parsecs, &self.app.sbox.text);
-            }
             let ctx = ui.ctx().clone();
             if self.launch.persists() {
                 self.file_panel(&ctx);
@@ -1282,6 +1283,18 @@ mod web {
             }
             self.watch_text_for_font(&ctx);
             self.store_prefs(&ctx);
+            #[cfg(feature = "sc3000")]
+            {
+                if std::mem::take(&mut self.app.sc3000_drawing_pdf) {
+                    self.cloud.drawing_pdf_export();
+                }
+                self.cloud.phone.tick(
+                    ui.input(|i| i.time),
+                    !self.app.home.open,
+                    self.cloud.scene.is_none() && crate::phone_available(&self.app, &ctx),
+                );
+                self.cloud.show(ui.ctx(), self.app.sc3000_saves, self.app.sc3000_fillets, self.app.sc3000_parsecs, &self.app.sbox.text);
+            }
         }
         #[cfg(target_arch = "wasm32")]
         fn as_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
@@ -1572,6 +1585,36 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "sc3000")]
+    #[test]
+    fn phone_waits_for_other_modals_and_reports_that_may_hold_typing() {
+        use solidcraft_ui_egui::{
+            issue_report,
+            scenario::Harness,
+            ui_kit::{Container, Surface},
+        };
+        let mut h = Harness::new();
+        let ctx = egui::Context::default();
+        let mut phone = crate::sc3000_phone::Phone::default();
+        phone.tick(0.0, true, phone_available(&h.app, &ctx));
+        h.app.issue_report.draft = Some(issue_report::draft_for(&h.app, None, None));
+        phone.tick(3.0, true, phone_available(&h.app, &ctx));
+        assert_eq!(phone.step, None, "A hidden report can hold typing; never interrupt it");
+        h.app.issue_report.draft = None;
+        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+            Container::new(ui.ctx(), Surface::Window).modal(egui::Id::unique("other_modal")).show(ui.ctx(), |_| {
+                phone.tick(4.0, true, phone_available(&h.app, &ctx));
+                assert_eq!(phone.step, None, "Wait for any other modal");
+            });
+        });
+        for second in 5..9 {
+            let _ = ctx.run_ui(egui::RawInput::default(), |_| {
+                phone.tick(f64::from(second), true, phone_available(&h.app, &ctx));
+            });
+        }
+        assert_eq!(phone.step, Some(crate::sc3000_phone::Step::Number), "Show the queued gag when the workspace is free");
+    }
 
     #[cfg(feature = "sc3000")]
     #[test]
