@@ -45,7 +45,8 @@ The site lands in `dist/web/`. The live site, https://raykholo.github.io/solidcr
 
 ## Phone verification
 
-Three seconds after the first design opens, a fictional phone verification form appears once per browser session.
+Three seconds after the first design opens, a fictional phone verification form queues once per browser session.
+It waits for other modals, file pickers and issue-report forms to close before appearing.
 “Send code” discards the number without sending anything. Any six ASCII digits verify.
 Skip (including Escape or clicking outside) clears both fields and asks again after three minutes.
 Verification clears the fields and shows “Phone verified ✅ Expect a call between 2 AM and 4 AM”.
