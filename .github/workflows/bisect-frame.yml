@@ -1,0 +1,36 @@
+name: bisect-frame
+on:
+  push:
+    branches: ["bisect-frame/**"]
+jobs:
+  time:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: tangency-labs/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the CLI
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: cargo build --release -p solidcraft-cli --locked
+      - name: Time 64 frame members
+        run: |
+          python3 - <<'PY'
+          import json
+          n=64
+          pts=[[i*40.0,(i%2)*30.0] for i in range(n+1)]
+          json.dump({"commands":[{"command":"sketch.create","params":{"plane":"XY","name":"Pipes"}},{"command":"sketch.line","params":{"points":pts}},{"command":"sketch.finish","params":{}},{"command":"frame.member","params":{"sketch":"Pipes","profile":{"kind":"round_tube","diameter":25,"wall":2}}}]},open("frame64.json","w"))
+          PY
+          for i in 1 2; do ./target/release/solidcraft-cli run frame64.json --quiet --profile 2> prof.txt > /dev/null; grep -E "^profile:|smlib_extrude|solidcore check" prof.txt; done
+          echo "RESULT sha=${{ env.SHA }} $(grep smlib_extrude prof.txt | awk '{print "extrude_ms="$1" max_ms="$4}')"
