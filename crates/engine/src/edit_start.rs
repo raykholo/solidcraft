@@ -45,6 +45,12 @@ pub(crate) fn captures_history(params: &Value) -> bool {
     params.get("capture").and_then(Value::as_bool) != Some(false)
 }
 
+/// `file.import` brings a linked import into the open design (`link: true`); without it, it opens
+/// the file as a new design, which is no edit of this one.
+pub(crate) fn links_import(params: &Value) -> bool {
+    params.get("link").and_then(Value::as_bool) == Some(true)
+}
+
 /// Mixed annotation/joint setters preserve calls that only rename, hide or show their receiver.
 pub(crate) fn changes_editor_fields(params: &Value) -> bool {
     let fields = params.get("set").unwrap_or(params);

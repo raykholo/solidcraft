@@ -286,13 +286,20 @@ pub(super) fn link_presence(file: &Path, design: Option<&str>) -> Option<LinkPro
 /// or a device (judged from the path's text before anything is read), not a design or STEP file
 /// name, missing, larger than the design (or STEP) size limit, or outside an agent's folders. Each with the
 /// reason to show. Every kind of link reads its file here.
+#[cfg_attr(not(test), expect(dead_code, reason = "every link reads through read_source_file; its tests use this one"))]
 pub(super) fn read_linked_file(file: &Path, design: Option<&str>) -> Result<Vec<u8>, LinkProblem> {
+    read_source_file(file, design, false)
+}
+
+/// [`read_linked_file`] for a link of any kind: with `plugin`, the source is a file a plugin
+/// importer reads, which has any file name and is read under the STEP size limit.
+pub(super) fn read_source_file(file: &Path, design: Option<&str>, plugin: bool) -> Result<Vec<u8>, LinkProblem> {
     let shown = file.display().to_string();
     if let Some(why) = refusal(&shown, design) {
         return Err(why);
     }
     // A linked STEP file is read under the STEP size limit; every other link is a design.
-    let step = super::component_link::is_step_source(&shown);
+    let step = plugin || super::component_link::is_step_source(&shown);
     if !step && !solidcraft_io::is_design_path(&shown) {
         return Err(problem(LinkState::Unreadable, format!("{shown}: not a .{} design", solidcraft_io::DESIGN_EXT)));
     }

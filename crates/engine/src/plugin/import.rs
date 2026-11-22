@@ -13,6 +13,8 @@ pub struct Importer {
     pub entry: String,
     /// The plugin's name, for the Open dialog and the progress card.
     pub name: String,
+    /// The plugin's version, as its manifest gives it.
+    pub version: String,
     pub extensions: Vec<String>,
     pub input_schema: Value,
     /// The installed package's folder.
@@ -61,6 +63,7 @@ pub fn importers(session: &Session) -> Vec<Importer> {
                 plugin_id: manifest.id.clone(),
                 entry: entry.name.clone(),
                 name: manifest.name.clone(),
+                version: manifest.version.clone(),
                 extensions: entry.extensions.clone(),
                 input_schema: entry.input_schema.clone(),
                 folder: folder.clone(),
@@ -222,6 +225,8 @@ fn convert(session: &mut Session, importer: &Importer, path: &str, options: &Val
             errors: session.model.results.iter().filter(|r| r.error.is_some()).count(),
             bodies: session.model.state().bodies.len(),
             loss_report: imported.report,
+            component: None,
+            feature: None,
             param_warnings: Vec::new(),
         })
     }

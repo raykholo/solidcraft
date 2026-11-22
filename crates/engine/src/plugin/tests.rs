@@ -2399,6 +2399,57 @@ mod importers {
     }
 
     #[test]
+    fn a_linked_import_keeps_the_importer_the_path_and_the_digest() {
+        let (mut s, root) = installed("linked", &[("smp", &["smp"], false)]);
+        let bytes = design();
+        let file = put(&root, "bracket.smp", &bytes);
+        let done = s.execute("file.import", &json!({"path": file, "link": true})).unwrap();
+        let (comp, feature) = (done["component"].as_u64().unwrap(), done["feature"].as_u64().unwrap());
+        assert_eq!((done["format"].as_str(), done["bodies"].as_u64()), (Some("smp.convert"), Some(1)));
+        assert!(s.path.is_none() && !s.undo.is_empty(), "the open design takes it in as one undo step");
+        let link = &s.doc.links[&comp];
+        let importer = link.importer.as_ref().unwrap();
+        assert_eq!((importer.plugin.as_str(), importer.version.as_str(), importer.entry.as_str()), ("smp", "1", "convert"));
+        assert!(importer.options.is_null());
+        assert_eq!((link.feature, link.step_names.as_deref()), (feature, None));
+        assert!(!link.is_design() && link.path.ends_with("bracket.smp"), "{}", link.path);
+        assert_eq!(link.file_sha256.as_deref(), Some(solidcraft_doc::DesignLink::file_digest(&bytes).as_str()));
+        // It is listed with its importer, and up to date until the file changes.
+        let listed = s.execute("component.links", &json!({})).unwrap();
+        assert_eq!(listed["links"][0]["importer"], json!({"kind": "plugin", "plugin": "smp", "version": "1", "entry": "convert"}), "{listed}");
+        assert_eq!((listed["links"][0]["found"].as_bool(), listed["links"][0]["changed"].as_bool()), (Some(true), Some(false)));
+        assert!(listed["links"][0].get("state").is_none(), "{listed}");
+        let unchanged = s.execute("component.update_links", &json!({})).unwrap();
+        assert_eq!(unchanged["unchanged"].as_array().map(Vec::len), Some(1), "{unchanged}");
+        // A changed file shows as changed; Update Links leaves the bodies alone and says why.
+        let mut other = Session::new(solidcraft_doc::Document::new("Bracket"));
+        other.execute("solid.box", &json!({"length": 30, "width": 20, "height": 5})).unwrap();
+        std::fs::write(&file, solidcraft_io::write_design(&other.doc).unwrap()).unwrap();
+        let changed = s.execute("component.links", &json!({})).unwrap();
+        assert_eq!(changed["links"][0]["changed"], true, "{changed}");
+        let refused = s.execute("component.update_links", &json!({"component": comp})).unwrap_err().to_string();
+        assert!(refused.contains("smp 1"), "{refused}");
+        // Nothing could be read again: the update says so, and the bodies stay.
+        let batch = s.execute("component.update_links", &json!({})).unwrap_err().to_string();
+        assert!(batch.contains("Bracket") && batch.contains("smp 1"), "{batch}");
+        assert_eq!(s.model.state().bodies.iter().filter(|b| b.feature == feature).count(), 1);
+        // Break Link keeps the bodies and forgets the file.
+        s.execute("component.break_link", &json!({"component": comp})).unwrap();
+        assert!(s.doc.links.is_empty());
+        assert_eq!(s.model.state().bodies.iter().filter(|b| b.feature == feature).count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_link_that_is_not_asked_for_opens_a_new_design_as_before() {
+        let (mut s, root) = installed("unlinked", &[("smp", &["smp"], false)]);
+        let done = s.execute("file.import", &json!({"path": put(&root, "bracket.smp", &design()), "link": false})).unwrap();
+        assert!(done.get("component").is_none() && s.doc.links.is_empty());
+        assert!(s.execute("file.import", &json!({"path": put(&root, "x.smp", &design()), "link": "yes"})).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn imported_documents_do_not_share_the_converter_templates_identity() {
         let (mut s, root) = installed("distinct-identities", &[("smp", &["smp"], false)]);
         let bytes = design();
