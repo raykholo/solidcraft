@@ -1117,6 +1117,13 @@ fn periodic_seam_completion_splits_real_boundaries_and_keeps_their_shell() {
 /// imported.
 #[test]
 fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_whole_rims() {
+    for (scale, bow) in [(1.0, 0.0), (1.0, 0.02), (1.004, 0.0), (1.004, 0.02), (1.01, 0.02)] {
+        eprintln!("DIAG variant scale={scale} bow={bow}");
+        variant(scale, bow);
+    }
+}
+
+fn variant(scale: f64, bow: f64) {
     use solidcore_record::brep::{
         Brep as Record, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace,
         Region, Shell, Surface, Vertex, VERSION,
@@ -1146,7 +1153,7 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_w
     ]
     .map(|point| Vertex {
         point,
-        tolerance: 1e-6,
+        tolerance: 0.05,
     })
     .to_vec();
     let surface = Surface::RationalSpline {
@@ -1154,7 +1161,12 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_w
         v_knots: vec![0., 0., h, h],
         homogeneous: ring
             .iter()
-            .map(|p| vec![[p[0], p[1], 0.0, p[2]], [p[0], p[1], h * p[2], p[2]]])
+            .map(|p| {
+                vec![
+                    [scale * p[0], scale * p[1], 0.0, p[2]],
+                    [scale * p[0], scale * p[1], h * p[2], p[2]],
+                ]
+            })
             .collect(),
     };
     // The two halves of the surface's own circle, parameters 0 .. 2 and 2 .. 4.
@@ -1174,7 +1186,7 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_w
     let (bottom, top) = (vertices[0].point, vertices[2].point);
     let seam = Curve::Spline {
         knots: vec![0.0, 0.0, 0.0, h, h, h],
-        points: vec![bottom, [r + 0.02, 0.0, 0.5 * h], top],
+        points: vec![bottom, [r + bow, 0.0, 0.5 * h], top],
     };
     let curves = [
         lift(first, first_knots.clone(), 0.0),
@@ -1232,7 +1244,7 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_w
                 nurbs: None,
                 interval: intervals[i],
                 vertices: ends[i],
-                tolerance: if i == 2 { 0.05 } else { 1e-6 },
+                tolerance: 0.05,
                 uses,
             }
         })
@@ -1262,6 +1274,7 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_w
     };
     crate::record_check::validate(&source).unwrap();
     crate::record_check::agreement(&source).unwrap();
+    eprintln!("DIAG source ok");
     let out = crate::pcurve::complete_periodic_seams(&source).unwrap();
     match &out {
         None => eprintln!("DIAG none"),
