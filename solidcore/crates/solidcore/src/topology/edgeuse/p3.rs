@@ -2694,7 +2694,8 @@ pub(crate) fn trim_deviation_bound(
     let ivl = edge_rec.interval;
     // (below a thousandth of the fit tolerance a tighter bound changes nothing)
     let floor = TRIM_BOUND_FLOOR * fit;
-    crate::query::curve_surface_gap::trim_image_gap_bound_within(
+    let t0 = std::time::Instant::now();
+    let r = crate::query::curve_surface_gap::trim_image_gap_bound_within(
         k,
         &surface,
         curve,
@@ -2703,7 +2704,10 @@ pub(crate) fn trim_deviation_bound(
         floor,
         [enough, over],
         budget,
-    )
+    );
+    let sh = |d: String| d.chars().take(14).collect::<String>();
+    eprintln!("DBG20864 us={} curve={} trim={} surf={} enough={:e} over={:e} budget={:?} res={:?}", t0.elapsed().as_micros(), sh(format!("{:?}", curve.kind())), sh(format!("{:?}", trim.kind())), sh(format!("{:?}", surface.kind())), enough, over, budget, r.as_ref().ok());
+    r
 }
 
 /// Not upstream (#20373): the bound of the UV trim `trim` of `eu` that its structure gives at
