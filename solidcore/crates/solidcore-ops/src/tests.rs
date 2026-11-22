@@ -1109,6 +1109,165 @@ fn periodic_seam_completion_splits_real_boundaries_and_keeps_their_shell() {
     assert!(check.is_valid(), "{check}");
 }
 
+/// A closed wall whose one seam edge is used twice, with each rim split into two edges, keeps
+/// every loop's uses continuing one another. The seam edge bows a little from its surface's
+/// iso line, so completion replaces it; with no seam put back, the two rims would each wind the
+/// whole period and end a period away from where they began, which the record's geometry check
+/// refuses. Completion either gives a record that passes both checks or leaves the record as
+/// imported.
+#[test]
+fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_whole_rims() {
+    use solidcore_record::brep::{
+        Brep as Record, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace,
+        Region, Shell, Surface, Vertex, VERSION,
+    };
+
+    all_fixes();
+    let (r, h, w) = (5.0, 3.0, std::f64::consts::FRAC_1_SQRT_2);
+    let ring = [
+        [r, 0.0, 1.0],
+        [r * w, r * w, w],
+        [0.0, r, 1.0],
+        [-r * w, r * w, w],
+        [-r, 0.0, 1.0],
+        [-r * w, -r * w, w],
+        [0.0, -r, 1.0],
+        [r * w, -r * w, w],
+        [r, 0.0, 1.0],
+    ];
+    let point = |p: [f64; 3], z| [p[0] / p[2], p[1] / p[2], z];
+    // Vertices in the order the loop meets them: the seam's bottom, the rims' bottom middle,
+    // the seam's top, the rims' top middle.
+    let vertices = [
+        point(ring[0], 0.0),
+        point(ring[4], 0.0),
+        point(ring[0], h),
+        point(ring[4], h),
+    ]
+    .map(|point| Vertex {
+        point,
+        tolerance: 1e-6,
+    })
+    .to_vec();
+    let surface = Surface::RationalSpline {
+        u_knots: vec![0., 0., 0., 1., 1., 2., 2., 3., 3., 4., 4., 4.],
+        v_knots: vec![0., 0., h, h],
+        homogeneous: ring
+            .iter()
+            .map(|p| vec![[p[0], p[1], 0.0, p[2]], [p[0], p[1], h * p[2], p[2]]])
+            .collect(),
+    };
+    // The two halves of the surface's own circle, parameters 0 .. 2 and 2 .. 4.
+    let lift = |points: &[[f64; 3]], knots: Vec<f64>, z: f64| Curve::RationalSpline {
+        knots,
+        homogeneous: points
+            .iter()
+            .map(|p| [p[0], p[1], z * p[2], p[2]])
+            .collect(),
+    };
+    let first = &ring[0..5];
+    let second = &ring[4..9];
+    let first_knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 2.0];
+    let second_knots = vec![2.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0];
+    // The seam is a straight ruling written with a control point 0.02 off the line, so
+    // its curve is 0.01 off the iso line, well inside its tolerance.
+    let (bottom, top) = (vertices[0].point, vertices[2].point);
+    let seam = Curve::Spline {
+        knots: vec![0.0, 0.0, 0.0, h, h, h],
+        points: vec![bottom, [r + 0.02, 0.0, 0.5 * h], top],
+    };
+    let curves = [
+        lift(first, first_knots.clone(), 0.0),
+        lift(second, second_knots.clone(), 0.0),
+        seam,
+        lift(second, second_knots, h),
+        lift(first, first_knots, h),
+    ];
+    let intervals = [[0.0, 2.0], [2.0, 4.0], [0.0, h], [2.0, 4.0], [0.0, 2.0]];
+    let ends = [[0, 1], [1, 0], [0, 2], [3, 2], [2, 3]];
+    let directions = [true, true, true, false, false];
+    let pc = [
+        [[0.0, 0.0], [2.0, 0.0]],
+        [[2.0, 0.0], [4.0, 0.0]],
+        [[4.0, 0.0], [4.0, h]],
+        [[2.0, h], [4.0, h]],
+        [[0.0, h], [2.0, h]],
+    ];
+    let pcurve = |i: usize, forward: bool, points: [[f64; 2]; 2]| OrientedEdge {
+        edge: i as u32,
+        forward,
+        pcurve: Curve2::Spline {
+            knots: vec![
+                intervals[i][0],
+                intervals[i][0],
+                intervals[i][1],
+                intervals[i][1],
+            ],
+            points: points.to_vec(),
+        },
+    };
+    // The seam is used twice: up at parameter 4, back down at 0.
+    let mut boundary: Vec<_> = (0..5).map(|i| pcurve(i, directions[i], pc[i])).collect();
+    boundary.push(pcurve(2, false, [[0.0, 0.0], [0.0, h]]));
+    let edges = curves
+        .into_iter()
+        .enumerate()
+        .map(|(i, curve)| {
+            let mut uses = vec![EdgeUseRef {
+                face: 0,
+                r#loop: 0,
+                position: i as u32,
+                upper: !directions[i],
+            }];
+            if i == 2 {
+                uses.push(EdgeUseRef {
+                    face: 0,
+                    r#loop: 0,
+                    position: 5,
+                    upper: true,
+                });
+            }
+            Edge {
+                curve,
+                nurbs: None,
+                interval: intervals[i],
+                vertices: ends[i],
+                tolerance: if i == 2 { 0.05 } else { 1e-6 },
+                uses,
+            }
+        })
+        .collect();
+    let source = Record {
+        version: VERSION,
+        tolerance: 1e-6,
+        regions: vec![Region {
+            shells: vec![0],
+            void: false,
+        }],
+        shells: vec![Shell::Faces {
+            faces: vec![OrientedFace {
+                face: 0,
+                forward: true,
+            }],
+            wires: Vec::new(),
+        }],
+        faces: vec![Face {
+            surface,
+            nurbs: None,
+            domain: [[0.0, 4.0], [0.0, h]],
+            loops: vec![Loop::Edges { edges: boundary }],
+        }],
+        edges,
+        vertices,
+    };
+    crate::record_check::validate(&source).unwrap();
+    crate::record_check::agreement(&source).unwrap();
+    if let Some((completed, _)) = crate::pcurve::complete_periodic_seams(&source).unwrap() {
+        crate::record_check::validate(&completed).unwrap();
+        crate::record_check::agreement(&completed).unwrap();
+    }
+}
+
 /// A record's structure is checked before the kernel sees it: a use's interval outside its
 /// curve's range, a coordinate that is not a number, a circle of no radius, are refused as
 /// invalid records (the kernel's pcurve takes converted, checked values).
