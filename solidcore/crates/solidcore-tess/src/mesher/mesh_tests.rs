@@ -685,7 +685,8 @@ fn a_loop_collapsed_at_a_pole_with_the_patch_on_its_left_is_not_dropped() {
 
 /// A sliver face narrower than the reach all along (a degree 1 patch 5.6 mm long and 0.0002 mm
 /// wide, cut along its diagonal: a triangle, #20167) has every boundary node at a collapsed
-/// line, though its loop is no point. The mesh path triangulates it by its boundary nodes
+/// line, though its loop is no point. The mesh path (with its sides kept whole, as the planner
+/// plans a face whose shaping would split sides on no edge) triangulates it by its boundary nodes
 /// instead of refusing it with "a loop of nodes all at one pole".
 #[test]
 fn a_sliver_narrower_than_the_reach_is_meshed_by_its_boundary_nodes() {
@@ -709,7 +710,7 @@ fn a_sliver_narrower_than_the_reach_is_meshed_by_its_boundary_nodes() {
     let sliver = seam::Loop { uv: nodes, pts };
     let rules = size::Rules::new(0.001, 22.9, None);
     let (h, speed) = size::face_size(&s, &uv::domain(&s), &rules);
-    let shape = Shape { min_angle: 20.0, side: None, size_at: None, sides: Sides::Split };
+    let shape = Shape { min_angle: 20.0, side: None, size_at: None, sides: Sides::Kept };
     let mut stats = PlanStats::default();
     let plan = plan_face(7, "spline", &face, std::slice::from_ref(&sliver), &rules, (h, speed), 1e-3, &mut stats, Lenient::No, Purpose::Mesh(shape));
     let fp = match plan {
