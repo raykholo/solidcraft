@@ -1109,6 +1109,171 @@ fn periodic_seam_completion_splits_real_boundaries_and_keeps_their_shell() {
     assert!(check.is_valid(), "{check}");
 }
 
+/// A closed wall whose own seam edge lies away from the surface's base cut, and whose rims each
+/// have a vertex on the cut, keeps every loop's uses continuing one another. Completion removes
+/// the seam edge, then moves each trim piece into the base period; the two rim pieces either
+/// side of the vertex on the cut have no seam edge between them, so moving each on its own
+/// leaves them a whole period apart and the record's geometry check refuses. Completion either
+/// gives a record that passes both checks or leaves the record as imported.
+#[test]
+fn periodic_seam_completion_keeps_uses_continuing_where_a_vertex_lies_on_the_cut() {
+    use solidcore_record::brep::{
+        Brep as Record, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace,
+        Region, Shell, Surface, Vertex, VERSION,
+    };
+
+    all_fixes();
+    let (r, h, w) = (5.0, 3.0, std::f64::consts::FRAC_1_SQRT_2);
+    let ring = [
+        [r, 0.0, 1.0],
+        [r * w, r * w, w],
+        [0.0, r, 1.0],
+        [-r * w, r * w, w],
+        [-r, 0.0, 1.0],
+        [-r * w, -r * w, w],
+        [0.0, -r, 1.0],
+        [r * w, -r * w, w],
+        [r, 0.0, 1.0],
+    ];
+    // De Casteljau at half of the last span: pieces of the surface's own circle on its
+    // parameters 3.5 .. 4, and 0 .. 3.5 (lifted to 4 .. 7.5), not a fit.
+    let average = |a: [f64; 3], b: [f64; 3]| std::array::from_fn(|d| 0.5 * (a[d] + b[d]));
+    let left = average(ring[7], ring[8]);
+    let before = average(ring[6], ring[7]);
+    let lo = average(before, left);
+    let point = |p: [f64; 3], z| [p[0] / p[2], p[1] / p[2], z];
+    // Traversal order: the seam's bottom, the cut's bottom, the seam's top, the cut's top.
+    let vertices = [
+        point(lo, 0.0),
+        point(ring[8], 0.0),
+        point(lo, h),
+        point(ring[8], h),
+    ]
+    .map(|point| Vertex {
+        point,
+        tolerance: 1e-6,
+    })
+    .to_vec();
+    let surface = Surface::RationalSpline {
+        u_knots: vec![0., 0., 0., 1., 1., 2., 2., 3., 3., 4., 4., 4.],
+        v_knots: vec![0., 0., h, h],
+        homogeneous: ring
+            .iter()
+            .map(|p| vec![[p[0], p[1], 0.0, p[2]], [p[0], p[1], h * p[2], p[2]]])
+            .collect(),
+    };
+    let lift = |points: &[[f64; 3]], knots: Vec<f64>, z: f64| Curve::RationalSpline {
+        knots,
+        homogeneous: points
+            .iter()
+            .map(|p| [p[0], p[1], z * p[2], p[2]])
+            .collect(),
+    };
+    let first = [lo, left, ring[8]];
+    let second = [
+        ring[0], ring[1], ring[2], ring[3], ring[4], ring[5], ring[6], before, lo,
+    ];
+    let first_knots = vec![3.5, 3.5, 3.5, 4.0, 4.0, 4.0];
+    let second_knots = vec![4.0, 4.0, 4.0, 5.0, 5.0, 6.0, 6.0, 7.0, 7.0, 7.5, 7.5, 7.5];
+    let seam = Curve::Spline {
+        knots: vec![0.0, 0.0, h, h],
+        points: vec![vertices[0].point, vertices[2].point],
+    };
+    let curves = [
+        lift(&first, first_knots.clone(), 0.0),
+        lift(&second, second_knots.clone(), 0.0),
+        seam,
+        lift(&second, second_knots, h),
+        lift(&first, first_knots, h),
+    ];
+    let intervals = [[3.5, 4.0], [4.0, 7.5], [0.0, h], [4.0, 7.5], [3.5, 4.0]];
+    let ends = [[0, 1], [1, 0], [0, 2], [3, 2], [2, 3]];
+    let directions = [true, true, true, false, false];
+    let pc = [
+        [[3.5, 0.0], [4.0, 0.0]],
+        [[4.0, 0.0], [7.5, 0.0]],
+        [[7.5, 0.0], [7.5, h]],
+        [[4.0, h], [7.5, h]],
+        [[3.5, h], [4.0, h]],
+    ];
+    let pcurve = |i: usize, points: [[f64; 2]; 2]| OrientedEdge {
+        edge: i as u32,
+        forward: directions[i],
+        pcurve: Curve2::Spline {
+            knots: vec![
+                intervals[i][0],
+                intervals[i][0],
+                intervals[i][1],
+                intervals[i][1],
+            ],
+            points: points.to_vec(),
+        },
+    };
+    // The seam is used twice: up at parameter 7.5, back down at 3.5.
+    let mut boundary: Vec<_> = (0..5).map(|i| pcurve(i, pc[i])).collect();
+    let mut down = pcurve(2, [[3.5, 0.0], [3.5, h]]);
+    down.forward = false;
+    boundary.push(down);
+    let positions = [0, 1, 2, 3, 4];
+    let edges = curves
+        .into_iter()
+        .enumerate()
+        .map(|(i, curve)| {
+            let mut uses = vec![EdgeUseRef {
+                face: 0,
+                r#loop: 0,
+                position: positions[i],
+                upper: !directions[i],
+            }];
+            if i == 2 {
+                uses.push(EdgeUseRef {
+                    face: 0,
+                    r#loop: 0,
+                    position: 5,
+                    upper: true,
+                });
+            }
+            Edge {
+                curve,
+                nurbs: None,
+                interval: intervals[i],
+                vertices: ends[i],
+                tolerance: 1e-6,
+                uses,
+            }
+        })
+        .collect();
+    let source = Record {
+        version: VERSION,
+        tolerance: 1e-6,
+        regions: vec![Region {
+            shells: vec![0],
+            void: false,
+        }],
+        shells: vec![Shell::Faces {
+            faces: vec![OrientedFace {
+                face: 0,
+                forward: true,
+            }],
+            wires: Vec::new(),
+        }],
+        faces: vec![Face {
+            surface,
+            nurbs: None,
+            domain: [[0.0, 4.0], [0.0, h]],
+            loops: vec![Loop::Edges { edges: boundary }],
+        }],
+        edges,
+        vertices,
+    };
+    crate::record_check::validate(&source).unwrap();
+    crate::record_check::agreement(&source).unwrap();
+    if let Some((completed, _)) = crate::pcurve::complete_periodic_seams(&source).unwrap() {
+        crate::record_check::validate(&completed).unwrap();
+        crate::record_check::agreement(&completed).unwrap();
+    }
+}
+
 /// A record's structure is checked before the kernel sees it: a use's interval outside its
 /// curve's range, a coordinate that is not a number, a circle of no radius, are refused as
 /// invalid records (the kernel's pcurve takes converted, checked values).
