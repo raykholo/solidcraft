@@ -1334,7 +1334,10 @@ fn sketch_edit_contracts_validate_markers_before_changing_the_session() {
 #[test]
 fn step_and_component_link_schema_keys_and_replies() {
     use super::{component_link::*, insert_step::InsertStepParams};
-    assert_keys(input_schema_for::<InsertStepParams>(), &["folder", "link", "matrix", "name", "names", "path", "tolerance", "up"]);
+    assert_keys(
+        input_schema_for::<InsertStepParams>(),
+        &["envelope", "flatten", "folder", "history", "link", "matrix", "name", "names", "path", "reader", "tolerance", "up"],
+    );
     assert_keys(input_schema_for::<UpdateLinksParams>(), &["component", "components"]);
     assert_keys(input_schema_for::<BreakLinkParams>(), &["component"]);
     assert_keys(input_schema_for::<LinksParams>(), &[]);
@@ -1349,7 +1352,7 @@ fn step_and_component_link_schema_keys_and_replies() {
         ),
         (
             "component.links",
-            json!({"links": [{"component": 1, "name": "Part", "path": "part.step", "file": "/parts/part.step", "found": null, "host": "nas", "reason": "not allowed"}]}),
+            json!({"links": [{"component": 1, "name": "Part", "path": "part.step", "file": "/parts/part.step", "found": null, "host": "nas", "state": "not_allowed", "reason": "not allowed"}]}),
         ),
         (
             "component.update_links",

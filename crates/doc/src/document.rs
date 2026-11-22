@@ -3797,6 +3797,11 @@ pub struct DesignLink {
     /// STEP source naming policy; absent for linked designs and older unlinked imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_names: Option<String>,
+    /// The plugin importer that read a linked import's source file; absent for the built-in
+    /// readers: a linked design, and a STEP file (`step_names` is set), as links made before
+    /// importers were named read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importer: Option<LinkImporter>,
     /// The linked design's properties (its `metadata`) as the component last took them. A
     /// component property that still has its value here follows the design through Update Links
     /// and Relink Source; one changed in this design differs from it and stays. Older links
@@ -3810,7 +3815,26 @@ pub struct DesignLink {
     pub file_sha256: Option<String>,
 }
 
+/// The plugin importer that read a linked import's source file, as the plugin host knew it then.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LinkImporter {
+    /// The plugin's id.
+    pub plugin: String,
+    /// The plugin's version when it read the file.
+    pub version: String,
+    /// The importer entry that read it: the importer is `plugin.entry`.
+    pub entry: String,
+    /// The options the importer was given, kept so the file is read again the same way.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub options: serde_json::Value,
+}
+
 impl DesignLink {
+    /// Whether the source is a design file (Insert Design), not a STEP file or a plugin's import.
+    pub fn is_design(&self) -> bool {
+        self.step_names.is_none() && self.importer.is_none()
+    }
+
     /// What [`Self::file_sha256`] keeps for a source file's `bytes`.
     pub fn file_digest(bytes: &[u8]) -> String {
         use sha2::{Digest, Sha256};
