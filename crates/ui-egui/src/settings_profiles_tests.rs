@@ -823,6 +823,7 @@ fn profile_keys_cover_the_current_portable_preferences() {
         "direct_interaction",
         "escape_twice_finishes_sketch",
         "free_orbit",
+        "free_orbit_key",
         "free_orbit_upright",
         "hidden_toolbar_tabs",
         "hide_constraint_glyphs_zoomed_out",
