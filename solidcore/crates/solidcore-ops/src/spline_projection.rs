@@ -85,6 +85,7 @@ pub fn cylinder_edge_projection(
     tol: f64,
 ) -> Option<Vec<PlanarPiece>> {
     let edge = body.edges.get(index)?;
+    eprintln!("DBG cep edge {index} curve {:?} interval {:?} uses {:?}", std::mem::discriminant(&edge.curve), edge.interval, edge.uses.iter().map(|u| body.faces.get(u.face as usize).map(|f| std::mem::discriminant(&f.surface))).collect::<Vec<_>>());
     // An analytic curve keeps the general path's own reading.
     if matches!(
         &edge.curve,
@@ -122,6 +123,7 @@ pub fn cylinder_edge_projection(
             &target,
             tol,
         ) else {
+            eprintln!("DBG cep edge {index}: kernel none for a cylinder use r={radius} tol={tol}");
             continue;
         };
         if found.as_ref().is_some_and(|previous| previous != &pieces) {
