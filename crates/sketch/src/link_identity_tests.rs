@@ -1104,3 +1104,39 @@ fn concentric_arcs_read_with_centres_apart_keep_their_ids() {
     let CurveKind::Arc { c, .. } = sk.curves[sk.curve_index(&ids[2]).unwrap()].kind else { panic!("the inner rim is an arc") };
     assert!(sk.points[c].pos.dist(Vec2::new(0., 5e-7)) < 1e-12, "the inner arc keeps its own centre");
 }
+
+/// #20280: a shelled wall's rim was saved as an arc of more than half a turn and is read again as
+/// a spline that only follows its circle to a few thousandths of a millimetre. It stays that arc
+/// (and keeps its id) when it runs between the arc's ends, the same way, within a thousandth of
+/// the radius of its circle; a spline that strays further, or runs the other way round, stays a
+/// spline.
+#[test]
+fn a_spline_following_a_saved_arcs_circle_stays_that_arc() {
+    let at = |angle: f64, noise: f64| Vec2::new(angle.cos(), angle.sin()) * (10.0 + noise);
+    let spline = |noise: f64, from: f64, to: f64| {
+        let n = 60;
+        let pts = (0..=n)
+            .map(|i| {
+                let t = f64::from(i) / f64::from(n);
+                let wobble = if i == 0 || i == n { 0.0 } else if i % 2 == 0 { noise } else { -noise };
+                at(from + (to - from) * t, wobble)
+            })
+            .collect();
+        LinkGeom::Spline { pts, control: true, degree: 3, periodic: false, nurbs: None }
+    };
+    let three_quarters = 1.5 * std::f64::consts::PI;
+    let outline = |curve: LinkGeom| vec![curve, LinkGeom::Line(at(three_quarters, 0.), at(0., 0.))];
+    for (noise, from, to, arc) in [(3e-3, 0., three_quarters, true), (0.5, 0., three_quarters, false), (3e-3, 0., -std::f64::consts::FRAC_PI_2, false)] {
+        let mut sk = Sketch::new();
+        let saved = LinkGeom::Arc { c: Vec2::ZERO, a: at(0., 0.), b: at(three_quarters, 0.) };
+        let link = sk.add_link(LinkKind::Project, face(), &outline(saved)).unwrap();
+        let id = sk.curves[sk.link_curves(&link)[0]].id.clone();
+        assert!(matches!(sk.curves[sk.curve_index(&id).unwrap()].kind, CurveKind::Arc { .. }));
+        sk.update_link(&link, &outline(spline(noise, from, to))).unwrap();
+        let kinds: Vec<bool> = sk.link_curves(&link).iter().map(|&i| matches!(sk.curves[i].kind, CurveKind::Arc { .. })).collect();
+        assert_eq!(kinds, [arc, false], "noise {noise}, from {from} to {to}");
+        if arc {
+            assert!(matches!(sk.curves[sk.curve_index(&id).unwrap()].kind, CurveKind::Arc { .. }), "{id} is still its arc");
+        }
+    }
+}

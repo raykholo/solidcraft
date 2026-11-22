@@ -2802,8 +2802,7 @@ fn a_saved_offset_of_a_shelled_major_arc_reopens_with_its_sources() {
             let sk = &rebuilt.sketch(id).unwrap().sketch;
             let sources = if spline { &sk.freeform_chain_offsets[0].sources } else { &sk.offsets[0].sources };
             assert_eq!(sources, &expected);
-            eprintln!("DBG kind through={through} spline={spline}: {:?}", std::mem::discriminant(&sk.curves[sk.curve_index(source_ids[0]).unwrap()].kind));
-            assert!(matches!(sk.curves[sk.curve_index(source_ids[0]).unwrap()].kind, CurveKind::Arc { .. } | CurveKind::Spline { .. }));
+            assert!(matches!(sk.curves[sk.curve_index(source_ids[0]).unwrap()].kind, CurveKind::Arc { .. }));
             assert!(outputs.iter().all(|id| sk.curve_index(id).is_some()));
             assert!(
                 rebuilt.sketch(id).unwrap().profiles.iter().any(|p| {

@@ -505,14 +505,10 @@ pub fn circular_boundary(
     let (ts, te) = run.ends_along();
     let a = run.curve.evaluate_point(k, ts).ok()?;
     let b = run.curve.evaluate_point(k, te).ok()?;
-    eprintln!("DBG cb ends da={} db={} tol={tol} r={radius}", a.distance(run.ends[0]), b.distance(run.ends[1]));
     if !(a.distance(run.ends[0]) <= tol && b.distance(run.ends[1]) <= tol) {
         return None;
     }
-    let sp = spans_of(run, work);
-    eprintln!("DBG cb spans {:?}", sp.as_ref().map(|s| s.len()));
-    let (spans, error) = controls(sp?, frame, None, tol)?;
-    eprintln!("DBG cb controls ok error={error} nspans={}", spans.len());
+    let (spans, error) = controls(spans_of(run, work)?, frame, None, tol)?;
     let (a, b) = (to_local(frame, a), to_local(frame, b));
     if !(point_of(*spans.first()?.first()?).distance(a) + error <= tol
         && point_of(*spans.last()?.last()?).distance(b) + error <= tol
@@ -540,9 +536,7 @@ pub fn circular_boundary(
     }
     let pieces = arc(
         &spans, center, radius, start, end, tol, error, work, true, true,
-    );
-    eprintln!("DBG cb arc {:?}", pieces.is_some());
-    let pieces = pieces?;
+    )?;
     // The arc is computed from its sweep, so its own end points can differ from `start` and `end`
     // (by the end tolerance `arc` allows): they too must lie within the tolerance of the vertices,
     // up to the rounding of computing them.

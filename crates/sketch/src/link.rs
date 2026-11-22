@@ -911,6 +911,66 @@ impl Sketch {
         Ok(idx)
     }
 
+    /// `geom` with each spline that is now what link `id` held as one arc given back as that arc
+    /// (#20280). A shelled wall's rim is held by the kernel as a curve that only follows its
+    /// circle to a few thousandths of a millimetre, so a projection reads it as a spline, where a
+    /// design saved before 0.45.0 holds it as an arc that offsets, profiles and constraints name
+    /// by id, and an offset of an arc can only follow an arc. The spline is that arc when it runs
+    /// between the arc's ends (to the point tolerance), the same way, every one of its points lies
+    /// within a thousandth of the radius (plus a thousandth of a millimetre) of the arc's circle,
+    /// and its points turn about the centre once, through the arc's sweep. Where one spline fits
+    /// two arcs, or none does, `geom` stands. `None` when no arc is given back.
+    fn saved_arcs(&self, id: &str, geom: &[LinkGeom]) -> Option<Vec<LinkGeom>> {
+        let arcs: Vec<(Vec2, Vec2, Vec2)> = self
+            .link_curves(id)
+            .into_iter()
+            .filter_map(|ci| match self.curves.get(ci)?.kind {
+                CurveKind::Arc { c, a, b } => Some((self.point(c)?, self.point(a)?, self.point(b)?)),
+                _ => None,
+            })
+            .collect();
+        if arcs.is_empty() {
+            return None;
+        }
+        let mut out = geom.to_vec();
+        let mut changed = false;
+        for (slot, g) in out.iter_mut().zip(geom) {
+            let LinkGeom::Spline { pts, periodic: false, .. } = g else { continue };
+            let (Some(first), Some(last)) = (pts.first().copied(), pts.last().copied()) else { continue };
+            let mut fits = arcs.iter().filter(|(c, a, b)| {
+                let radius = c.dist(*a);
+                let tol = 1e-6 * (1.0 + radius);
+                let band = 1e-3 * (1.0 + radius);
+                let turn = |p: Vec2, q: Vec2| (p - *c).cross(q - *c).atan2((p - *c).dot(q - *c));
+                let mut sweep = turn(*a, *b);
+                if sweep <= 0.0 {
+                    sweep += TAU;
+                }
+                let mut total = 0.0;
+                let monotone = pts.windows(2).all(|w| match w {
+                    [p, q] => {
+                        let step = turn(*p, *q);
+                        total += step;
+                        step >= 0.0
+                    }
+                    _ => false,
+                });
+                radius.is_finite()
+                    && radius > 0.0
+                    && first.dist(*a) <= tol
+                    && last.dist(*b) <= tol
+                    && pts.iter().all(|p| (p.dist(*c) - radius).abs() <= band)
+                    && monotone
+                    && (total - sweep).abs() <= 2.0 * band / radius + 1e-6
+            });
+            if let (Some((c, ..)), None) = (fits.next(), fits.next()) {
+                *slot = LinkGeom::Arc { c: *c, a: first, b: last };
+                changed = true;
+            }
+        }
+        changed.then_some(out)
+    }
+
     /// `geom` with each whole circle that link `id` holds as arcs given back as those arcs,
     /// split where they were. A closed circular edge was once projected as its two halves and
     /// a fresh projection gives one circle now (#17175). A saved sketch's halves are named by
@@ -1081,8 +1141,9 @@ impl Sketch {
             return Err(SketchError::Unknown(id.into()));
         };
         let halves = self.saved_halves(id, geom);
+        let arcs = if halves.is_none() { self.saved_arcs(id, geom) } else { None };
         let pieces = geom.len();
-        let geom = halves.as_deref().unwrap_or(geom);
+        let geom = halves.as_deref().or(arcs.as_deref()).unwrap_or(geom);
         let lay = layout(geom, kind)?;
         // Each curve of the layout is the piece of `geom` of the same index.
         let one_for_one = halves.is_none() && lay.curves.len() == pieces && lay.lone.is_empty();

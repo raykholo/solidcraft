@@ -85,24 +85,6 @@ pub fn cylinder_edge_projection(
     tol: f64,
 ) -> Option<Vec<PlanarPiece>> {
     let edge = body.edges.get(index)?;
-    eprintln!("DBG cep edge {index} curve {:?} interval {:?} uses {:?}", std::mem::discriminant(&edge.curve), edge.interval, edge.uses.iter().map(|u| body.faces.get(u.face as usize).map(|f| std::mem::discriminant(&f.surface))).collect::<Vec<_>>());
-    if let Curve::Spline { knots, points } = &edge.curve {
-        let rs: Vec<f64> = points.iter().map(|p| (p[0]).hypot(p[2] + 31.094594594594593)).collect();
-        let mn = rs.iter().cloned().fold(f64::MAX, f64::min);
-        let mx = rs.iter().cloned().fold(f64::MIN, f64::max);
-        eprintln!("DBG cep spline npts={} nknots={} rmin={mn} rmax={mx} first={:?} last={:?} knots0={:?}", points.len(), knots.len(), points.first(), points.last(), &knots[..knots.len().min(6)]);
-        eprintln!("DBG cep r samples {:?}", rs.iter().step_by((rs.len()/12).max(1)).collect::<Vec<_>>());
-        eprintln!("DBG cep ys {:?}", points.iter().map(|p| p[1]).fold((f64::MAX,f64::MIN), |a,y| (a.0.min(y),a.1.max(y))));
-    }
-    for u in &edge.uses {
-        if let Some(f) = body.faces.get(u.face as usize) {
-            if let Surface::RationalSpline { u_knots, v_knots, homogeneous } = &f.surface {
-                eprintln!("DBG face rs uk={u_knots:?} vk={v_knots:?} rows={} cols={:?}", homogeneous.len(), homogeneous.first().map(|r| r.len()));
-                for row in homogeneous.iter().take(12) { eprintln!("DBG   row {:?}", row.iter().map(|h| [h[0]/h[3], h[1]/h[3], h[2]/h[3], h[3]]).collect::<Vec<_>>()); }
-            }
-            eprintln!("DBG face has nurbs={} surf disc {:?}", f.nurbs.is_some(), std::mem::discriminant(&f.surface));
-        }
-    }
     // An analytic curve keeps the general path's own reading.
     if matches!(
         &edge.curve,
@@ -140,7 +122,6 @@ pub fn cylinder_edge_projection(
             &target,
             tol,
         ) else {
-            eprintln!("DBG cep edge {index}: kernel none for a cylinder use r={radius} tol={tol}");
             continue;
         };
         if found.as_ref().is_some_and(|previous| previous != &pieces) {
