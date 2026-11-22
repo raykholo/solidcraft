@@ -64,8 +64,15 @@ fn type_into(h: &mut Harness, key: &str, text: &str) {
 }
 
 fn ok(h: &mut Harness) {
+    eprintln!("DBG ok: cmds={:?} applying={}", h.app.dialog.as_ref().map(|d| crate::dialogs::apply_commands(&h.app, d)), h.app.applying.is_some());
     h.step(&json!({"click": {"handle": "dialog:OK"}})).unwrap();
     h.frames(2);
+    for i in 0..300 {
+        if h.app.dialog.is_none() { eprintln!("DBG closed after {i} more frames"); break; }
+        if i % 50 == 0 { eprintln!("DBG frame {i}: applying={} error={:?}", h.app.applying.is_some(), h.app.dialog.as_ref().and_then(|d| d.error.clone())); }
+        h.frames(1);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert!(h.app.dialog.is_none(), "OK closes the dialog: {:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
 }
 
