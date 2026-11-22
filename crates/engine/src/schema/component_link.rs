@@ -518,6 +518,22 @@ pub struct LinksResult {
     pub param_warnings: Vec<String>,
 }
 
+/// What read a linked import's source file ([`LinkInfo`]'s `importer`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LinkImporterInfo {
+    /// `step`: SolidCraft's own STEP reader; `plugin`: an importer plugin.
+    pub kind: String,
+    /// For a plugin: its id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<String>,
+    /// For a plugin: its version when it read the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// For a plugin: the importer entry, so the importer is `plugin.entry`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+}
+
 /// One linked component. A file that is looked for has `found` and `changed`, and a `state` and
 /// a `reason` when it can't be reached; a refused one is not looked for and has `found` null, a
 /// `state` and a `reason`.
@@ -528,6 +544,11 @@ pub enum LinkInfo {
     Looked {
         /// The component, by id.
         component: u64,
+        /// What read the source file, for a link that is not a design: `step` (SolidCraft's own
+        /// reader) or `plugin` (an importer plugin, with its id, version and entry). Left out
+        /// for a linked design.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        importer: Option<LinkImporterInfo>,
         name: Option<String>,
         /// The link as stored.
         path: String,
@@ -552,6 +573,11 @@ pub enum LinkInfo {
     /// The file is on a network location that is not allowed.
     Network {
         component: u64,
+        /// What read the source file, for a link that is not a design: `step` (SolidCraft's own
+        /// reader) or `plugin` (an importer plugin, with its id, version and entry). Left out
+        /// for a linked design.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        importer: Option<LinkImporterInfo>,
         name: Option<String>,
         path: String,
         /// Selected source configuration row id; absent when following the saved source state.
@@ -569,6 +595,11 @@ pub enum LinkInfo {
     /// The path names a device.
     Device {
         component: u64,
+        /// What read the source file, for a link that is not a design: `step` (SolidCraft's own
+        /// reader) or `plugin` (an importer plugin, with its id, version and entry). Left out
+        /// for a linked design.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        importer: Option<LinkImporterInfo>,
         name: Option<String>,
         path: String,
         /// Selected source configuration row id; absent when following the saved source state.
