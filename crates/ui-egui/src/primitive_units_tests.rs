@@ -64,7 +64,7 @@ fn type_into(h: &mut Harness, key: &str, text: &str) {
 }
 
 fn ok(h: &mut Harness) {
-    eprintln!("DBG ok: OK rect={:?} cancel={:?} screen={:?} kind={:?} error={:?}", crate::scenario::rect_of("dialog:OK"), crate::scenario::rect_of("dialog:cancel"), h.ctx.screen_rect(), h.app.dialog.as_ref().map(|d| std::mem::discriminant(&d.kind)), h.app.dialog.as_ref().and_then(|d| d.error.clone()));
+    eprintln!("DBG ok: OK rect={:?} cancel={:?} kind={:?} error={:?}", crate::scenario::rect_of("dialog:OK"), crate::scenario::rect_of("dialog:cancel"), h.app.dialog.as_ref().map(|d| std::mem::discriminant(&d.kind)), h.app.dialog.as_ref().and_then(|d| d.error.clone()));
     h.step(&json!({"click": {"handle": "dialog:OK"}})).unwrap();
     h.frames(2);
     eprintln!("DBG ok after: dialog={} error={:?} status={:?}", h.app.dialog.is_some(), h.app.dialog.as_ref().and_then(|d| d.error.clone()), h.app.status);
