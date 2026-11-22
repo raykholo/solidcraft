@@ -756,6 +756,7 @@ fn several_features_from_one_used_sketch_with_apply() {
                 "OK" => json!({"key": "Enter"}),
                 _ => json!({"key": "Escape"}),
             };
+            eprintln!("DBG {last} before {step}: done={:?} ok={:?} apply={:?}", crate::scenario::rect_of("dialog:OK"), h.widget("Done"), crate::scenario::rect_of("dialog:apply"));
             h.step(&action).unwrap();
             // The extrusion computes off the window thread, and OK is refused while one is still
             // computing: wait for the feature to land (not just for the computing to stop, which
@@ -771,6 +772,15 @@ fn several_features_from_one_used_sketch_with_apply() {
                 h.frames(1);
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
+            eprintln!(
+                "DBG {last} step {step}: dialog={} error={:?} picks={:?} applying={} features={} before={}",
+                h.app.dialog.is_some(),
+                h.app.dialog.as_ref().map(|d| d.error.clone()),
+                h.app.dialog.as_ref().map(|d| d.inputs.iter().map(|i| i.items.len()).collect::<Vec<_>>()),
+                h.app.applying.is_some(),
+                h.app.session.doc.features.len(),
+                before
+            );
             assert!(h.app.applying.is_none(), "{last}: the {step} finished computing");
             h.settle();
         }
