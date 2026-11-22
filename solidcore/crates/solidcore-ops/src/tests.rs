@@ -1109,6 +1109,156 @@ fn periodic_seam_completion_splits_real_boundaries_and_keeps_their_shell() {
     assert!(check.is_valid(), "{check}");
 }
 
+/// A loop crossing the cylinder's base cut at a vertex, with no edge along the cut, keeps its
+/// uses continuing one another. The 90-degree sheet's rims are each two edges meeting at the
+/// cut (parameter 4); moving each piece into the base period on its own would leave the uses
+/// either side of that vertex a whole period apart, which the record's geometry check refuses.
+/// Completion either gives a record that passes both checks or leaves the record as imported.
+#[test]
+fn periodic_seam_completion_keeps_uses_continuing_where_a_vertex_lies_on_the_cut() {
+    use solidcore_record::brep::{
+        Brep as Record, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace,
+        Region, Shell, Surface, Vertex, VERSION,
+    };
+
+    all_fixes();
+    let (r, h, w) = (5.0, 3.0, std::f64::consts::FRAC_1_SQRT_2);
+    let ring = [
+        [r, 0.0, 1.0],
+        [r * w, r * w, w],
+        [0.0, r, 1.0],
+        [-r * w, r * w, w],
+        [-r, 0.0, 1.0],
+        [-r * w, -r * w, w],
+        [0.0, -r, 1.0],
+        [r * w, -r * w, w],
+        [r, 0.0, 1.0],
+    ];
+    let average = |a: [f64; 3], b: [f64; 3]| std::array::from_fn(|d| 0.5 * (a[d] + b[d]));
+    let (left, right) = (average(ring[7], ring[8]), average(ring[0], ring[1]));
+    let (lo, hi) = (
+        average(average(ring[6], ring[7]), left),
+        average(right, average(ring[1], ring[2])),
+    );
+    let point = |p: [f64; 3], z| [p[0] / p[2], p[1] / p[2], z];
+    let vertices = [
+        point(lo, 0.0),
+        point(hi, 0.0),
+        point(hi, h),
+        point(lo, h),
+        point(ring[8], 0.0),
+        point(ring[8], h),
+    ]
+    .map(|point| Vertex {
+        point,
+        tolerance: 1e-6,
+    })
+    .to_vec();
+    let surface = Surface::RationalSpline {
+        u_knots: vec![0., 0., 0., 1., 1., 2., 2., 3., 3., 4., 4., 4.],
+        v_knots: vec![0., 0., h, h],
+        homogeneous: ring
+            .iter()
+            .map(|p| vec![[p[0], p[1], 0.0, p[2]], [p[0], p[1], h * p[2], p[2]]])
+            .collect(),
+    };
+    // The two halves of the rim arc, split at the cut (parameter 4) where the arc has a
+    // double knot: each half is a piece of the surface's own circle.
+    let half = |points: [[f64; 3]; 3], first: bool, z: f64| {
+        let (a, b) = if first { (3.5, 4.0) } else { (4.0, 4.5) };
+        Curve::RationalSpline {
+            knots: vec![a, a, a, b, b, b],
+            homogeneous: points.map(|p| [p[0], p[1], z * p[2], p[2]]).to_vec(),
+        }
+    };
+    let ruling = |a: usize, b: usize| Curve::Spline {
+        knots: vec![0.0, 0.0, h, h],
+        points: vec![vertices[a].point, vertices[b].point],
+    };
+    let first_half = [lo, left, ring[8]];
+    let second_half = [ring[8], right, hi];
+    let curves = [
+        half(first_half, true, 0.0),
+        half(second_half, false, 0.0),
+        ruling(1, 2),
+        half(second_half, false, h),
+        half(first_half, true, h),
+        ruling(0, 3),
+    ];
+    let intervals = [[3.5, 4.0], [4.0, 4.5], [0.0, h], [4.0, 4.5], [3.5, 4.0], [0.0, h]];
+    let ends = [[0, 4], [4, 1], [1, 2], [5, 2], [3, 5], [0, 3]];
+    let directions = [true, true, true, false, false, false];
+    let pc = [
+        [[3.5, 0.0], [4.0, 0.0]],
+        [[4.0, 0.0], [4.5, 0.0]],
+        [[4.5, 0.0], [4.5, h]],
+        [[4.0, h], [4.5, h]],
+        [[3.5, h], [4.0, h]],
+        [[3.5, 0.0], [3.5, h]],
+    ];
+    let edges = curves
+        .into_iter()
+        .enumerate()
+        .map(|(i, curve)| Edge {
+            curve,
+            nurbs: None,
+            interval: intervals[i],
+            vertices: ends[i],
+            tolerance: 1e-6,
+            uses: vec![EdgeUseRef {
+                face: 0,
+                r#loop: 0,
+                position: i as u32,
+                upper: !directions[i],
+            }],
+        })
+        .collect();
+    let boundary = (0..6)
+        .map(|i| OrientedEdge {
+            edge: i as u32,
+            forward: directions[i],
+            pcurve: Curve2::Spline {
+                knots: vec![
+                    intervals[i][0],
+                    intervals[i][0],
+                    intervals[i][1],
+                    intervals[i][1],
+                ],
+                points: pc[i].to_vec(),
+            },
+        })
+        .collect();
+    let source = Record {
+        version: VERSION,
+        tolerance: 1e-6,
+        regions: vec![Region {
+            shells: vec![0],
+            void: false,
+        }],
+        shells: vec![Shell::Faces {
+            faces: vec![OrientedFace {
+                face: 0,
+                forward: true,
+            }],
+            wires: Vec::new(),
+        }],
+        faces: vec![Face {
+            surface,
+            nurbs: None,
+            domain: [[0.0, 4.0], [0.0, h]],
+            loops: vec![Loop::Edges { edges: boundary }],
+        }],
+        edges,
+        vertices,
+    };
+    crate::record_check::validate(&source).unwrap();
+    crate::record_check::agreement(&source).unwrap();
+    if let Some((completed, _)) = crate::pcurve::complete_periodic_seams(&source).unwrap() {
+        crate::record_check::validate(&completed).unwrap();
+        crate::record_check::agreement(&completed).unwrap();
+    }
+}
+
 /// A record's structure is checked before the kernel sees it: a use's interval outside its
 /// curve's range, a coordinate that is not a number, a circle of no radius, are refused as
 /// invalid records (the kernel's pcurve takes converted, checked values).
