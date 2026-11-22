@@ -88,7 +88,14 @@ fn trims(face: &TrimFace<'_>, sampled: bool) -> Result<Vec<Vec<Curve2>>, String>
             // How far each end may move: within its vertex's tolerance where the caller covers the
             // gap ([`TrimFace::vertex_tolerances`]), else within the edge's.
             let reach = ours.vertices.map(|v| face.vertex_tolerances.get(v as usize).copied().unwrap_or(0.0));
-            pcs.push(on_our_interval(pc, ours, edge.interval, tolerance, reach)?);
+            let dbg_pc = pc.clone();
+            let moved = on_our_interval(pc, ours, edge.interval, tolerance, reach)?;
+            {
+                let [a, b2] = ours.interval;
+                let uv = |c: &Curve2, t: f64| solidcore_ops::pcurve::eval(c, t);
+                eprintln!("DBG20686 use edge {} fwd {} ours {:?} theirs {:?} tol {} held {} uv_theirs {:?}..{:?} uv_ours {:?}..{:?}", u.edge, u.forward, ours.interval, edge.interval, ours.tolerance, tolerance, uv(&dbg_pc, edge.interval[0]), uv(&dbg_pc, edge.interval[1]), uv(&moved, a), uv(&moved, b2));
+            }
+            pcs.push(moved);
         }
         result.push(pcs);
     }
@@ -131,6 +138,7 @@ fn cover_gaps(body: &crate::Brep, face: &TrimFace<'_>, bare: &HashSet<(u32, u32,
     let mut raised = false;
     for e in edges {
         let gap = body.edge_face_distance(e, 0).map_err(|e| e.to_string())?;
+        eprintln!("DBG20686 gap edge {e} = {gap} domain {:?}", face.domain);
         let need = SURFACE_GAP_MARGIN * gap;
         let tolerances = arrays.reals.get_mut(&crate::flat::EDGE_TOLERANCE).ok_or("edge tolerances")?;
         let given = tolerances.get_mut(e).ok_or("edge reference")?;
