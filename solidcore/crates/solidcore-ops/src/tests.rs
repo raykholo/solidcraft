@@ -1259,6 +1259,155 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_vertex_lies_on_the_cut
     }
 }
 
+/// A tube wall closed by a seam, its two rims each in two edges, on a fitted surface a little off
+/// its edges (as a coil spring's wire is): completing its periodic seams may replace the seam
+/// or leave the face as it is, but never makes a record whose loops jump a period between uses
+/// (#20182 deleted the seam as a cut it would insert again, and inserted none, so the two rims
+/// wound the period without closing: "pcurve starts 6.28... from the end of the use before it").
+#[test]
+fn periodic_seam_completion_keeps_a_loop_that_winds_the_period_continuous() {
+    use solidcore_record::brep::{
+        Brep as Record, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace,
+        Region, Shell, Surface, Vertex, VERSION,
+    };
+
+    all_fixes();
+    let (r, h, w) = (5.0, 3.0, std::f64::consts::FRAC_1_SQRT_2);
+    // The circle as (x, y, weight) in homogeneous form from its parameter -2 at (-r, 0), round
+    // by (0, -r) to (r, 0) at 0 and back to (-r, 0) at 2.
+    let ring: Vec<[f64; 3]> = [
+        [r, 0.0, 1.0],
+        [r * w, r * w, w],
+        [0.0, r, 1.0],
+        [-r * w, r * w, w],
+        [-r, 0.0, 1.0],
+        [-r * w, -r * w, w],
+        [0.0, -r, 1.0],
+        [r * w, -r * w, w],
+        [r, 0.0, 1.0],
+    ]
+    .iter()
+    .map(|p| [-p[0], -p[1], p[2]])
+    .collect();
+    let surface = Surface::RationalSpline {
+        u_knots: vec![-2., -2., -2., -1., -1., 0., 0., 1., 1., 2., 2., 2.],
+        v_knots: vec![0., 0., h, h],
+        homogeneous: ring
+            .iter()
+            .map(|p| vec![[p[0], p[1], 0.0, p[2]], [p[0], p[1], h * p[2], p[2]]])
+            .collect(),
+    };
+    // The edges lie 0.2 % inside the surface, within the tolerance they state.
+    let (fit, tolerance) = (0.998, 0.05);
+    let arc = |from: usize, z: f64, knots: Vec<f64>| Curve::RationalSpline {
+        knots,
+        homogeneous: ring[from..from + 5]
+            .iter()
+            .map(|p| [fit * p[0], fit * p[1], z * p[2], p[2]])
+            .collect(),
+    };
+    let point = |p: [f64; 3], z: f64| [fit * p[0] / p[2], fit * p[1] / p[2], z];
+    let vertices: Vec<Vertex> = [
+        point(ring[0], 0.0),
+        point(ring[4], 0.0),
+        point(ring[0], h),
+        point(ring[4], h),
+    ]
+    .into_iter()
+    .map(|point| Vertex { point, tolerance })
+    .collect();
+    let ruling = Curve::Spline {
+        knots: vec![0.0, 0.0, h, h],
+        points: vec![vertices[0].point, vertices[2].point],
+    };
+    let curves = [
+        arc(0, 0.0, vec![-2., -2., -2., -1., -1., 0., 0., 0.]),
+        arc(4, 0.0, vec![0., 0., 0., 1., 1., 2., 2., 2.]),
+        ruling,
+        arc(0, h, vec![-2., -2., -2., -1., -1., 0., 0., 0.]),
+        arc(4, h, vec![0., 0., 0., 1., 1., 2., 2., 2.]),
+    ];
+    let intervals = [[-2.0, 0.0], [0.0, 2.0], [0.0, h], [-2.0, 0.0], [0.0, 2.0]];
+    let ends = [[0, 1], [1, 0], [0, 2], [2, 3], [3, 2]];
+    // The loop: the lower rim, up the seam at u = 2, the upper rim back, down the seam at -2.
+    let loop_edges = [(0_u32, true), (1, true), (2, true), (4, false), (3, false), (2, false)];
+    let spans = [
+        [[-2.0, 0.0], [0.0, 0.0]],
+        [[0.0, 0.0], [2.0, 0.0]],
+        [[2.0, 0.0], [2.0, h]],
+        [[0.0, h], [2.0, h]],
+        [[-2.0, h], [0.0, h]],
+        [[-2.0, 0.0], [-2.0, h]],
+    ];
+    let boundary = loop_edges
+        .iter()
+        .zip(spans)
+        .map(|(&(edge, forward), points)| OrientedEdge {
+            edge,
+            forward,
+            pcurve: Curve2::Spline {
+                knots: {
+                    let [a, b] = intervals[edge as usize];
+                    vec![a, a, b, b]
+                },
+                points: points.to_vec(),
+            },
+        })
+        .collect();
+    let edges = curves
+        .into_iter()
+        .enumerate()
+        .map(|(i, curve)| Edge {
+            curve,
+            nurbs: None,
+            interval: intervals[i],
+            vertices: ends[i],
+            tolerance,
+            uses: loop_edges
+                .iter()
+                .enumerate()
+                .filter(|(_, (e, _))| *e as usize == i)
+                .map(|(position, (_, forward))| EdgeUseRef {
+                    face: 0,
+                    r#loop: 0,
+                    position: position as u32,
+                    upper: !forward,
+                })
+                .collect(),
+        })
+        .collect();
+    let source = Record {
+        version: VERSION,
+        tolerance: 1e-6,
+        regions: vec![Region {
+            shells: vec![0],
+            void: false,
+        }],
+        shells: vec![Shell::Faces {
+            faces: vec![OrientedFace {
+                face: 0,
+                forward: true,
+            }],
+            wires: Vec::new(),
+        }],
+        faces: vec![Face {
+            surface,
+            nurbs: None,
+            domain: [[-2.0, 2.0], [0.0, h]],
+            loops: vec![Loop::Edges { edges: boundary }],
+        }],
+        edges,
+        vertices,
+    };
+    crate::record_check::validate(&source).unwrap();
+    crate::record_check::agreement(&source).unwrap();
+    // What it returns is a record that still agrees, or none (the one it was given stays).
+    if let Some((completed, _)) = crate::pcurve::complete_periodic_seams(&source).unwrap() {
+        crate::record_check::validate(&completed).unwrap();
+        crate::record_check::agreement(&completed).unwrap();
+    }
+}
+
 /// A record's structure is checked before the kernel sees it: a use's interval outside its
 /// curve's range, a coordinate that is not a number, a circle of no radius, are refused as
 /// invalid records (the kernel's pcurve takes converted, checked values).
