@@ -114,7 +114,7 @@ jobs:
     name: Dependency advisories
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.changes.outputs.deps == 'true') }}
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 60 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -134,7 +134,7 @@ jobs:
     # Not on a draft: every other check needs this one, so they skip too. Not on a label other than
     # approved-for-ci either (the same skip, for the same reason).
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     permissions:
       contents: read
       # To ask whether the merge queue already tested a commit pushed to main, and which labels the
@@ -445,7 +445,7 @@ jobs:
   checks:
     name: Format and repository checks
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 75 || 25 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -517,7 +517,7 @@ jobs:
     name: Quick compile
     needs: changes
     if: needs.changes.outputs.quick == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -535,7 +535,7 @@ jobs:
     name: Native Linux Clippy
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -563,13 +563,13 @@ jobs:
     # hand. Pull requests, the merge queue and main build and run their tests in the `tests` job.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.native == 'true' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     # Fork builds start from main's cache, read-only; give them room to finish and upload.
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 60 || 45) }}
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /home/runner/.cache/sccache
+      SCCACHE_DIR: /home/dutchrunner/.cache/sccache
       SCCACHE_CACHE_SIZE: 20G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -585,7 +585,7 @@ jobs:
         continue-on-error: true
         with:
           key: ${{ github.repository }}-sccache-archive
-          path: /home/runner/.cache/sccache
+          path: /home/dutchrunner/.cache/sccache
           commit: ${{ github.ref == 'refs/heads/main' && 'on-change' || 'false' }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -631,7 +631,7 @@ jobs:
     # and download (3 GB on a full run), and the job starts beside the repository checks, not
     # after them. nextest hands tests to its threads as they free up, the slowest first (priority
     # in .config/nextest.toml), so they start at once and no core idles at the end.
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-32vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     env:
       # Pictures (snapshots, screenshots, ui.render, the viewport's offscreen tests) are drawn on
@@ -645,14 +645,13 @@ jobs:
       ACTION_MATRIX_JOBS: "12"
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /home/runner/.cache/sccache
+      SCCACHE_DIR: /home/dutchrunner/.cache/sccache
       SCCACHE_CACHE_SIZE: 20G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install a software Vulkan driver (lavapipe)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
+          dpkg -s mesa-vulkan-drivers libvulkan1 >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1; }
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -665,7 +664,7 @@ jobs:
         continue-on-error: true
         with:
           key: ${{ github.repository }}-sccache-tests
-          path: /home/runner/.cache/sccache
+          path: /home/dutchrunner/.cache/sccache
           commit: ${{ github.ref == 'refs/heads/main' && 'on-change' || 'false' }}
       # Main saves the cache; every other run restores it, read-only.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -755,6 +754,7 @@ jobs:
           path: ${{ env.CARGO_TARGET_DIR || 'target' }}/nextest/ci/junit.xml
           retention-days: 7
 
+
   gpu-path-tests:
     name: GPU path tests (${{ matrix.shard }}/4)
     # The GPU path tracer's tests (about 108) compile their pipelines on lavapipe, one test at a
@@ -766,7 +766,7 @@ jobs:
     # budget (665 s, against 204 s for the same test in another run) and a shard took 35 minutes.
     needs: changes
     if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.gpu == 'true' }}
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 135 || 45 }}
     strategy:
       fail-fast: false
@@ -780,17 +780,16 @@ jobs:
       VIEWPORT_TEST_GPU: software
       VIEWPORT_TEST_REQUIRE_GPU: "1"
       # lavapipe's own shader cache (below).
-      MESA_SHADER_CACHE_DIR: /home/runner/.cache/mesa-gpu
+      MESA_SHADER_CACHE_DIR: /home/dutchrunner/.cache/mesa-gpu
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /home/runner/.cache/sccache
+      SCCACHE_DIR: /home/dutchrunner/.cache/sccache
       SCCACHE_CACHE_SIZE: 20G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install a software Vulkan driver (lavapipe)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1
+          dpkg -s mesa-vulkan-drivers libvulkan1 >/dev/null 2>&1 || { sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1; }
       - name: Size parallel compiles to the job's memory
         run: scripts/ci/build-jobs.sh
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -804,7 +803,7 @@ jobs:
         continue-on-error: true
         with:
           key: ${{ github.repository }}-sccache-gpu
-          path: /home/runner/.cache/sccache
+          path: /home/dutchrunner/.cache/sccache
           commit: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 && 'on-change' || 'false' }}
       # The first test in a shard to build the path pipeline compiles it cold on lavapipe (335 to
       # 665 s, against the 600 s setup budget); every later one reads Mesa's disk cache (about
@@ -816,7 +815,7 @@ jobs:
         continue-on-error: true
         with:
           key: ${{ github.repository }}-mesa-gpu
-          path: /home/runner/.cache/mesa-gpu
+          path: /home/dutchrunner/.cache/mesa-gpu
           commit: ${{ github.ref == 'refs/heads/main' && matrix.shard == 1 && 'on-change' || 'false' }}
       # On GitHub's runners (a fork with CI_RUNNER set) there is no sticky disk: keep Mesa's cache in
       # GitHub's cache instead, keyed by the shaders, so only a fork's first run after a shader
@@ -826,7 +825,7 @@ jobs:
         if: vars.CI_RUNNER != ''
         continue-on-error: true
         with:
-          path: /home/runner/.cache/mesa-gpu
+          path: /home/dutchrunner/.cache/mesa-gpu
           key: mesa-gpu-${{ runner.os }}-${{ hashFiles('crates/gpu/src/**/*.wgsl') }}
           restore-keys: mesa-gpu-${{ runner.os }}-
       # Main saves the cache; every other run restores it, read-only.
@@ -873,6 +872,7 @@ jobs:
           path: ${{ env.CARGO_TARGET_DIR || 'target' }}/nextest/ci/junit.xml
           retention-days: 7
 
+
   action-matrix:
     # Every ordinary action on every face, edge, vertex and body of the design corpus, against
     # tests/action_matrix/baseline.json (docs/action-matrix.md). Every test run checks a sample;
@@ -881,7 +881,7 @@ jobs:
     name: Action matrix (${{ matrix.shard }}/16)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 165 || 55 }}
     strategy:
       fail-fast: false
@@ -923,7 +923,7 @@ jobs:
     name: Action matrix determinism
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 135 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -945,7 +945,7 @@ jobs:
     name: Property tests (many cases)
     needs: build-tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -969,12 +969,12 @@ jobs:
     name: Doc tests
     needs: changes
     if: needs.changes.outputs.doctests == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 135 || 45 }}
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /home/runner/.cache/sccache
+      SCCACHE_DIR: /home/dutchrunner/.cache/sccache
       SCCACHE_CACHE_SIZE: 20G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -990,7 +990,7 @@ jobs:
         continue-on-error: true
         with:
           key: ${{ github.repository }}-sccache-doc
-          path: /home/runner/.cache/sccache
+          path: /home/dutchrunner/.cache/sccache
           commit: ${{ github.ref == 'refs/heads/main' && 'on-change' || 'false' }}
       # Main saves the cache; every other run restores it, read-only.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -1034,12 +1034,12 @@ jobs:
     name: Reference tests
     needs: changes
     if: needs.changes.outputs.oracle == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: /home/runner/.cache/sccache
+      SCCACHE_DIR: /home/dutchrunner/.cache/sccache
       SCCACHE_CACHE_SIZE: 20G
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1055,7 +1055,7 @@ jobs:
         continue-on-error: true
         with:
           key: ${{ github.repository }}-sccache-oracle
-          path: /home/runner/.cache/sccache
+          path: /home/dutchrunner/.cache/sccache
           commit: ${{ github.ref == 'refs/heads/main' && 'on-change' || 'false' }}
       # Main saves the cache; every other run restores it, read-only.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -1195,7 +1195,7 @@ jobs:
     name: Build without usage statistics
     needs: changes
     if: needs.changes.outputs.native == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 40 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1227,7 +1227,7 @@ jobs:
     name: ci
     needs: [changes, checks, quick-compile, clippy, build-tests, tests, gpu-path-tests, doc-tests, oracle, windows-fxc, windows-build, windows-startup, dependency-advisories, wasm, solidcore, solidcore-tests, solidcore-standalone, kernel-rig, no-usage-stats]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     permissions:
       contents: read
       # To read the commit's other runs of this workflow.
@@ -1383,7 +1383,7 @@ jobs:
     name: Compile WebAssembly
     needs: changes
     if: ${{ !cancelled() && ((github.event_name == 'workflow_dispatch' && inputs.cross_compile) || needs.changes.outputs.wasm == 'true') }}
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1410,7 +1410,7 @@ jobs:
     name: SolidCore builds on its own
     needs: changes
     if: needs.changes.outputs.solidcore == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
     env:
       CARGO_INCREMENTAL: 0
@@ -1608,7 +1608,7 @@ jobs:
     name: SolidCore tests (build)
     needs: changes
     if: needs.changes.outputs.solidcore == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     defaults:
       run:
@@ -1641,7 +1641,7 @@ jobs:
     name: SolidCore tests (${{ matrix.shard }}/6)
     needs: [changes, solidcore-tests-build]
     if: needs.changes.outputs.solidcore == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     strategy:
       fail-fast: false
@@ -1689,7 +1689,7 @@ jobs:
     name: SolidCore tests (doctests and solids report)
     needs: changes
     if: needs.changes.outputs.solidcore == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     defaults:
       run:
@@ -1743,7 +1743,7 @@ jobs:
     name: SolidCore checks (tests)
     needs: [changes, solidcore-tests-build, solidcore-tests-shard, solidcore-tests-extras]
     if: always() && needs.changes.outputs.solidcore == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: 5
     steps:
       - env:
@@ -1810,7 +1810,7 @@ jobs:
     name: Nightly alert
     needs: [dependency-advisories, changes, checks, ci, build-tests, action-matrix, action-matrix-determinism, property-tests]
     if: always() && github.event_name == 'schedule'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    runs-on: [self-hosted, flyer]
     timeout-minutes: ${{ vars.CI_RUNNER && 15 || 5 }}
     permissions:
       issues: write
