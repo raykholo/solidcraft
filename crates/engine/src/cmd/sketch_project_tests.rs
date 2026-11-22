@@ -2810,9 +2810,11 @@ fn a_saved_offset_of_a_shelled_major_arc_reopens_with_its_sources() {
                 }),
                 "Sketch2's offset outputs form a profile boundary"
             );
-            // A fresh design still uses the restored arc directly.
+            // A fresh design offsets its inner rim directly, as the arc or as the spline the
+            // kernel holds a shelled wall's rim as.
             run(&mut s, "sketch.edit", json!({"sketch":"Sketch2"}));
-            run(&mut s, "sketch.offset", json!({"curves":["a2"],"distance":0.8}));
+            let fresh = if s.model.state().sketch(id).unwrap().sketch.curve_index("a2").is_some() { "a2" } else { "s1" };
+            run(&mut s, "sketch.offset", json!({"curves":[fresh],"distance":0.8}));
             run(&mut s, "sketch.finish", json!({}));
             assert!(s.model.results.iter().all(|r| r.error.is_none()));
         }
