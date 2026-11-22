@@ -86,6 +86,14 @@ pub fn cylinder_edge_projection(
 ) -> Option<Vec<PlanarPiece>> {
     let edge = body.edges.get(index)?;
     eprintln!("DBG cep edge {index} curve {:?} interval {:?} uses {:?}", std::mem::discriminant(&edge.curve), edge.interval, edge.uses.iter().map(|u| body.faces.get(u.face as usize).map(|f| std::mem::discriminant(&f.surface))).collect::<Vec<_>>());
+    if let Curve::Spline { knots, points } = &edge.curve {
+        let rs: Vec<f64> = points.iter().map(|p| (p[0]).hypot(p[2] + 31.094594594594593)).collect();
+        let mn = rs.iter().cloned().fold(f64::MAX, f64::min);
+        let mx = rs.iter().cloned().fold(f64::MIN, f64::max);
+        eprintln!("DBG cep spline npts={} nknots={} rmin={mn} rmax={mx} first={:?} last={:?} knots0={:?}", points.len(), knots.len(), points.first(), points.last(), &knots[..knots.len().min(6)]);
+        eprintln!("DBG cep r samples {:?}", rs.iter().step_by((rs.len()/12).max(1)).collect::<Vec<_>>());
+        eprintln!("DBG cep ys {:?}", points.iter().map(|p| p[1]).fold((f64::MAX,f64::MIN), |a,y| (a.0.min(y),a.1.max(y))));
+    }
     // An analytic curve keeps the general path's own reading.
     if matches!(
         &edge.curve,
