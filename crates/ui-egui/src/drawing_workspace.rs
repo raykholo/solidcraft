@@ -1131,7 +1131,7 @@ pub(crate) fn inset<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) 
 fn panel_fields(app: &mut SolveApp, ui: &mut egui::Ui) {
     if let Some(placement) = &mut app.drawing_workspace.placement {
         let finished = inset(ui, |ui| {
-            placement.fields(ui, &app.session.doc.name);
+            placement.fields(ui, &app.session.doc);
             panels::finish_placement(ui)
         });
         if finished {
@@ -1765,6 +1765,38 @@ mod tests {
         for view in views {
             assert!(!said.contains(&encode(view)), "no message names a view by its id: {said}");
         }
+    }
+
+    #[test]
+    fn the_model_chooser_lists_nested_occurrences_and_places_the_chosen_one() {
+        let mut h = Harness::new();
+        h.app.home.open = false;
+        h.app.run("solid.box", serde_json::json!({"length":40,"width":20,"height":3})).unwrap();
+        for (id, parent, name) in [(1001u64, 0u64, "Sub"), (1002, 1001, "Leaf")] {
+            let doc = h.app.session.doc_mut();
+            doc.components.push(solidcraft_engine::doc::Component { id, name: name.into(), parent, ..Default::default() });
+            let occurrence = serde_json::json!({"id": id + 4000, "component": id, "parent": parent, "name": name});
+            doc.occurrences.push(serde_json::from_value(occurrence).unwrap());
+        }
+        enter(&mut h.app, true).unwrap();
+        h.app.run("drawing.create", serde_json::json!({})).unwrap();
+        h.frames(4);
+        let listed = placement::sources(&h.app.session.doc);
+        assert_eq!(
+            listed.iter().map(|(_, path)| path.clone()).collect::<Vec<_>>(),
+            vec![None, Some(vec![5001]), Some(vec![5001, 5002])],
+            "the design, the sub-assembly, then the component nested in it"
+        );
+        let mut tool = placement::Placement::new(&h.app).unwrap();
+        let drawing = h.app.session.drawing("drawing.inspect").unwrap();
+        assert!(tool.request(&drawing).unwrap().get("source").is_none(), "the whole design by default");
+        tool.choose_source(Some(vec![5001, 5002]));
+        let mut request = tool.request(&drawing).unwrap();
+        assert_eq!(request["source"], serde_json::json!({"occurrences": [[5001, 5002]]}));
+        request["sheet"] = serde_json::json!("Sheet 1");
+        let placed = h.app.run("drawing.view.base", request).unwrap();
+        let inspected = h.app.run("drawing.view.inspect", serde_json::json!({"view": placed["view"]})).unwrap();
+        assert_eq!(inspected["settings"]["occurrences"], serde_json::json!([[5001, 5002]]));
     }
 
     #[test]
