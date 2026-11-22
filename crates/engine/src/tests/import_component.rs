@@ -971,6 +971,7 @@ fn step_source_link_is_recorded_saved_relative_updated_and_broken() {
     assert_eq!(s.doc.links[&comp].step_names.as_deref(), Some("auto"));
     assert!(std::path::Path::new(&s.doc.links[&comp].path).is_absolute());
     assert_eq!(run(&mut s, "component.links", json!({}))["links"][0]["changed"], false);
+    assert_eq!(run(&mut s, "component.links", json!({}))["links"][0]["importer"], json!({"kind": "step"}));
     let saved = dir.join("assembly.sc");
     run(&mut s, "file.save", json!({"path": saved}));
     let (doc, _) = solidcraft_io::read_design_file(&saved.to_string_lossy(), None::<fn(solidcraft_io::DesignPreview)>).unwrap();
@@ -1185,4 +1186,19 @@ fn deleting_a_component_of_an_imported_assembly_deletes_its_bodies() {
     assert_eq!(holding(&mut again), expected, "reopened");
     assert_eq!(shown_boxes(&again), [pin_box]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_step_link_saved_before_importers_were_named_reads_as_built_in_step() {
+    let old: solidcraft_doc::DesignLink =
+        serde_json::from_value(json!({"path": "bracket.step", "feature": 3, "step_names": "auto", "file_sha256": "ab"})).unwrap();
+    assert!(old.importer.is_none() && old.step_names.as_deref() == Some("auto") && !old.is_design());
+    assert!(serde_json::to_value(&old).unwrap().get("importer").is_none(), "a built-in link writes no importer");
+    let plugin = solidcraft_doc::DesignLink {
+        importer: Some(solidcraft_doc::LinkImporter { plugin: "gears".into(), version: "2.1".into(), entry: "convert".into(), ..Default::default() }),
+        ..old.clone()
+    };
+    let kept: solidcraft_doc::DesignLink = serde_json::from_value(serde_json::to_value(&plugin).unwrap()).unwrap();
+    assert_eq!(kept, plugin);
+    assert_eq!(serde_json::to_value(&plugin).unwrap()["importer"], json!({"plugin": "gears", "version": "2.1", "entry": "convert"}));
 }

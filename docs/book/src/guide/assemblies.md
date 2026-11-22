@@ -522,6 +522,12 @@ Preferences › Design to keep new inserts as independent copies, or pass `link:
 `file.insert_step`. Older designs keep their unlinked imports. The web app keeps independent
 copies because uploaded files have no disk source path.
 
+A file an installed importer plugin reads can be linked the same way: `file.import` with
+`link: true` brings its solid bodies into the open design as a new component, in one undo step,
+instead of opening the file as a new design. `component.links` lists it with its `importer` (the
+plugin's id, version and entry) and whether the file changed. **Break Link** keeps the bodies and
+forgets the file. Reading it again through the plugin with **Update Links** comes later.
+
 Linked files from other folders load after you allow them. When an assembly opens, the parts in
 its own folder, or below it, are read again by themselves as above. If a changed part is in
 another folder, SolidCraft asks once, naming the folders: **Load** reads those parts now and
