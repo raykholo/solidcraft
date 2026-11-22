@@ -1,0 +1,7 @@
+[
+{"command":"sketch.create","params":{"plane":"XY","name":"P"}},
+{"command":"sketch.line","params":{"points":[[0,0],[10,0],[10,5],[10.002,6],[10.008,7],[0,7]],"closed":true}},
+{"command":"sketch.finish","params":{}},
+{"command":"solid.extrude","params":{"sketch":"P","distance":1,"operation":"new","body_name":"Plate"}},
+{"command":"solid.offset_face","params":{"body":"Plate","faces":[[10.001,5.5,0.5]],"distance":"2 mm"}}
+]
