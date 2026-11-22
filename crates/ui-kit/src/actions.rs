@@ -345,6 +345,9 @@ pub(super) fn footer_with_left(
                     if primary { t.space_24 * 3.0 } else { 0.0 },
                 );
                 actions_left = actions_left.min(response.rect.left());
+                if kind == Action::Ok && (response.hovered() || response.clicked() || ui.input(|i| i.pointer.any_click())) {
+                    eprintln!("DBG ok button: label={label} live={} ok_enabled={} enabled={} hovered={} clicked={} rect={:?} pointer={:?}", look.live(Action::Ok), look.ok_enabled, ui.is_enabled(), response.hovered(), response.clicked(), response.rect, ui.input(|i| i.pointer.interact_pos()));
+                }
                 if response.clicked() {
                     action = kind;
                 }

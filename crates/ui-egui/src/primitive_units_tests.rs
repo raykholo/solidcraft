@@ -74,6 +74,7 @@ fn ok(h: &mut Harness) {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     h.frames(2);
+    eprintln!("DBG ok handle target={:?} footer={:?} outer={:?} ok_enabled={:?}", crate::scenario::rect_of("dialog:OK"), crate::scenario::rect_of("dialog:footer"), crate::scenario::rect_of("dialog:outer"), h.app.dialog.as_ref().map(|d| d.error.clone()));
     h.step(&json!({"click": {"handle": "dialog:OK"}})).unwrap();
     h.frames(2);
     assert!(h.app.dialog.is_none(), "OK closes the dialog: {:?}", h.app.dialog.as_ref().and_then(|d| d.error.clone()));
