@@ -127,6 +127,15 @@ fn circle_of_arc(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &Layout) 
 /// other arc is still the same arc.
 fn arc_about_same_centre(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &Layout) -> Option<usize> {
     let LCurve::Arc(centre, a, b) = *c else { return None };
+    eprintln!("DBG arc_about_same_centre old centre={:?} a={:?} b={:?} map a={:?} b={:?} c={:?}", old.get(centre), old.get(a), old.get(b), map.get(a), map.get(b), map.get(centre));
+    for (j, n) in lay.curves.iter().enumerate() {
+        if let LCurve::Arc(x, y, z) = *n {
+            eprintln!("DBG   new arc {j}: centre {:?} ends {y}={:?} {z}={:?}", lay.pts.get(x), lay.pts.get(y), lay.pts.get(z));
+        }
+        if let LCurve::Circle(x, r) = *n {
+            eprintln!("DBG   new circle {j}: centre {:?} r {r}", lay.pts.get(x));
+        }
+    }
     let (ma, mb) = (map.get(a).copied().flatten()?, map.get(b).copied().flatten()?);
     let was = *old.get(centre)?;
     let became = map.get(centre).copied().flatten().and_then(|i| lay.pts.get(i)).copied();
@@ -153,6 +162,11 @@ fn arc_about_same_centre(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &
 /// line without one, the longest new line along it (where it was, or between the points its
 /// ends became).
 fn match_curve(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &Layout) -> Option<(usize, bool)> {
+    let dbg_r = match_curve_dbg(c, old, map, lay);
+    eprintln!("DBG match_curve {:?} -> {:?}", c, dbg_r);
+    dbg_r
+}
+fn match_curve_dbg(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &Layout) -> Option<(usize, bool)> {
     let mapped: Option<Vec<usize>> = curve_points(c).iter().map(|p| map.get(*p).copied().flatten()).collect();
     if let Some(m) = &mapped {
         let hits: Vec<usize> = lay
