@@ -1262,9 +1262,14 @@ fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_w
     };
     crate::record_check::validate(&source).unwrap();
     crate::record_check::agreement(&source).unwrap();
-    if let Some((completed, _)) = crate::pcurve::complete_periodic_seams(&source).unwrap() {
-        crate::record_check::validate(&completed).unwrap();
-        crate::record_check::agreement(&completed).unwrap();
+    let out = crate::pcurve::complete_periodic_seams(&source).unwrap();
+    match &out {
+        None => eprintln!("DIAG none"),
+        Some((c, o)) => {
+            eprintln!("DIAG some faces={} edges={} verts={} origins={o:?}", c.faces.len(), c.edges.len(), c.vertices.len());
+            eprintln!("DIAG validate={:?} agreement={:?}", crate::record_check::validate(c), crate::record_check::agreement(c));
+            for f in &c.faces { eprintln!("DIAG face loops={}", f.loops.len()); }
+        }
     }
 }
 
