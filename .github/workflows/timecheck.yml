@@ -1,0 +1,45 @@
+name: timecheck
+on:
+  push:
+    branches: ["timecheck/**"]
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      shas: ${{ steps.p.outputs.shas }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: echo "shas=$(python3 -c 'import json;print(json.dumps([l.strip() for l in open("SHAS") if l.strip()]))')" >> "$GITHUB_OUTPUT"
+  time:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        sha: ${{ fromJSON(needs.plan.outputs.shas) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ matrix.sha }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Build the CLI
+        working-directory: src
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo build --release -p solidcraft-cli --locked
+      - name: Time the script
+        run: |
+          # ctl/SCRIPT.json, run three times; ctl/SHAS lists the commits (one job each).
+          for i in 1 2 3; do
+            s=$(date +%s.%N); src/target/release/solidcraft-cli run ctl/SCRIPT.json > /dev/null 2>&1 || true
+            echo "TIME ${{ matrix.sha }} run$i $(python3 -c "import time;print(round(time.time()-$s,3))") s"
+          done
