@@ -106,6 +106,7 @@ pub fn within_polls<R>(polls: u64, f: impl FnOnce() -> R) -> (R, bool) {
     let answer = scoped(Some(mine.clone()), f);
     let over_stopped = over.as_ref().is_some_and(Stop::is_stopped);
     let spent = !over_stopped && mine.0.cancel.polls().is_some_and(|made| made >= polls);
+    eprintln!("SC_POLLS used={:?} limit={polls}", mine.0.cancel.polls());
     (answer, spent)
 }
 

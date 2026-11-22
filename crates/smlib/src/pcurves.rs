@@ -46,7 +46,7 @@ fn trims(face: &TrimFace<'_>, sampled: bool) -> Result<Vec<Vec<Curve2>>, String>
     // SMLib's trims are made by dropping each edge onto the surface, and an edge that lies farther
     // off it than its tolerance never drops well enough: each span fails its test again at every
     // halving, over every edge and retry, without end. The work is limited, by its own count.
-    let limit = work_limit(face);
+    let limit = work_limit(face) * 40;
     let (made, spent) = crate::stop::within_polls(limit, || if sampled { body.to_native_ordered_sampled_trims() } else { body.to_native_ordered() });
     let (out, order) = made.map_err(|e| {
         if spent {
