@@ -130,12 +130,7 @@ fn arc_about_same_centre(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &
     let (ma, mb) = (map.get(a).copied().flatten()?, map.get(b).copied().flatten()?);
     let was = *old.get(centre)?;
     let became = map.get(centre).copied().flatten().and_then(|i| lay.pts.get(i)).copied();
-    // Concentric arcs read again have centres apart by what the kernel's analytic circles differ
-    // by, which can exceed the point tolerance: the same ordered ends and a centre this close
-    // (against the arc's radius) still name one arc, and a mirrored arc of the same ends is far
-    // further off.
-    let reach = 1e-4 * (1.0 + was.dist(*old.get(a)?));
-    let near = |p: Vec2, q: Vec2| p.dist(q) <= reach.max(TOL * (1.0 + p.len().max(q.len())));
+    let near = |p: Vec2, q: Vec2| p.dist(q) <= TOL * (1.0 + p.len().max(q.len()));
     let mut hits = lay.curves.iter().enumerate().filter(|(_, n)| {
         matches!(**n, LCurve::Arc(x, y, z) if y == ma && z == mb
             && lay.pts.get(x).is_some_and(|p| near(*p, was) || became.is_some_and(|q| near(*p, q))))
@@ -144,6 +139,53 @@ fn arc_about_same_centre(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &
         (Some((j, _)), None) => Some(j),
         _ => None,
     }
+}
+
+/// The new spline (an index into `lay.curves`) old arc `c` is when its edge is read as a spline
+/// now (#20280): a shelled wall's rim is held by the kernel as a marched curve that follows its
+/// circle to a few thousandths of a millimetre, and an arc of more than half a turn saved before
+/// 0.45.0 was that circle. It is that arc when the one spline runs between the points `c`'s ends
+/// became, in the same order, every point of it lies within a thousandth of the radius (and a
+/// thousandth of a millimetre) of the old circle, and its points turn about the old centre the
+/// way `c` does, once, through the same sweep. A mirrored image, a spline with extra turns or
+/// another edge between the same ends is not matched.
+fn spline_of_arc(c: &LCurve, old: &[Vec2], map: &[Option<usize>], lay: &Layout) -> Option<usize> {
+    let LCurve::Arc(centre, a, b) = *c else { return None };
+    let (ma, mb) = (map.get(a).copied().flatten()?, map.get(b).copied().flatten()?);
+    let (o, pa, pb) = (*old.get(centre)?, *old.get(a)?, *old.get(b)?);
+    let radius = o.dist(pa);
+    if !(radius.is_finite() && radius > 0.0) {
+        return None;
+    }
+    let turn = |p: Vec2, q: Vec2| (p - o).cross(q - o).atan2((p - o).dot(q - o));
+    let mut sweep = turn(pa, pb);
+    if sweep <= 0.0 {
+        sweep += std::f64::consts::TAU;
+    }
+    let band = 1e-3 * (1.0 + radius);
+    let mut hits = lay.curves.iter().enumerate().filter_map(|(j, n)| match n {
+        LCurve::Spline(s, e, first, count, _, _, false, _) if *s == ma && *e == mb => Some((j, *first, *count)),
+        _ => None,
+    });
+    let (Some((j, first, count)), None) = (hits.next(), hits.next()) else { return None };
+    let at = |i: usize| lay.pts.get(i).copied();
+    let mut points = vec![at(ma)?];
+    for i in first..first.checked_add(count)? {
+        points.push(at(i)?);
+    }
+    points.push(at(mb)?);
+    if points.iter().any(|p| (p.dist(o) - radius).abs() > band) {
+        return None;
+    }
+    let mut total = 0.0;
+    for pair in points.windows(2) {
+        let step = turn(*pair.first()?, *pair.last()?);
+        if step < 0.0 {
+            return None;
+        }
+        total += step;
+    }
+    ((total - sweep).abs() <= 2.0 * band / radius + 1e-6).then_some(j)
 }
 
 /// The new curve (an index into `lay.curves`) old curve `c` becomes, and whether it is only a
@@ -353,7 +395,8 @@ impl Sketch {
                     .filter(|k| within && !needed_curves.contains(k))
                     .filter_map(|k| {
                         let c = cur.get(k)?;
-                        let (j, piece) = match_curve(c, &old_pos, &id_points, lay)?;
+                        let (j, piece) = match_curve(c, &old_pos, &id_points, lay)
+                            .or_else(|| spline_of_arc(c, &old_pos, &id_points, lay).map(|j| (j, false)))?;
                         let moved = match (c, lay.curves.get(j)) {
                             (LCurve::Circle(_, r), Some(LCurve::Circle(_, s))) => (r - s).abs(),
                             _ => 0.0,
