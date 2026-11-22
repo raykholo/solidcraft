@@ -1095,6 +1095,20 @@ impl<'t> Assembly<'t> {
         // the whole body mutable, can its crossed cuts become edges and its trim pieces be
         // moved into the base period. An internal seam used on both sides is replaced rather
         // than retained as a boundary that would divide the same material into sliver faces.
+        fn diag_dump(tag: &str, brep: &solidcore_record::brep::Brep) {
+            for (fi, face) in brep.faces.iter().enumerate() {
+                for (li, l) in face.loops.iter().enumerate() {
+                    if let solidcore_record::brep::Loop::Edges { edges } = l {
+                        for (ui, u) in edges.iter().enumerate() {
+                            let iv = u.pcurve.interval();
+                            let ends = iv.map(|[a, b]| (solidcore_ops::pcurve::eval(&u.pcurve, a), solidcore_ops::pcurve::eval(&u.pcurve, b)));
+                            eprintln!("DIAG {tag} face {fi} loop {li} use {ui} edge {} fwd {} iv {:?} ends {:?} edge_iv {:?}", u.edge, u.forward, iv, ends, brep.edges.get(u.edge as usize).map(|e| e.interval));
+                        }
+                    }
+                }
+            }
+        }
+        if brep.faces.len() < 8 { diag_dump("before", &brep); }
         if let Some((completed, from)) = pcurve::complete_periodic_seams(&brep).map_err(|e| e.to_string())? {
             face_origin = from
                 .iter()
@@ -1102,6 +1116,7 @@ impl<'t> Assembly<'t> {
                 .collect::<R<Vec<_>>>()?;
             turned_faces =
                 from.iter().enumerate().filter(|(_, i)| turned_faces.contains(&(**i as u32))).map(|(i, _)| index(i)).collect::<R<Vec<_>>>()?;
+            if brep.faces.len() < 8 { diag_dump("after", &completed); }
             brep = completed;
         }
         solidcore_ops::record_check::validate(&brep).map_err(|e| format!("the record is invalid: {e}"))?;
