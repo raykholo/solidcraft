@@ -1,0 +1,57 @@
+name: stepcheck
+on:
+  push:
+    branches: ["stepcheck/**"]
+jobs:
+  eval:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the CLI
+        working-directory: src
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only"
+        run: cargo build --release -p solidcraft-cli --locked
+      - name: Install gdb
+        run: sudo apt-get install -y -qq gdb > /dev/null
+      - name: Evaluate the files
+        run: |
+          # Each file gets LIMIT seconds (ctl/LIMIT, default 600). A file still running near
+          # its limit has its threads' stacks sampled three times, then it is stopped.
+          limit=$(cat ctl/LIMIT 2>/dev/null || echo 600)
+          for f in ctl/files/*.step; do
+            echo "== $f"
+            start=$(date +%s)
+            src/target/release/solidcraft-cli eval "$f" > out.json 2> err.txt &
+            pid=$!
+            while kill -0 $pid 2>/dev/null && [ $(( $(date +%s) - start )) -lt $(( limit - 40 )) ]; do sleep 2; done
+            if kill -0 $pid 2>/dev/null; then
+              for n in 1 2 3; do
+                echo "--- STACK sample $n at $(( $(date +%s) - start )) s"
+                sudo gdb -batch -p $pid -ex "thread apply all bt 40" 2>/dev/null | grep -E "^#|^Thread" | grep -v -E "libc\.so|pthread_cond|futex|clone3|start_thread" | head -120
+                sleep 10
+              done
+              kill -9 $pid 2>/dev/null || true
+              echo "TIMEOUT $f after $(( $(date +%s) - start )) s"
+              continue
+            fi
+            wait $pid || true
+            echo "TIME $f $(( $(date +%s) - start )) s"
+            python3 -c "import json;d=json.load(open('out.json'));[print('RESULT', '$f', 'area', b.get('area_mm2'), 'volume', b.get('volume_mm3'), 'faces', b.get('faces')) for b in d.get('bodies',[])]" || cat out.json | head -c 2000
+            grep -i -E "turned over|loop nesting|warning|refused|work allowed" out.json err.txt | head -5 || true
+            grep -E "^SC_POLLS|^DBG" err.txt | sort | uniq -c | sort -rn | head -20 || true
+          done
