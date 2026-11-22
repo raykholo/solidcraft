@@ -237,6 +237,14 @@ pub struct ImportParams {
     /// how to approve it.
     #[serde(default)]
     pub named: bool,
+    /// Bring the import into the open design instead of opening it as a new design: a new
+    /// component holding the importer's solid bodies, linked to the file (its path relative to
+    /// the design's folder once the design is saved, a digest of the bytes read, and the
+    /// importer's plugin id, version and options), so `component.links` says whether the file
+    /// changed and Break Link keeps the bodies and forgets the file. One undo step. Default:
+    /// false. Needs a file on disk, so the web app refuses it.
+    #[serde(default)]
+    pub link: bool,
 }
 
 /// What an importer made: the new design, and what it could not carry over.
@@ -258,6 +266,12 @@ pub struct ImportedDesign {
     pub bodies: usize,
     /// What could not be carried over: a summary and one item per loss.
     pub loss_report: crate::plugin::LossReport,
+    /// With `link`: the component the linked import made, by id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<u64>,
+    /// With `link`: the Import feature holding its bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
