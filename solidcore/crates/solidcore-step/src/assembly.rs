@@ -1095,7 +1095,7 @@ impl<'t> Assembly<'t> {
         // the whole body mutable, can its crossed cuts become edges and its trim pieces be
         // moved into the base period. An internal seam used on both sides is replaced rather
         // than retained as a boundary that would divide the same material into sliver faces.
-        if let Some((completed, from)) = pcurve::complete_periodic_seams(&brep).map_err(|e| e.to_string())? {
+        if let Some((completed, from)) = pcurve::complete_periodic_seams(&brep).map_err(|e| e.to_string())?.filter(|_| std::env::var_os("SC_DIAG_SEAMS").is_some()) {
             face_origin = from
                 .iter()
                 .map(|&i| face_origin.get(i).copied().ok_or_else(|| pcurve::PeriodicSeamError::InputFaceLost(i).to_string()))
