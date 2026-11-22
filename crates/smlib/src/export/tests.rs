@@ -581,8 +581,8 @@ mod mapped_tests {
         let out = mapped(&line(2e-12), true, [1.0, 0.0], [0.0, 2e-12], &|_, _| false).unwrap();
         check_curve2(&out, &mut Budget::input()).unwrap();
         // Each other refusal says which end is off, not the knot resolution.
-        let e = mapped(&line(1.0), true, [1.0, 0.0], [0.0, 0.5], &|_, _| false).unwrap_err().to_string();
-        assert!(e.contains("its end 0.5 from the edge's") && !e.contains("its start") && !e.contains("knot resolution"), "{e}");
+        let e = mapped(&line(0.9), true, [1.0, 0.0], [0.0, 0.5], &|_, _| false).unwrap_err().to_string();
+        assert!(e.contains("its end 0.4 from the edge's") && !e.contains("its start") && !e.contains("knot resolution"), "{e}");
     }
 
     /// An edge on a spline whose knots run from 5e-12 to 2.5e-4 (a file may write knots in
