@@ -2802,7 +2802,12 @@ fn a_saved_offset_of_a_shelled_major_arc_reopens_with_its_sources() {
             let sk = &rebuilt.sketch(id).unwrap().sketch;
             let sources = if spline { &sk.freeform_chain_offsets[0].sources } else { &sk.offsets[0].sources };
             assert_eq!(sources, &expected);
-            assert!(matches!(sk.curves[sk.curve_index(source_ids[0]).unwrap()].kind, CurveKind::Arc { .. }));
+            // The 0.44.1 form's rim is its arc again; the 0.45.0 form's is the spline it saved.
+            let kind = &sk.curves[sk.curve_index(source_ids[0]).unwrap()].kind;
+            assert!(
+                if spline { matches!(kind, CurveKind::Spline { .. }) } else { matches!(kind, CurveKind::Arc { .. }) },
+                "through={through}, spline={spline}: {kind:?}"
+            );
             assert!(outputs.iter().all(|id| sk.curve_index(id).is_some()));
             assert!(
                 rebuilt.sketch(id).unwrap().profiles.iter().any(|p| {
