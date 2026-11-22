@@ -4668,6 +4668,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             d.reset_scroll = false;
             d.collapsed = collapsed;
             cancel |= closed;
+            if action != crate::ui_kit::Action::None {
+                eprintln!("DBG dialog action {action:?} draft={}", app.issue_report.draft.is_some());
+            }
             if app.issue_report.draft.is_none() {
                 match action {
                     crate::ui_kit::Action::Ok => {
@@ -4819,7 +4822,11 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         crate::preview::decide_mirror_operation(app, &mut d);
     }
     // A window still choosing its operation applies once its check is in (#6901).
+    let dbg_ok = ok;
     let ok = crate::op_auto::hold_ok(&mut d, ok, &mut apply_again, cancel);
+    if dbg_ok || ok {
+        eprintln!("DBG commit: ok_in={dbg_ok} ok_out={ok} apply_again={apply_again} cancel={cancel} applying={}", app.applying.is_some());
+    }
     if ok && !cancel && app.applying.is_none() {
         d.repeat_after_apply = apply_again;
         // Only components picked, not moved, and Capture All Positions unticked: nothing to do.
@@ -4838,6 +4845,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 None => Some(run_primed(app, &d)),
             },
         };
+        eprintln!("DBG run result: {:?}", run.as_ref().map(|r| r.as_ref().map_err(|e| e.to_string())));
         match run {
             Some(Ok(())) => {
                 applied = true;
