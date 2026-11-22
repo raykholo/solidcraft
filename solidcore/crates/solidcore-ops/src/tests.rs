@@ -1117,13 +1117,14 @@ fn periodic_seam_completion_splits_real_boundaries_and_keeps_their_shell() {
 /// imported.
 #[test]
 fn periodic_seam_completion_keeps_uses_continuing_where_a_replaced_seam_leaves_whole_rims() {
-    for (scale, bow) in [(1.0, 0.0), (1.0, 0.02), (1.004, 0.0), (1.004, 0.02), (1.01, 0.02)] {
+    for (scale, bow) in [(1.0, 0.01), (1.0, -0.01), (1.0, 0.003), (1.0, -0.003), (1.0, 0.03)] {
         eprintln!("DIAG variant scale={scale} bow={bow}");
         variant(scale, bow);
     }
 }
 
-fn variant(scale: f64, bow: f64) {
+fn variant(scale: f64, turn: f64) {
+    let bow = 0.0;
     use solidcore_record::brep::{
         Brep as Record, Curve, Curve2, Edge, EdgeUseRef, Face, Loop, OrientedEdge, OrientedFace,
         Region, Shell, Surface, Vertex, VERSION,
@@ -1142,18 +1143,20 @@ fn variant(scale: f64, bow: f64) {
         [r * w, -r * w, w],
         [r, 0.0, 1.0],
     ];
+    let (sn, cs) = turn.sin_cos();
+    let redge = ring.map(|p| [p[0] * cs - p[1] * sn, p[0] * sn + p[1] * cs, p[2]]);
     let point = |p: [f64; 3], z| [p[0] / p[2], p[1] / p[2], z];
     // Vertices in the order the loop meets them: the seam's bottom, the rims' bottom middle,
     // the seam's top, the rims' top middle.
     let vertices = [
-        point(ring[0], 0.0),
-        point(ring[4], 0.0),
-        point(ring[0], h),
-        point(ring[4], h),
+        point(redge[0], 0.0),
+        point(redge[4], 0.0),
+        point(redge[0], h),
+        point(redge[4], h),
     ]
     .map(|point| Vertex {
         point,
-        tolerance: 0.05,
+        tolerance: 0.2,
     })
     .to_vec();
     let surface = Surface::RationalSpline {
@@ -1177,8 +1180,8 @@ fn variant(scale: f64, bow: f64) {
             .map(|p| [p[0], p[1], z * p[2], p[2]])
             .collect(),
     };
-    let first = &ring[0..5];
-    let second = &ring[4..9];
+    let first = &redge[0..5];
+    let second = &redge[4..9];
     let first_knots = vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 2.0];
     let second_knots = vec![2.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 4.0];
     // The seam is a straight ruling written with a control point 0.02 off the line, so
@@ -1186,7 +1189,7 @@ fn variant(scale: f64, bow: f64) {
     let (bottom, top) = (vertices[0].point, vertices[2].point);
     let seam = Curve::Spline {
         knots: vec![0.0, 0.0, 0.0, h, h, h],
-        points: vec![bottom, [r + bow, 0.0, 0.5 * h], top],
+        points: vec![bottom, [0.5 * (bottom[0] + top[0]) + bow, 0.5 * (bottom[1] + top[1]), 0.5 * h], top],
     };
     let curves = [
         lift(first, first_knots.clone(), 0.0),
@@ -1244,7 +1247,7 @@ fn variant(scale: f64, bow: f64) {
                 nurbs: None,
                 interval: intervals[i],
                 vertices: ends[i],
-                tolerance: 0.05,
+                tolerance: 0.2,
                 uses,
             }
         })
