@@ -712,7 +712,11 @@ fn a_sliver_narrower_than_the_reach_is_meshed_by_its_boundary_nodes() {
     let shape = Shape { min_angle: 20.0, side: None, size_at: None, sides: Sides::Split };
     let mut stats = PlanStats::default();
     let plan = plan_face(7, "spline", &face, std::slice::from_ref(&sliver), &rules, (h, speed), 1e-3, &mut stats, Lenient::No, Purpose::Mesh(shape));
-    let Ok(Planned::Face(fp)) = plan else { panic!("the sliver is meshed") };
+    let fp = match plan {
+        Ok(Planned::Face(fp)) => fp,
+        Ok(Planned::Split(sides)) => panic!("the sliver asked for {} sides split", sides.len()),
+        Err(why) => panic!("the sliver is meshed, not refused: {why:?}"),
+    };
     assert_eq!(fp.face, 7);
     assert!(!fp.triangles.is_empty());
     let n = u32::try_from(fp.uv.len()).expect("a count");
