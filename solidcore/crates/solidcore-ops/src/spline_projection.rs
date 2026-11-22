@@ -94,6 +94,15 @@ pub fn cylinder_edge_projection(
         eprintln!("DBG cep r samples {:?}", rs.iter().step_by((rs.len()/12).max(1)).collect::<Vec<_>>());
         eprintln!("DBG cep ys {:?}", points.iter().map(|p| p[1]).fold((f64::MAX,f64::MIN), |a,y| (a.0.min(y),a.1.max(y))));
     }
+    for u in &edge.uses {
+        if let Some(f) = body.faces.get(u.face as usize) {
+            if let Surface::RationalSpline { u_knots, v_knots, homogeneous } = &f.surface {
+                eprintln!("DBG face rs uk={u_knots:?} vk={v_knots:?} rows={} cols={:?}", homogeneous.len(), homogeneous.first().map(|r| r.len()));
+                for row in homogeneous.iter().take(12) { eprintln!("DBG   row {:?}", row.iter().map(|h| [h[0]/h[3], h[1]/h[3], h[2]/h[3], h[3]]).collect::<Vec<_>>()); }
+            }
+            eprintln!("DBG face has nurbs={} surf disc {:?}", f.nurbs.is_some(), std::mem::discriminant(&f.surface));
+        }
+    }
     // An analytic curve keeps the general path's own reading.
     if matches!(
         &edge.curve,
