@@ -616,8 +616,10 @@ fn a_fillet_rounds_every_picked_corner_to_one_radius() {
     h.step(&json!({"start":"sketch.fillet"})).unwrap();
     h.frames(2);
     for corner in [[40, 0, 0], [40, 30, 0], [0, 30, 0]] {
+        eprintln!("DBG before click {corner:?}: dialog={} items={:?} rect={:?} status={:?}", h.app.dialog.is_some(), h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()), crate::scenario::rect_of("dialog:cancel"), h.app.status);
         h.step(&json!({"click":{"world":corner}})).unwrap();
         h.frames(2);
+        eprintln!("DBG after click {corner:?}: dialog={} items={:?} status={:?}", h.app.dialog.is_some(), h.app.dialog.as_ref().map(|d| d.inputs[0].items.clone()), h.app.status);
     }
     assert_eq!(h.app.dialog.as_ref().map(|d| d.inputs[0].items.len()), Some(3));
     set_size(&mut h.app, "5");
