@@ -714,6 +714,13 @@ pub fn refine_snap(
     // With `sketch_align_points` off, a click takes the Line tool's inferences, as before.
     // The 3-Point Arc takes none of them, on hover or on click, when its tangent snap is on (#20719).
     let arc_snap = arc_tool && app.preferences.sketch_arc_tangent_snap;
+    if arc_tool {
+        eprintln!("DBG refine_snap: own {own:?} arc_snap {arc_snap} best_before {best:?} tol {tol} lp {lp:?}");
+        if let [start, end] = own[..] {
+            eprintln!("DBG   arc_tangent -> {:?}", crate::inference::arc_tangent(sk, start, end, lp, tol).map(|i| (i.at, i.dist)));
+            eprintln!("DBG   arc_centre -> {:?}", crate::inference::arc_centre(sk, start, end, lp, tol).map(|i| (i.at, i.dist)));
+        }
+    }
     let line_tool = if app.preferences.sketch_align_points { line_tool } else { app.tool.as_ref().is_none_or(|t| t.cmd == "sketch.line") };
     let line_tool = line_tool && !arc_snap;
     let prev = own.last().copied();

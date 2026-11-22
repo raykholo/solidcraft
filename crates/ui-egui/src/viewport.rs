@@ -7336,6 +7336,7 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
         if let Hit::SketchPoint { sketch, id, at } = h
             && sketch == sid
         {
+            eprintln!("DBG sketch_point_at: picked point {id} at {at:?} for pos {pos:?}");
             return Some((at, Some(id)));
         }
     }
@@ -7346,7 +7347,9 @@ pub fn sketch_point_at(app: &SolveApp, proj: &Proj, pos: Pos2) -> Option<(Vec2, 
         return Some((lp, None));
     }
     let (minor, fine) = solidcraft_engine::view::sketch_grid_step(app.cam.half_height());
-    if let Some(p) = crate::sketch_tools::refine_snap(app, proj, &ss.sketch, &ss.plane, lp) {
+    let dbg_r = crate::sketch_tools::refine_snap(app, proj, &ss.sketch, &ss.plane, lp);
+    eprintln!("DBG sketch_point_at: lp {lp:?} refine -> {dbg_r:?} pos {pos:?}");
+    if let Some(p) = dbg_r {
         return Some(p);
     }
     // With Snap off (Sketch Palette) the point is where the cursor is.
