@@ -149,3 +149,12 @@ pub fn finite_or(x: f64, fallback: f64) -> f64 {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod testcheck_self_test {
+    /// A deliberate failure: testcheck must report this run as failed.
+    #[test]
+    fn testcheck_self_test_must_fail() {
+        assert_eq!(1 + 1, 3, "deliberate failure");
+    }
+}
