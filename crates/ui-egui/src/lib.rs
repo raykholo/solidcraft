@@ -331,6 +331,8 @@ pub mod safe_graphics;
 pub mod save_job;
 mod scale_bar;
 pub mod scenario;
+#[cfg(feature = "sc3000")]
+pub mod sc3000_support;
 pub(crate) mod scene_palette;
 pub mod select_other;
 pub mod selection;

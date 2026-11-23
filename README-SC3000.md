@@ -7,7 +7,7 @@ imitate or name another company or product. The real SolidCraft is at https://gi
 
 The `sc3000` Cargo feature is **off by default**; a normal build keeps SolidCraft's behaviour.
 
-Phone number verification gag requested by: **oursland** (cadmpeg).
+Phone number verification gag requested by: **oursland** (cadmpeg). Community Support chat idea: **Luke** (Discord).
 
 ## Build
 
@@ -98,6 +98,19 @@ The Privacy switch can be turned off, then flips back on by itself with "Your pr
 None of this is real. `usage_stats::active()` and `may_send()` return false under `sc3000`, `tick_at` counts, keeps
 and sends nothing, and the web host hands over no usage HTTP. The switch is UI state and never writes the real setting.
 
+## Community Support
+
+Every Discord link (the title bar pill, Help › Join the Discord…, About and the start page) and Help › Documentation
+open “SolidCraft 3000 Community Support”, an in-app chat, instead of a browser tab. Sunny the Support Bot greets you
+by asking whether your computer is switched on, then answers whatever you type with escalating non-answers: sign out
+of the cloud and back in, attach your designs’ designs and a photo of your monitor, forwarded to the Enterprise Plus
+team, marked Solved. Two community members chime in with “same problem here, any update?” and “bump”.
+
+It is all local. The chat makes no request and stores nothing; what you type is gone when the window closes. The top
+line says “Parody. Not a real support channel. The real Discord is discord.gg/yTcseBEdeu”, and that link is the only
+way out, opened only when clicked. Ko-fi still opens its real page. The tests are in
+`crates/ui-egui/src/sc3000_support_tests.rs`.
+
 ## The cloud is fictional
 
 The parody adds no telemetry, network calls, remote account or cloud storage.
@@ -115,5 +128,6 @@ storage continues to work as usual.
 
 ```sh
 cargo test -p solidcraft-web --features sc3000
+cargo test -p solidcraft-ui-egui --features sc3000 --lib sc3000
 cargo clippy -p solidcraft-web --target wasm32-unknown-unknown --features sc3000 -- -D warnings
 ```

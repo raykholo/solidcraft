@@ -1913,11 +1913,14 @@ fn status_bar_units_open_the_units_menu_above_the_bar_and_change_units_in_one_un
 }
 
 /// The URL the last frame asked the platform to open.
+#[cfg(not(feature = "sc3000"))]
 fn opened_url(h: &mut Harness) -> Option<String> {
     h.take_opened().pop()
 }
 
 #[test]
+// SolidCraft 3000 sends the Discord links to Community Support (sc3000_support_tests.rs).
+#[cfg(not(feature = "sc3000"))]
 fn title_bar_pills_open_their_pages_and_the_x_turns_off_only_that_pill() {
     let mut h = Harness::new();
     h.call("ui.resize", json!({"width":1280,"height":720}));
@@ -2015,6 +2018,8 @@ fn an_organizations_policy_says_managed_by_in_the_bar_preferences_and_about() {
 }
 
 #[test]
+// SolidCraft 3000 sends the Discord links to Community Support (sc3000_support_tests.rs).
+#[cfg(not(feature = "sc3000"))]
 fn the_links_stay_in_help_about_and_home_when_the_pills_are_off() {
     let mut h = Harness::new();
     h.call("ui.resize", json!({"width":1280,"height":720}));
