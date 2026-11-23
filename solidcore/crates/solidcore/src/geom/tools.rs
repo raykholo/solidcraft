@@ -376,37 +376,30 @@ pub fn find_edge_proved_along(
         let edge_tol = edge_tolerance(brep, e)?.min(brep.tolerance());
         // A seam of `face` adds nothing (docs/booleans.md, "Seams and poles").
         let summed = query.tolerance + edge_tol;
-        let seam = crate::topology::edge::face_on_both_sides(brep, e, face)?;
-        // A seam is judged by the curve's reach; any other edge by it too where the curve is
-        // an intersection of two surfaces whose angle bounds it (a curve with no surface
-        // to cross is known to its own tolerance and keeps the sum).
-        let known = if let Some(known) = reach {
-            known
-        } else if seam || crossing.is_some() {
-            let own = crate::topology::face::p2::surface(brep, face)?;
-            let known = match (crossing, own) {
-                (Some(other), Some(own)) => intersection_reach(
-                    k,
-                    query.curve,
-                    &query.interval,
-                    own,
-                    other,
-                    query.tolerance,
-                )?
-                .map_or(SourceReach::Unbounded, SourceReach::Across),
-                _ => SourceReach::Own,
+        let tol = if crate::topology::edge::face_on_both_sides(brep, e, face)? {
+            let known = if let Some(known) = reach {
+                known
+            } else {
+                let own = crate::topology::face::p2::surface(brep, face)?;
+                let known = match (crossing, own) {
+                    (Some(other), Some(own)) => intersection_reach(
+                        k,
+                        query.curve,
+                        &query.interval,
+                        own,
+                        other,
+                        query.tolerance,
+                    )?
+                    .map_or(SourceReach::Unbounded, SourceReach::Across),
+                    _ => SourceReach::Own,
+                };
+                reach = Some(known);
+                known
             };
-            reach = Some(known);
-            known
-        } else {
-            SourceReach::Own
-        };
-        let tol = if seam {
             known.contact_tolerance(query.tolerance, summed)
         } else {
-            known.edge_tolerance(query.tolerance, edge_tol, summed)
+            summed
         };
-        eprintln!("DBG18235 seam={seam} crossing={} known={known:?} qtol={} etol={edge_tol} tol={tol}", crossing.is_some(), query.tolerance);
         let edge_ivl = edge_interval(brep, e)?;
         let ends = match balls.take() {
             Some(ends) => ends,
