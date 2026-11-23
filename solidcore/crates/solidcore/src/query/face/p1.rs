@@ -52,7 +52,7 @@ use crate::geom::certified::{above, gamma};
 use crate::geom::extent1d::Extent1d;
 use crate::geom::extent3d::Extent3d;
 use crate::geom::global_solver::{SolutionRequested, SolverOperation};
-use crate::geom::tol::{xsect_tol_3d_from_zones, zone_tol3d};
+use crate::geom::tol::zone_tol3d;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::intersect::point_class::{ClassGeometry, PointClassType, PointClassification};
@@ -1053,9 +1053,15 @@ pub fn point_3d_classify_at(
     // classification.
     if pc.point_class() != PointClassType::Unknown && pc.point_class() != PointClassType::Region {
         let geometry = BrepGeometry { b };
-        let xsect_tol_3d =
-            xsect_tol_3d_from_zones(k, src_zone_tol_3d, pc.obj_zone_tol_3d(k, &geometry)?);
-        if pc.gap_3d(k, &geometry, None)? > xsect_tol_3d {
+        let size = point.x.abs().max(point.y.abs()).max(point.z.abs());
+        let within = crate::geom::tol::within_xsect_tol(
+            k,
+            pc.gap_3d(k, &geometry, None)?,
+            src_zone_tol_3d,
+            pc.obj_zone_tol_3d(k, &geometry)?,
+            size,
+        );
+        if !within {
             pc.set_class_object(PointClassType::Unknown, None);
         }
     }

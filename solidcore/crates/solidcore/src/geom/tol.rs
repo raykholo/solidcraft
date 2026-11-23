@@ -429,6 +429,16 @@ pub fn xsect_tol_3d_from_zones(k: &Kernel, zone1: f64, zone2: f64) -> f64 {
     xsect_tol3d(k, zone1 + zone2)
 }
 
+/// Whether two objects with zone tolerances `zone1` and `zone2` are within each other's
+/// intersection tolerance ([`xsect_tol_3d_from_zones`]) at `distance`: at it, or up to the
+/// rounding of the copies past it ([`within_contact_tol`]), `size` the largest coordinate a
+/// point of either has. Not upstream: a plane dipping the intersection tolerance into a
+/// sphere was on the sphere at one site and off it at the next, a few roundings apart.
+#[must_use]
+pub fn within_xsect_tol(k: &Kernel, distance: f64, zone1: f64, zone2: f64, size: f64) -> bool {
+    distance <= xsect_tol_3d_from_zones(k, zone1, zone2) + rounding_of_copies(size)
+}
+
 /// The tolerance up to which two circles or parallel cylinders, or a circle and a line in
 /// its plane, that overlap past touching touch on the boolean's path (read by
 /// [`within_contact_tol`]): the system zone
