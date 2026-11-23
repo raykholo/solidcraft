@@ -236,3 +236,72 @@ fn no_other_company_is_named() {
         }
     }
 }
+
+#[test]
+fn the_whole_first_exchange_shows_without_a_message_cut_off_under_the_header() {
+    let _language = solidcraft_ui_text::scope("en");
+    for (width, height) in [(1600.0, 900.0), (1280.0, 720.0)] {
+        let mut h = harness();
+        h.call("ui.resize", json!({"width": width, "height": height}));
+        h.settle();
+        h.step(&json!({"click":{"handle":"titlebar:discord"}})).unwrap();
+        h.frames(3);
+        say(&mut h, "My fillet fails");
+        wait(&mut h, REPLY_SECONDS);
+        say(&mut h, "There is no cloud");
+        wait(&mut h, REPLY_SECONDS + COMMUNITY_SECONDS);
+        h.frames(3);
+        let lines = h.app.help.sc3000_support.lines.len();
+        assert_eq!(lines, 6, "greeting, two questions, two answers and a community reply");
+        let shown = rect_of("sc3000_support:lines").expect("the chat's lines");
+        for index in 0..lines {
+            let line = rect_of(&format!("sc3000_support:line:{index}")).unwrap();
+            assert!(shown.contains_rect(line), "{width}x{height}: line {index} {line:?} is cut off by {shown:?}");
+        }
+    }
+}
+
+#[test]
+fn the_start_pages_back_link_names_an_untitled_design_like_its_tab() {
+    let _language = solidcraft_ui_text::scope("de");
+    let mut h = Harness::new();
+    h.app.preferences.language = "de".into();
+    h.call("ui.resize", json!({"width":1600,"height":900}));
+    h.app.home.open = true;
+    h.frames(4);
+    assert_eq!(tr("ui.untitled"), "Ohne Titel");
+    assert!(h.widget("Zurück zu Ohne Titel").is_some(), "the back link says Ohne Titel, like the tab");
+    assert!(h.widget("Zurück zu Untitled").is_none());
+}
+
+#[test]
+fn the_pages_parody_note_speaks_every_shipped_language() {
+    crate::i18n::install();
+    let script = include_str!("../../../packaging/sc3000-note.sh");
+    for id in ["id=\"sc3000-note-before\"", "id=\"sc3000-note-after\"", "dir=\"auto\"", "https://github.com/tangency-labs/solidcraft"] {
+        assert!(script.contains(id), "the note has {id}");
+    }
+    let english = {
+        let _language = solidcraft_ui_text::scope("en");
+        (tr("sc3000.web.note_before").to_string(), tr("sc3000.web.note_after").to_string())
+    };
+    assert!(english.0.starts_with("SolidCraft 3000 is a parody") && script.contains(&english.0) && script.contains(&english.1), "English matches the page's own text");
+    let folder = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(folder).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let locale = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let _language = solidcraft_ui_text::scope(&locale);
+        let (before, after) = (tr("sc3000.web.note_before"), tr("sc3000.web.note_after"));
+        assert!(before.contains("SolidCraft 3000"), "{locale}: {before}");
+        assert!(!before.contains('<') && !after.contains('<'), "{locale}: plain text only");
+        if !locale.starts_with("en") {
+            assert_ne!((before.to_string(), after.to_string()), english, "{locale} is translated");
+        }
+        checked += 1;
+    }
+    assert!(checked >= 38, "{checked} locales");
+}

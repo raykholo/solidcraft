@@ -170,9 +170,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         // The parody line, with the real community's link.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            ui.label(egui::RichText::new(tr("sc3000.support.parody")).small().strong().color(t.warning));
-            ui.label(egui::RichText::new(" ").small());
-            let link = ui.link(egui::RichText::new("discord.gg/yTcseBEdeu").small());
+            ui.label(egui::RichText::new(tr("sc3000.support.parody")).strong().color(t.warning));
+            ui.label(" ");
+            let link = ui.link("discord.gg/yTcseBEdeu");
             crate::scenario::publish_target("sc3000_support:real_discord", link.rect);
             if link.clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(REAL_DISCORD_URL));
@@ -180,24 +180,30 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         });
         ui.label(egui::RichText::new(tr("sc3000.support.private")).small().color(t.text_dim));
         ui.separator();
-        let height = (t.control_height * 9.0).min((ui.ctx().content_rect().height() * 0.45).max(t.control_height * 3.0));
-        egui::ScrollArea::vertical().max_height(height).min_scrolled_height(height).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-            for line in &chat.lines {
-                if line.who == Who::Notice {
-                    ui.add_space(t.space_4);
-                    ui.vertical_centered(|ui| ui.label(egui::RichText::new(format!("✔ {}", line.text)).strong().color(t.accent)));
-                    ui.add_space(t.space_4);
-                    continue;
-                }
-                ui.horizontal_wrapped(|ui| {
-                    let ink = if line.who == Who::You { t.text } else { t.accent };
-                    ui.label(egui::RichText::new(name(line.who)).strong().color(ink));
-                    let role = role(line.who);
-                    if !role.is_empty() {
-                        ui.label(egui::RichText::new(role).small().color(t.text_dim));
+        // Tall enough for a whole first exchange (greeting, two questions, the answers and a community
+        // reply) on a laptop screen, so nothing starts out cut off under the header.
+        let height = (ui.ctx().content_rect().height() - t.control_height * 10.0).clamp(t.control_height * 4.0, t.control_height * 20.0);
+        let scroll = egui::ScrollArea::vertical().max_height(height).min_scrolled_height(height).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
+            ui.add_space(t.space_4);
+            for (index, line) in chat.lines.iter().enumerate() {
+                let shown = ui.scope(|ui| {
+                    if line.who == Who::Notice {
+                        ui.add_space(t.space_4);
+                        ui.vertical_centered(|ui| ui.label(egui::RichText::new(format!("✔ {}", line.text)).strong().color(t.accent)));
+                        ui.add_space(t.space_4);
+                        return;
                     }
+                    ui.horizontal_wrapped(|ui| {
+                        let ink = if line.who == Who::You { t.text } else { t.accent };
+                        ui.label(egui::RichText::new(name(line.who)).strong().color(ink));
+                        let role = role(line.who);
+                        if !role.is_empty() {
+                            ui.label(egui::RichText::new(role).small().color(t.text_dim));
+                        }
+                    });
+                    ui.label(&line.text);
                 });
-                ui.label(&line.text);
+                crate::scenario::publish_rect(&format!("sc3000_support:line:{index}"), shown.response.rect);
                 ui.add_space(t.space_8);
             }
             if let Some((who, _)) = chat.typing() {
@@ -209,6 +215,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 ui.label(egui::RichText::new(text).italics().color(t.text_dim));
             }
         });
+        crate::scenario::publish_rect("sc3000_support:lines", scroll.inner_rect);
         ui.separator();
         ui.horizontal(|ui| {
             let send_width = t.control_height * 3.0;
