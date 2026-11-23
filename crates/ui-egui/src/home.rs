@@ -881,7 +881,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
         interactive,
         back: Some(start_page::Back {
             template: app.tr("home.back").into(),
-            document: app.session.doc.name.as_str().into(),
+            // The tab's name, translated like the tab (an untitled design is "Ohne Titel" in German).
+            document: crate::i18n::tr_name(&crate::documents::tab_name(app, &app.session)).into(),
             shortcut: "Esc".into(),
             chosen: FileAction::Back,
             // The File view handles Escape above, after its own windows and questions.

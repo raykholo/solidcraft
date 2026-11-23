@@ -1,0 +1,154 @@
+{
+  "en": {
+    "sc3000.web.note_before": "SolidCraft 3000 is a parody: there is no cloud and no account. The CAD underneath is the real ",
+    "sc3000.web.note_after": ", free and open source."
+  },
+  "en-GB": {
+    "sc3000.web.note_before": "SolidCraft 3000 is a parody: there is no cloud and no account. The CAD underneath is the real ",
+    "sc3000.web.note_after": ", free and open source."
+  },
+  "ar": {
+    "sc3000.web.note_before": "SolidCraft 3000 محاكاة ساخرة: لا توجد سحابة ولا حساب. برنامج CAD الذي يعمل تحتها هو ",
+    "sc3000.web.note_after": " الحقيقي، مجاني ومفتوح المصدر."
+  },
+  "bg": {
+    "sc3000.web.note_before": "SolidCraft 3000 е пародия: няма облак и няма акаунт. CAD програмата отдолу е истинският ",
+    "sc3000.web.note_after": ", безплатен и с отворен код."
+  },
+  "bs": {
+    "sc3000.web.note_before": "SolidCraft 3000 je parodija: nema oblaka ni računa. CAD ispod je pravi ",
+    "sc3000.web.note_after": ", besplatan i otvorenog koda."
+  },
+  "ca": {
+    "sc3000.web.note_before": "SolidCraft 3000 és una paròdia: no hi ha núvol ni compte. El CAD que hi ha a sota és el veritable ",
+    "sc3000.web.note_after": ", lliure i de codi obert."
+  },
+  "cs": {
+    "sc3000.web.note_before": "SolidCraft 3000 je parodie: žádný cloud ani účet neexistuje. Pod ním běží skutečný ",
+    "sc3000.web.note_after": ", zdarma a s otevřeným zdrojovým kódem."
+  },
+  "da": {
+    "sc3000.web.note_before": "SolidCraft 3000 er en parodi: der er ingen sky og ingen konto. CAD-programmet nedenunder er det rigtige ",
+    "sc3000.web.note_after": ", gratis og open source."
+  },
+  "de": {
+    "sc3000.web.note_before": "SolidCraft 3000 ist eine Parodie: Es gibt keine Cloud und kein Konto. Darunter läuft das echte ",
+    "sc3000.web.note_after": ", kostenlos und quelloffen."
+  },
+  "es": {
+    "sc3000.web.note_before": "SolidCraft 3000 es una parodia: no hay nube ni cuenta. El CAD que hay debajo es el auténtico ",
+    "sc3000.web.note_after": ", libre y de código abierto."
+  },
+  "eu": {
+    "sc3000.web.note_before": "SolidCraft 3000 parodia bat da: ez dago hodeirik ez konturik. Azpian dagoen CADa benetako ",
+    "sc3000.web.note_after": " da, doakoa eta kode irekikoa."
+  },
+  "fi": {
+    "sc3000.web.note_before": "SolidCraft 3000 on parodia: pilveä tai tiliä ei ole. Sen alla toimii oikea ",
+    "sc3000.web.note_after": ", ilmainen ja avoimen lähdekoodin."
+  },
+  "fr": {
+    "sc3000.web.note_before": "SolidCraft 3000 est une parodie : il n’y a ni cloud ni compte. La CAO en dessous est le vrai ",
+    "sc3000.web.note_after": ", libre et gratuit."
+  },
+  "gl": {
+    "sc3000.web.note_before": "SolidCraft 3000 é unha parodia: non hai nube nin conta. O CAD que hai debaixo é o auténtico ",
+    "sc3000.web.note_after": ", libre e de código aberto."
+  },
+  "he": {
+    "sc3000.web.note_before": "SolidCraft 3000 היא פרודיה: אין ענן ואין חשבון. תוכנת ה-CAD שמתחת היא ",
+    "sc3000.web.note_after": " האמיתית, חינמית ובקוד פתוח."
+  },
+  "hr": {
+    "sc3000.web.note_before": "SolidCraft 3000 je parodija: nema oblaka ni računa. CAD ispod je pravi ",
+    "sc3000.web.note_after": ", besplatan i otvorenog koda."
+  },
+  "hu": {
+    "sc3000.web.note_before": "A SolidCraft 3000 paródia: nincs felhő és nincs fiók. Alatta az igazi ",
+    "sc3000.web.note_after": " fut, ingyenes és nyílt forráskódú."
+  },
+  "id": {
+    "sc3000.web.note_before": "SolidCraft 3000 adalah parodi: tidak ada cloud dan tidak ada akun. CAD di baliknya adalah ",
+    "sc3000.web.note_after": " yang asli, gratis dan sumber terbuka."
+  },
+  "it": {
+    "sc3000.web.note_before": "SolidCraft 3000 è una parodia: non c’è nessun cloud e nessun account. Il CAD sottostante è il vero ",
+    "sc3000.web.note_after": ", libero e open source."
+  },
+  "ja": {
+    "sc3000.web.note_before": "SolidCraft 3000 はパロディです。クラウドもアカウントもありません。中で動いている CAD は本物の ",
+    "sc3000.web.note_after": " で、無料のオープンソースです。"
+  },
+  "ka": {
+    "sc3000.web.note_before": "SolidCraft 3000 პაროდიაა: არც ღრუბელია და არც ანგარიში. მის ქვეშ ნამდვილი ",
+    "sc3000.web.note_after": " მუშაობს, უფასო და ღია კოდით."
+  },
+  "ko": {
+    "sc3000.web.note_before": "SolidCraft 3000은 패러디입니다. 클라우드도 계정도 없습니다. 그 아래에서 돌아가는 CAD는 진짜 ",
+    "sc3000.web.note_after": "이며, 무료 오픈 소스입니다."
+  },
+  "lv": {
+    "sc3000.web.note_before": "SolidCraft 3000 ir parodija: nav ne mākoņa, ne konta. Zem tās darbojas īstais ",
+    "sc3000.web.note_after": ", bezmaksas un atvērtā koda."
+  },
+  "ms": {
+    "sc3000.web.note_before": "SolidCraft 3000 ialah parodi: tiada awan dan tiada akaun. CAD di bawahnya ialah ",
+    "sc3000.web.note_after": " yang sebenar, percuma dan sumber terbuka."
+  },
+  "nb": {
+    "sc3000.web.note_before": "SolidCraft 3000 er en parodi: det finnes ingen sky og ingen konto. CAD-programmet under er ekte ",
+    "sc3000.web.note_after": ", gratis og med åpen kildekode."
+  },
+  "nl": {
+    "sc3000.web.note_before": "SolidCraft 3000 is een parodie: er is geen cloud en geen account. De CAD eronder is het echte ",
+    "sc3000.web.note_after": ", gratis en open source."
+  },
+  "pl": {
+    "sc3000.web.note_before": "SolidCraft 3000 to parodia: nie ma chmury ani konta. Pod spodem działa prawdziwy ",
+    "sc3000.web.note_after": ", darmowy i otwartoźródłowy."
+  },
+  "pt-BR": {
+    "sc3000.web.note_before": "SolidCraft 3000 é uma paródia: não há nuvem nem conta. O CAD por baixo é o verdadeiro ",
+    "sc3000.web.note_after": ", gratuito e de código aberto."
+  },
+  "pt-PT": {
+    "sc3000.web.note_before": "O SolidCraft 3000 é uma paródia: não há nuvem nem conta. O CAD por baixo é o verdadeiro ",
+    "sc3000.web.note_after": ", gratuito e de código aberto."
+  },
+  "ro": {
+    "sc3000.web.note_before": "SolidCraft 3000 este o parodie: nu există cloud și nici cont. Dedesubt rulează adevăratul ",
+    "sc3000.web.note_after": ", gratuit și open source."
+  },
+  "ru": {
+    "sc3000.web.note_before": "SolidCraft 3000 — пародия: нет ни облака, ни аккаунта. Под ней работает настоящий ",
+    "sc3000.web.note_after": ", бесплатный и с открытым исходным кодом."
+  },
+  "sr": {
+    "sc3000.web.note_before": "SolidCraft 3000 је пародија: нема облака ни налога. Испод ради прави ",
+    "sc3000.web.note_after": ", бесплатан и отвореног кода."
+  },
+  "sv": {
+    "sc3000.web.note_before": "SolidCraft 3000 är en parodi: det finns inget moln och inget konto. Under ytan körs riktiga ",
+    "sc3000.web.note_after": ", gratis och med öppen källkod."
+  },
+  "tr": {
+    "sc3000.web.note_before": "SolidCraft 3000 bir parodidir: bulut da hesap da yok. Altında çalışan CAD gerçek ",
+    "sc3000.web.note_after": ", ücretsiz ve açık kaynaklı."
+  },
+  "uk": {
+    "sc3000.web.note_before": "SolidCraft 3000 — пародія: немає ні хмари, ні облікового запису. Під нею працює справжній ",
+    "sc3000.web.note_after": ", безкоштовний і з відкритим кодом."
+  },
+  "vi": {
+    "sc3000.web.note_before": "SolidCraft 3000 là một bản nhại: không có đám mây và không có tài khoản. Phần CAD bên dưới là ",
+    "sc3000.web.note_after": " thật, miễn phí và mã nguồn mở."
+  },
+  "zh": {
+    "sc3000.web.note_before": "SolidCraft 3000 是恶搞作品：没有云，也没有账户。底层的 CAD 是真正的 ",
+    "sc3000.web.note_after": "，免费且开源。"
+  },
+  "zh-TW": {
+    "sc3000.web.note_before": "SolidCraft 3000 是惡搞作品：沒有雲端，也沒有帳號。底層的 CAD 是真正的 ",
+    "sc3000.web.note_after": "，免費且開放原始碼。"
+  }
+}
