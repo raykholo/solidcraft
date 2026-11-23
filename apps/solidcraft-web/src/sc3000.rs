@@ -23,6 +23,8 @@ pub(crate) struct Cloud {
     pub(crate) phone: crate::sc3000_phone::Phone,
     pub(crate) banner_at: f64,
     pub(crate) dismissals: u8,
+    /// The bottom strip's height last told to the page (CSS px), so the parody note sits above it.
+    note_lift: f32,
     active: f64,
     previous: Option<f64>,
     next_session: f64,
@@ -130,6 +132,19 @@ fn browser_online() -> bool {
     true
 }
 
+/// Tell the page how far the parody note must sit above the bottom strip (CSS px).
+#[cfg(target_arch = "wasm32")]
+fn set_note_lift(px: f32) {
+    use wasm_bindgen::{JsCast, JsValue};
+    let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) else { return };
+    let Ok(style) = js_sys::Reflect::get(&root, &"style".into()) else { return };
+    let Ok(set) = js_sys::Reflect::get(&style, &"setProperty".into()).and_then(|f| f.dyn_into::<js_sys::Function>().map_err(JsValue::from)) else { return };
+    let _ = set.call2(&style, &"--sc3000-strip".into(), &format!("{px}px").into());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_note_lift(_px: f32) {}
+
 impl Cloud {
     pub(crate) fn new(daily_update: bool, date: String, build: String) -> Self {
         Self {
@@ -137,6 +152,7 @@ impl Cloud {
             phone: Default::default(),
             banner_at: 0.0,
             dismissals: 0,
+            note_lift: 0.0,
             active: 0.0,
             previous: None,
             next_session: 600.0,
@@ -282,10 +298,11 @@ impl Cloud {
     /// The bottom strip for notes and the offline banner. Dismissible, never modal.
     pub(crate) fn strip(&mut self, ui: &mut egui::Ui) {
         let now = ui.input(|i| i.time);
+        let mut height = 0.0;
         if let Some((toast, start)) = self.toast {
             let elapsed = now - start;
             let mut dismiss = false;
-            Container::new(ui.ctx(), Surface::Chrome).edge("sc3000_toast", ui_kit::Edge::Bottom).show(ui, |ui| match toast {
+            let shown = Container::new(ui.ctx(), Surface::Chrome).edge("sc3000_toast", ui_kit::Edge::Bottom).show(ui, |ui| match toast {
                 Toast::Salmon => {
                     salmon_swim(ui, (elapsed / toast.seconds()) as f32, elapsed, false);
                     ui.horizontal_wrapped(|ui| {
@@ -311,12 +328,13 @@ impl Cloud {
                     });
                 }
             });
+            height += shown.response.rect.height();
             if dismiss {
                 self.toast = None;
             }
         }
         if self.offline && !self.offline_dismissed {
-            Container::new(ui.ctx(), Surface::Chrome).edge("sc3000_offline", ui_kit::Edge::Bottom).show(ui, |ui| {
+            let shown = Container::new(ui.ctx(), Surface::Chrome).edge("sc3000_offline", ui_kit::Edge::Bottom).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(tr("sc3000.web.offline"));
                     if ui_kit::button(ui, tr("sc3000.web.dismiss"), ui_kit::Button::Normal).clicked() {
@@ -324,6 +342,14 @@ impl Cloud {
                     }
                 });
             });
+            height += shown.response.rect.height();
+        }
+        // The page's parody note (packaging/sc3000-note.sh) sits in the bottom-left corner: lift it
+        // above the strip so neither covers the other.
+        let lift = (height * ui.ctx().zoom_factor()).round();
+        if lift != self.note_lift {
+            self.note_lift = lift;
+            set_note_lift(lift);
         }
     }
 
