@@ -1382,6 +1382,8 @@ mod web {
             }
             #[cfg(feature = "sc3000")]
             {
+                // Drawn outside the app's own language scope: use the person's language here too.
+                let _language = solidcraft_ui_text::scope(&self.app.preferences.language);
                 self.cloud.banner(ui);
                 self.cloud.strip(ui);
                 self.app.sc3000_odd_version = self.cloud.odd_version;
@@ -1399,6 +1401,7 @@ mod web {
             self.store_prefs(&ctx);
             #[cfg(feature = "sc3000")]
             {
+                let _language = solidcraft_ui_text::scope(&self.app.preferences.language);
                 if std::mem::take(&mut self.app.sc3000_drawing_pdf) {
                     self.cloud.drawing_pdf_export();
                 }
