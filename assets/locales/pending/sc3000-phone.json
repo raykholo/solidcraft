@@ -18,5 +18,25 @@
     "sc3000.phone.uk": "United Kingdom (+44)",
     "sc3000.phone.us": "United States / Canada (+1)",
     "sc3000.phone.verify": "Verify"
+  },
+  "de": {
+    "sc3000.phone.any": "Es wurde keine SMS gesendet. Jede 6-stellige Zahl funktioniert.",
+    "sc3000.phone.calls": "Ich möchte Überraschungsanrufe von unserem Customer-Success-Team erhalten",
+    "sc3000.phone.code": "6-stelliger Code",
+    "sc3000.phone.country": "Land",
+    "sc3000.phone.de": "Deutschland (+49)",
+    "sc3000.phone.enter": "Geben Sie den 6-stelligen Code ein, den wir Ihnen per SMS geschickt haben",
+    "sc3000.phone.footer": "SolidCraft 3000 ist eine Parodie. Nichts, was Sie hier eingeben, wird gesendet oder gespeichert.",
+    "sc3000.phone.jp": "Japan (+81)",
+    "sc3000.phone.number": "Telefonnummer",
+    "sc3000.phone.other": "Andere",
+    "sc3000.phone.send": "Code senden",
+    "sc3000.phone.skip": "Jetzt überspringen (in 3 Minuten erneut fragen)",
+    "sc3000.phone.terms": "Wenn Sie fortfahren, stimmen Sie zu, Konstruktionstipps, Partnerangebote und unseren wöchentlichen Vollrundungs-Digest per SMS, Telefon und Fax zu erhalten",
+    "sc3000.phone.title": "Bestätigen Sie Ihre Telefonnummer, um weiter zu konstruieren",
+    "sc3000.phone.toast": "Telefon bestätigt ✅ Rechnen Sie mit einem Anruf zwischen 2 und 4 Uhr nachts",
+    "sc3000.phone.uk": "Vereinigtes Königreich (+44)",
+    "sc3000.phone.us": "Vereinigte Staaten / Kanada (+1)",
+    "sc3000.phone.verify": "Bestätigen"
   }
 }
