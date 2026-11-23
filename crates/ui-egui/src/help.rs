@@ -26,6 +26,9 @@ pub struct HelpState {
     pub connect: Option<Vec<String>>,
     /// The GPU the window renders with (set by the host).
     pub gpu: Option<String>,
+    /// SolidCraft 3000: the Community Support chat the Discord and Documentation links open.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_support: crate::sc3000_support::Chat,
 }
 
 /// One line per fact, for bug reports.
@@ -68,6 +71,10 @@ pub fn run(app: &mut SolveApp, ctx: &egui::Context, item: &str) {
         return;
     }
     match item {
+        // SolidCraft 3000 parody: Documentation opens Community Support instead.
+        #[cfg(feature = "sc3000")]
+        "docs" => crate::sc3000_support::request(ctx),
+        #[cfg(not(feature = "sc3000"))]
         "docs" => ctx.open_url(egui::OpenUrl::new_tab(DOCS_URL)),
         "about" => app.help.about = true,
         "version" => {
@@ -208,6 +215,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
     connect(app, ctx);
     crate::crash_ui::show(app, ctx);
     crate::messages::show(app, ctx);
+    #[cfg(feature = "sc3000")]
+    crate::sc3000_support::show(app, ctx);
 }
 
 fn about(app: &mut SolveApp, ctx: &egui::Context) {

@@ -88,6 +88,12 @@ pub fn open(ctx: &egui::Context, url: &str) {
 
 /// Open the link `id`; false for an id that is not in [`LINKS`].
 pub fn run(ctx: &egui::Context, id: &str) -> bool {
+    // SolidCraft 3000 parody: the Discord opens an in-app "Community Support" chat, not a server.
+    #[cfg(feature = "sc3000")]
+    if crate::sc3000_support::replaces(id) && by_id(id).is_some() {
+        crate::sc3000_support::request(ctx);
+        return true;
+    }
     by_id(id).map(|l| open(ctx, l.url)).is_some()
 }
 
@@ -119,6 +125,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(not(feature = "sc3000"))]
     fn each_link_opens_its_own_page_and_only_that() {
         crate::i18n::install();
         let ctx = egui::Context::default();
