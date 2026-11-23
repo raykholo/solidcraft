@@ -1647,7 +1647,10 @@ fn importer_refusals_use_only_the_status_line_when_dialogs_are_disabled() {
         assert_eq!(h.app.session.doc.to_json(), before);
         let status = h.app.status.as_ref().unwrap();
         assert_eq!((status.0.as_str(), status.2), ("Sample Importer does not support refused.smp: the model has no solids", true));
-        assert!(h.widget("Sample Importer").is_none());
+        assert!(h.widget("Sample Importer").is_none(), "{}", {
+            let nodes = h.output.accesskit_update.as_ref().map(|u| u.nodes.iter().map(|(_, n)| format!("{:?}:{:?}", n.role(), n.label())).collect::<Vec<_>>().join(" | ")).unwrap_or_default();
+            format!("DIAG dropped={dropped} home={} status={:?} nodes={nodes}", h.app.home.open, h.app.status)
+        });
         assert!(crate::scenario::handle_at("dialog:OK").is_none());
 
         let (reply, _) = h.call_queued("engine.execute", json!({"command":"doc.open","params":{"path":path}}));
@@ -1670,7 +1673,10 @@ fn importer_refusal_from_home_can_be_acknowledged_without_leaving_home() {
     assert!(h.widget("the model has no solids").is_some());
     h.step(&json!({"click":{"handle":"dialog:OK"}})).unwrap();
     h.frames(3);
-    assert!(h.app.home.open);
+    assert!(h.app.home.open, "{}", {
+            let nodes = h.output.accesskit_update.as_ref().map(|u| u.nodes.iter().map(|(_, n)| format!("{:?}:{:?}", n.role(), n.label())).collect::<Vec<_>>().join(" | ")).unwrap_or_default();
+            format!("DIAG home={} status={:?} nodes={nodes}", h.app.home.open, h.app.status)
+        });
     assert!(h.widget("the model has no solids").is_none());
     assert!(crate::scenario::handle_at("dialog:OK").is_none());
 }
