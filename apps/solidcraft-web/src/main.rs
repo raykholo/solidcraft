@@ -33,7 +33,7 @@ mod sc3000_phone;
 mod space_mouse;
 #[cfg(target_arch = "wasm32")]
 mod tickets;
-#[cfg(all(target_arch = "wasm32", feature = "usage-stats"))]
+#[cfg(all(target_arch = "wasm32", feature = "usage-stats", not(feature = "sc3000")))]
 mod usage;
 #[cfg(target_arch = "wasm32")]
 mod wheel_samples;
@@ -1465,7 +1465,8 @@ mod web {
                             ticket_secrets: Some(std::sync::Arc::new(crate::tickets::BrowserSecrets)),
                             browser_files: Some(Box::new(move || shown.panel.set(true))),
                             install_app: Some(crate::install::service(&cc.egui_ctx)),
-                            #[cfg(feature = "usage-stats")]
+                            // SolidCraft 3000 never posts usage statistics: no HTTP is handed over.
+                            #[cfg(all(feature = "usage-stats", not(feature = "sc3000")))]
                             usage_http: Some(std::sync::Arc::new(crate::usage::post)),
                             ..Default::default()
                         }};

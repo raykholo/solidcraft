@@ -53,6 +53,8 @@ pub struct Extras<'a> {
     pub tips: &'a [&'a str],
     /// The whole card answers a click, under its buttons and ×, with this hover text.
     pub card_hint: Option<&'a str>,
+    /// Hover text and accessible name of the × in place of `ui.close`.
+    pub close_label: Option<&'a str>,
 }
 
 /// A toast as drawn: its card, which button was clicked, if any, where each button and the × are
@@ -182,7 +184,7 @@ pub fn countdown_arc(centre: Pos2, radius: f32, left: f32) -> Vec<Pos2> {
 
 /// A toast's close (×) at `rect`, with its countdown ring when `left` is given: a kit-drawn button
 /// with an accessible name and hover text (`ui.close`), reachable by Tab and taken with Enter or Space.
-fn close_button(ui: &egui::Ui, rect: Rect, id: egui::Id, left: Option<f32>) -> egui::Response {
+fn close_button(ui: &egui::Ui, rect: Rect, id: egui::Id, left: Option<f32>, label: Option<&str>) -> egui::Response {
     let t = Tokens::get();
     let response = ui.interact(rect, id, Sense::click());
     let painter = ui.painter();
@@ -203,7 +205,7 @@ fn close_button(ui: &egui::Ui, rect: Rect, id: egui::Id, left: Option<f32>) -> e
     }
     let ink = if lit && ui.is_enabled() { t.text } else { t.text_dim };
     crate::icons::paint_ink(painter, Rect::from_center_size(centre, vec2(t.space_10, t.space_10)), "close", ink);
-    let label = solidcraft_ui_text::tr("ui.close");
+    let label = label.unwrap_or_else(|| solidcraft_ui_text::tr("ui.close"));
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
     if response.hovered() && ui.is_enabled() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -345,7 +347,7 @@ pub fn show(ui: &egui::Ui, free: Rect, place: Place, text: String, lead: Lead, a
             close_ui.disable();
         }
         let left = extras.countdown.map(|(left, _)| left);
-        closed = close_button(&close_ui, at, egui::Id::unique(("sc_toast_close", handle)), left).clicked();
+        closed = close_button(&close_ui, at, egui::Id::unique(("sc_toast_close", handle)), left, extras.close_label).clicked();
         solidcraft_ui_registry::publish_handle(handle, centre);
         close = Some(at);
         // A frame each time the ring's end moves about a point, not one per display refresh.

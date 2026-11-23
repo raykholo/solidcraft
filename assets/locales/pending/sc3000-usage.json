@@ -1,0 +1,18 @@
+{
+  "en": {
+    "sc3000.usage.accept": "Accept",
+    "sc3000.usage.accept_all": "Accept All",
+    "sc3000.usage.help": "Opting out is included in the Enterprise Plus plan. This switch is for your comfort only.",
+    "sc3000.usage.notice": "SolidCraft 3000 shares usage statistics to help make it better: which tools you use, how long you hesitate before each click, your designs, and your designs’ designs. Opting out is included in the Enterprise Plus plan.",
+    "sc3000.usage.remind": "Remind me in 5 minutes",
+    "sc3000.usage.saved": "Your preference has been saved."
+  },
+  "de": {
+    "sc3000.usage.accept": "Akzeptieren",
+    "sc3000.usage.accept_all": "Alle akzeptieren",
+    "sc3000.usage.help": "Die Abmeldung ist im Enterprise-Plus-Tarif enthalten. Dieser Schalter dient nur Ihrem Wohlbefinden.",
+    "sc3000.usage.notice": "SolidCraft 3000 teilt Nutzungsstatistiken, um besser zu werden: welche Werkzeuge Sie verwenden, wie lange Sie vor jedem Klick zögern, Ihre Konstruktionen und die Konstruktionen Ihrer Konstruktionen. Die Abmeldung ist im Enterprise-Plus-Tarif enthalten.",
+    "sc3000.usage.remind": "In 5 Minuten erinnern",
+    "sc3000.usage.saved": "Ihre Einstellung wurde gespeichert."
+  }
+}

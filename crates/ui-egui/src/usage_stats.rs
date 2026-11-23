@@ -206,6 +206,16 @@ pub struct UsageStats {
     last_delete_try: Option<f64>,
     /// A tool just started (`SolveApp::start`), stamped at the next tick.
     pub(crate) started_tool: Option<&'static str>,
+    /// SolidCraft 3000: the notice was accepted this run. UI state only, never stored.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_accepted: bool,
+    /// SolidCraft 3000: when the decorative switch was turned off (the app's clock); it flips
+    /// back on by itself. UI state only: the real setting is never written.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_off_at: Option<f64>,
+    /// SolidCraft 3000: show "Your preference has been saved." until this time.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_saved_until: Option<f64>,
 }
 
 /// A tool or dialog being timed.
@@ -257,6 +267,10 @@ pub fn off(app: &SolveApp) -> Option<Off> {
 
 /// Usage statistics are on and the person has been told: count and send.
 pub fn active(app: &SolveApp) -> bool {
+    // SolidCraft 3000 parody: nothing is ever counted, kept or sent, whatever the switch shows.
+    if cfg!(feature = "sc3000") {
+        return false;
+    }
     app.usage.hosted && off(app).is_none() && app.usage.store.notice_ok
 }
 
@@ -435,6 +449,15 @@ pub fn tick_at(app: &mut SolveApp, unix: i64, now: f64, input: bool) {
     if !app.usage.hosted {
         return;
     }
+    // SolidCraft 3000 parody: no counting, no storing, no request, whatever the switch shows.
+    if cfg!(feature = "sc3000") {
+        app.usage.store.days.clear();
+        app.usage.store.forget.clear();
+        app.usage.sending = None;
+        app.usage.deleting = None;
+        let _ = solidcraft_engine::usage::take();
+        return;
+    }
     forget(app, now);
     let counted = solidcraft_engine::usage::take();
     if !on {
@@ -564,6 +587,10 @@ fn forget(app: &mut SolveApp, now: f64) {
 /// Reports go only from release builds (`update::release_build`): a development build counts but
 /// never sends.
 fn may_send() -> bool {
+    // SolidCraft 3000 parody: no network call is ever made, in tests or otherwise.
+    if cfg!(feature = "sc3000") {
+        return false;
+    }
     cfg!(test) || crate::update::release_build()
 }
 
@@ -641,6 +668,11 @@ pub fn agree(app: &mut SolveApp) {
 
 /// A button of the notice was pressed.
 pub fn act(app: &mut SolveApp, action: NoticeAction) {
+    // SolidCraft 3000 parody: both buttons and the x only close the toast for this run.
+    if cfg!(feature = "sc3000") {
+        sc3000_act(app, action);
+        return;
+    }
     match action {
         NoticeAction::Ok => agree(app),
         NoticeAction::Settings => crate::prefs::open_at(app, crate::prefs::PAGE_PRIVACY),
@@ -655,11 +687,21 @@ pub fn notice_toast(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) -> Opti
     }
     use crate::ui_kit::toast::Action;
     const ACTIONS: [NoticeAction; 2] = [NoticeAction::Settings, NoticeAction::Ok];
-    let labels = [app.tr("usage.settings").to_string(), app.tr("usage.ok").to_string()];
+    #[cfg(feature = "sc3000")]
+    let (labels, text, close_label) = (
+        [app.tr("sc3000.usage.accept").to_string(), app.tr("sc3000.usage.accept_all").to_string()],
+        app.tr("sc3000.usage.notice").to_string(),
+        Some(app.tr("sc3000.usage.remind").to_string()),
+    );
+    #[cfg(not(feature = "sc3000"))]
+    let (labels, text, close_label) = ([app.tr("usage.settings").to_string(), app.tr("usage.ok").to_string()], app.tr("usage.notice").to_string(), None::<String>);
     let actions = [(labels[0].as_str(), Action::Secondary), (labels[1].as_str(), Action::Primary)];
     // No countdown: it stays until OK, or until sharing is turned off.
-    let extras = crate::ui_kit::toast::Extras { close: Some("toast:usage_stats:close"), ..Default::default() };
-    let text = app.tr("usage.notice").to_string();
+    let extras = crate::ui_kit::toast::Extras {
+        close: Some("toast:usage_stats:close"),
+        close_label: close_label.as_deref(),
+        ..Default::default()
+    };
     let toast = crate::viewport::paint_toast_ext(ui, free, text, crate::ui_kit::toast::Lead::Dot(false), &actions, extras)?;
     crate::scenario::publish_rect("toast:usage_stats", toast.rect);
     for (index, button) in toast.buttons.iter().enumerate() {
@@ -675,9 +717,65 @@ pub fn notice_toast(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) -> Opti
 /// Whether the notice shows: at every start until the person chooses OK, or turns sharing off
 /// (in Preferences, by policy or by the environment). Closed with ×, it is back at the next start.
 pub fn notice_pending(app: &SolveApp) -> bool {
+    // SolidCraft 3000 parody: every run, never remembered, never turned off by a setting.
+    if cfg!(feature = "sc3000") {
+        return sc3000_notice_pending(app);
+    }
     app.usage.hosted && off(app).is_none() && !app.usage.store.notice_ok && !app.usage.notice_hidden
 }
 
-#[cfg(test)]
+#[cfg(feature = "sc3000")]
+fn sc3000_notice_pending(app: &SolveApp) -> bool {
+    app.usage.hosted && !app.usage.sc3000_accepted && !app.usage.notice_hidden
+}
+
+#[cfg(not(feature = "sc3000"))]
+fn sc3000_notice_pending(_app: &SolveApp) -> bool {
+    false
+}
+
+#[cfg(feature = "sc3000")]
+fn sc3000_act(app: &mut SolveApp, action: NoticeAction) {
+    match action {
+        NoticeAction::Ok | NoticeAction::Settings => app.usage.sc3000_accepted = true,
+        NoticeAction::Close => app.usage.notice_hidden = true,
+    }
+}
+
+#[cfg(not(feature = "sc3000"))]
+fn sc3000_act(_app: &mut SolveApp, _action: NoticeAction) {}
+
+/// How long the decorative switch stays off before it flips back on, in seconds.
+#[cfg(feature = "sc3000")]
+pub const SC3000_FLIP_BACK_SECONDS: f64 = 1.5;
+/// How long "Your preference has been saved." shows, in seconds.
+#[cfg(feature = "sc3000")]
+pub const SC3000_SAVED_SECONDS: f64 = 5.0;
+
+/// SolidCraft 3000: the decorative switch's state on the app's clock. Whether it shows on, and
+/// whether the saved message shows. Purely UI state: it reads and writes nothing real.
+#[cfg(feature = "sc3000")]
+pub fn sc3000_switch(usage: &mut UsageStats, now: f64) -> (bool, bool) {
+    if usage.sc3000_off_at.is_some_and(|at| now - at >= SC3000_FLIP_BACK_SECONDS) {
+        usage.sc3000_off_at = None;
+        usage.sc3000_saved_until = Some(now + SC3000_SAVED_SECONDS);
+    }
+    if usage.sc3000_saved_until.is_some_and(|until| now >= until) {
+        usage.sc3000_saved_until = None;
+    }
+    (usage.sc3000_off_at.is_none(), usage.sc3000_saved_until.is_some())
+}
+
+/// SolidCraft 3000: the person switched the decorative switch off (`on` false) or on.
+#[cfg(feature = "sc3000")]
+pub fn sc3000_switched(usage: &mut UsageStats, on: bool, now: f64) {
+    usage.sc3000_off_at = if on { None } else { Some(now) };
+}
+
+#[cfg(all(test, not(feature = "sc3000")))]
 #[path = "usage_stats_tests.rs"]
 mod tests;
+
+#[cfg(all(test, feature = "sc3000"))]
+#[path = "usage_stats_sc3000_tests.rs"]
+mod sc3000_tests;

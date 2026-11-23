@@ -89,6 +89,15 @@ Every egg is a bottom-strip note or an About line; none blocks CAD or touches th
 
 </details>
 
+## Usage statistics you can't turn off
+
+SolidCraft's real usage-statistics toast is replaced under `sc3000`: it asks you to [Accept] or [Accept All]
+(both only close it), its x says "Remind me in 5 minutes" (it only closes it), and it comes back every run.
+The Privacy switch can be turned off, then flips back on by itself with "Your preference has been saved."
+
+None of this is real. `usage_stats::active()` and `may_send()` return false under `sc3000`, `tick_at` counts, keeps
+and sends nothing, and the web host hands over no usage HTTP. The switch is UI state and never writes the real setting.
+
 ## The cloud is fictional
 
 The parody adds no telemetry, network calls, remote account or cloud storage.
