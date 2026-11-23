@@ -3722,26 +3722,48 @@ fn diag_18235() {
             for on_box in [false, true] {
                 let (line, _) = parallel_cylinders_overlapping(r, g, on_box);
                 eprintln!("DIAG R {r} g {g} box {on_box}: {line}");
+                let (line, _) = rod_cylinders_overlapping(r, g, on_box);
+                eprintln!("DIAG rod R {r} g {g} box {on_box}: {line}");
             }
         }
     }
-    // the cylinder dip, and the sphere
     let block = || make_box([0.0, 0.0, 10.0], [50.0, 50.0, 50.0]).unwrap();
-    for dip in [1e-5, 2e-5] {
+    let (sn, cs) = 0.6131_f64.sin_cos();
+    for dip in [1e-5, 1.5e-5, 2e-5, 2.5e-5, 3e-5, 1e-4] {
         let circle = [Curve::Arc {
             center: [0.0, 25.0, 60.0 - dip + 10.0],
             axis: [1.0, 0.0, 0.0],
-            reference: [0.0, 1.0, 0.0],
+            reference: [0.0, cs, sn],
             radius: 10.0,
             start: 0.0,
             end: TAU,
         }];
         let cyl = extrude(&circle, [1.0, 0.0, 0.0], 50.0, 0.0, DraftCorner::Curvature, true).unwrap();
-        let (line, _) = joined(boolean(block(), cyl, BooleanOp::Union));
+        let (line, _) = joined(boolean(block(), round_tripped(&cyl), BooleanOp::Union));
         eprintln!("DIAG cylinder dip {dip}: {line}");
         let cube = make_box([0.0, 0.0, 0.0], [50.0, 50.0, 50.0]).unwrap();
         let ball = make_sphere([65.0 - dip, 25.0, 25.0], 15.0).unwrap();
         let (line, _) = joined(boolean(cube, ball, BooleanOp::Union));
         eprintln!("DIAG sphere dip {dip}: {line}");
+        let cube = make_box([0.0, 0.0, 0.0], [50.0, 50.0, 50.0]).unwrap();
+        let ball = round_tripped(&make_sphere([65.0 - dip, 25.0, 25.0], 15.0).unwrap());
+        let (line, _) = joined(boolean(round_tripped(&cube), ball, BooleanOp::Union));
+        eprintln!("DIAG sphere rt dip {dip}: {line}");
+    }
+}
+
+/// As [`parallel_cylinders_overlapping`], the cylinders as SolidCraft makes them (the seam
+/// where it puts one, through the record).
+fn rod_cylinders_overlapping(r: f64, g: f64, on_box: bool) -> (String, Option<Body>) {
+    let a = || round_tripped(&rod([0.0, 0.0, 0.0], r, 2.0 * r));
+    let b = || round_tripped(&rod([2.0 * r - g, 0.0, 0.0], r, 2.0 * r));
+    let base = || round_tripped(&make_box([-2.0 * r, -2.0 * r, -r], [6.0 * r, 4.0 * r, r]).unwrap());
+    let both = boolean(a(), b(), BooleanOp::Union);
+    if !on_box {
+        return joined(both);
+    }
+    match both {
+        Ok(Some(both)) => joined(boolean(base(), round_tripped(&both), BooleanOp::Union)),
+        other => joined(other),
     }
 }
