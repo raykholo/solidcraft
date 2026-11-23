@@ -657,6 +657,23 @@ impl SourceReach {
         }
     }
 
+    /// The distance within which the curve is an edge that is not a seam, `edge` the edge's
+    /// tolerance: where the curve's reach across itself is proved and no more than the
+    /// larger of its own tolerance `own` and the edge's, the two places are one only within
+    /// that larger tolerance (the coincidence rule, `geom::tol::coincidence_tol_3d`; the
+    /// contact rule has taken two curves further apart for two crossings), and with any
+    /// more reach, or none proved, the sum `summed` of both tolerances (a curve that may lie
+    /// anywhere within its reach is an edge's within the band a boundary has).
+    #[must_use]
+    pub fn edge_tolerance(self, own: f64, edge: f64, summed: f64) -> f64 {
+        match self {
+            Self::Across(reach) if reach.is_finite() && reach <= own.max(edge) => {
+                own.max(edge).min(summed)
+            }
+            Self::Own | Self::Across(_) | Self::Unbounded | Self::Boundary => summed,
+        }
+    }
+
     /// Whether a point contact is held to the curve's region ([`in_reach_region`]): every
     /// curve but the face's own seam curve.
     #[must_use]

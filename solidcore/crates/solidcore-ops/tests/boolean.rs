@@ -3679,3 +3679,69 @@ fn a_traced_revolved_counterbore_a_hair_off_the_holes_axis_cuts_the_part() {
         "volume {v}, on the hole's axis {want}"
     );
 }
+
+/// The result of joining, as a line: `ok` with the solid count and volume of a valid body, or the
+/// refusal or the check's complaint.
+fn joined(r: Result<Option<Body>, Error>) -> (String, Option<Body>) {
+    match r {
+        Err(e) => (format!("refused: {e:?}"), None),
+        Ok(None) => ("empty".to_string(), None),
+        Ok(Some(b)) => {
+            let report = b.check(CheckLevel::All).unwrap();
+            if report.is_valid() {
+                let line = format!("ok solids {} volume {}", b.solid_count().unwrap(), volume(&b));
+                (line, Some(b))
+            } else {
+                (format!("invalid: {}", report.text.lines().next().unwrap_or("")), None)
+            }
+        }
+    }
+}
+
+/// Two equal cylinders of radius `r` and height 2r about parallel axes `2r - g` apart, their
+/// caps coplanar (z = 0 and 2r), joined, alone or on a box whose top is their base plane.
+fn parallel_cylinders_overlapping(r: f64, g: f64, on_box: bool) -> (String, Option<Body>) {
+    let a = || solidcore_ops::make_cylinder([0.0, 0.0, 0.0], r, 2.0 * r).unwrap();
+    let b = || solidcore_ops::make_cylinder([2.0 * r - g, 0.0, 0.0], r, 2.0 * r).unwrap();
+    let base = || make_box([-2.0 * r, -2.0 * r, -r], [6.0 * r, 4.0 * r, r]).unwrap();
+    let both = boolean(a(), b(), BooleanOp::Union);
+    if !on_box {
+        return joined(both);
+    }
+    match both {
+        Ok(Some(both)) => joined(boolean(base(), both, BooleanOp::Union)),
+        other => joined(other),
+    }
+}
+
+#[test]
+fn diag_18235() {
+    all_fixes();
+    for r in [115.0, 11.5, 1.15, 0.115] {
+        for g in [1e-5, 1.5e-5, 2e-5] {
+            for on_box in [false, true] {
+                let (line, _) = parallel_cylinders_overlapping(r, g, on_box);
+                eprintln!("DIAG R {r} g {g} box {on_box}: {line}");
+            }
+        }
+    }
+    // the cylinder dip, and the sphere
+    let block = || make_box([0.0, 0.0, 10.0], [50.0, 50.0, 50.0]).unwrap();
+    for dip in [1e-5, 2e-5] {
+        let circle = [Curve::Arc {
+            center: [0.0, 25.0, 60.0 - dip + 10.0],
+            axis: [1.0, 0.0, 0.0],
+            reference: [0.0, 1.0, 0.0],
+            radius: 10.0,
+            start: 0.0,
+            end: TAU,
+        }];
+        let cyl = extrude(&circle, [1.0, 0.0, 0.0], 50.0, 0.0, DraftCorner::Curvature, true).unwrap();
+        let (line, _) = joined(boolean(block(), cyl, BooleanOp::Union));
+        eprintln!("DIAG cylinder dip {dip}: {line}");
+        let cube = make_box([0.0, 0.0, 0.0], [50.0, 50.0, 50.0]).unwrap();
+        let ball = make_sphere([65.0 - dip, 25.0, 25.0], 15.0).unwrap();
+        let (line, _) = joined(boolean(cube, ball, BooleanOp::Union));
+        eprintln!("DIAG sphere dip {dip}: {line}");
+    }
+}
