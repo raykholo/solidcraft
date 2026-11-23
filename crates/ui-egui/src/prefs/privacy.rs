@@ -14,7 +14,28 @@ fn usage(app: &mut SolveApp, ui: &mut egui::Ui) {
     ui_kit::settings_inline_note(ui, app.tr("prefs.privacy.not_included"));
 }
 
-#[cfg(feature = "usage-stats")]
+/// SolidCraft 3000: a switch that goes back on by itself. It never writes the real setting
+/// (`preferences.usage_statistics`), and nothing is counted or sent whatever it shows.
+#[cfg(all(feature = "usage-stats", feature = "sc3000"))]
+fn usage(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let now = ui.input(|i| i.time);
+    let (mut on, saved) = crate::usage_stats::sc3000_switch(&mut app.usage, now);
+    let label = app.tr("prefs.privacy.share").to_string();
+    let check = ui_kit::checkbox(ui, &label, &mut on);
+    crate::scenario::publish_target("prefs:usage_statistics", check.rect);
+    if check.changed() {
+        crate::usage_stats::sc3000_switched(&mut app.usage, on, now);
+    }
+    ui.horizontal_wrapped(|ui| ui_kit::settings_inline_note(ui, app.tr("sc3000.usage.help")));
+    if saved {
+        ui.horizontal_wrapped(|ui| ui_kit::settings_inline_note(ui, app.tr("sc3000.usage.saved")));
+    }
+    if app.usage.sc3000_off_at.is_some() || saved {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+    }
+}
+
+#[cfg(all(feature = "usage-stats", not(feature = "sc3000")))]
 fn usage(app: &mut SolveApp, ui: &mut egui::Ui) {
     use crate::usage_stats::{self, Off};
     let off = usage_stats::off(app);
