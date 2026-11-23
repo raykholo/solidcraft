@@ -575,23 +575,42 @@ fn quadric_pair(a: &Implicit, b: &Implicit, tolerance: f64) -> Option<PlanePair>
     }
 }
 
+/// The square of the sine below which a moved plane's new normal is its old one: rounding
+/// of a translation, far below any turn.
+const TURN_SINE_SQUARED: f64 = 1e-24;
+
 /// Whether a plane pair's crossing must override the input's tangent-edge construction.
 /// Ordinary corners already take the mating path. Only nearly tangent input planes need
 /// the override; an input of another kind keeps the crossing for its sector test to decide.
+/// Only a plane that moved without turning (its new normal is its old one, as an offset
+/// moves it) takes part: a face turned onto a new plane keeps the refusal of a loose
+/// tangent edge, as a local operation always had it. `new` are the two faces' new planes,
+/// `moved` whether each face moved.
 fn plane_crossing_override(
     k: &Kernel,
     b: &Brep,
     faces: [Option<FaceId>; 2],
+    new: [Tangent; 2],
+    moved: [bool; 2],
     tangent_sine: f64,
     tolerance: f64,
 ) -> Result<bool> {
     let mut planes = Vec::new();
-    for face in faces.into_iter().flatten() {
+    for (i, face) in faces.into_iter().enumerate() {
+        let Some(face) = face else { continue };
         let Some(surface) = crate::topology::face::p2::surface(b, face)? else {
             return Ok(true);
         };
         match exact_class(k, surface, tolerance)? {
-            Some(Exact::Plane(plane)) => planes.push(plane),
+            Some(Exact::Plane(plane)) => {
+                if moved[i] {
+                    let turn = plane.normal.cross(new[i].normal);
+                    if turn.dot(turn) > TURN_SINE_SQUARED {
+                        return Ok(false);
+                    }
+                }
+                planes.push(plane);
+            }
             _ => return Ok(true),
         }
     }
@@ -2889,6 +2908,8 @@ pub fn local_extension_reach(
                                 k,
                                 b,
                                 [own_face, other_face],
+                                [a, c],
+                                [own_moved, other_moved],
                                 tangent_sine,
                                 tolerance,
                             )?,
