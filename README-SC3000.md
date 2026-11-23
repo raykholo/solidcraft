@@ -23,6 +23,9 @@ bash ../../packaging/sc3000-note.sh ../../dist/web/index.html   # the parody not
 The site lands in `dist/web/`. The live site, https://raykholo.github.io/solidcraft3000/, is built from this branch by
 [raykholo/solidcraft3000](https://github.com/raykholo/solidcraft3000). Browser graphics use WebGPU, with `?webgl` for WebGL2; `?sample` opens the sample part.
 
+The parody note is English until the app starts, then follows the app's language (every shipped locale,
+`sc3000.web.note_before` / `note_after`).
+
 ## What appears
 
 - The title and splash read “SolidCraft 3000” and “Now 100% in the cloud”.

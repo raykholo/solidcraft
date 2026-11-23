@@ -25,6 +25,8 @@ pub(crate) struct Cloud {
     pub(crate) dismissals: u8,
     /// The bottom strip's height last told to the page (CSS px), so the parody note sits above it.
     note_lift: f32,
+    /// The parody note's text last given to the page, in the person's language.
+    note_text: String,
     active: f64,
     previous: Option<f64>,
     next_session: f64,
@@ -145,6 +147,21 @@ fn set_note_lift(px: f32) {
 #[cfg(not(target_arch = "wasm32"))]
 fn set_note_lift(_px: f32) {}
 
+/// Put the parody note's text, either side of its SolidCraft link, in the person's language. Plain
+/// text (`textContent`), never markup.
+#[cfg(target_arch = "wasm32")]
+fn set_note_text(before: &str, after: &str) {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else { return };
+    for (id, text) in [("sc3000-note-before", before), ("sc3000-note-after", after)] {
+        if let Some(element) = document.get_element_by_id(id) {
+            let _ = js_sys::Reflect::set(&element, &"textContent".into(), &text.into());
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn set_note_text(_before: &str, _after: &str) {}
+
 impl Cloud {
     pub(crate) fn new(daily_update: bool, date: String, build: String) -> Self {
         Self {
@@ -153,6 +170,7 @@ impl Cloud {
             banner_at: 0.0,
             dismissals: 0,
             note_lift: 0.0,
+            note_text: String::new(),
             active: 0.0,
             previous: None,
             next_session: 600.0,
@@ -350,6 +368,12 @@ impl Cloud {
         if lift != self.note_lift {
             self.note_lift = lift;
             set_note_lift(lift);
+        }
+        // And speak the person's language (Preferences, or the browser's).
+        let (before, after) = (tr("sc3000.web.note_before"), tr("sc3000.web.note_after"));
+        if self.note_text.len() != before.len() + after.len() || !self.note_text.starts_with(before) || !self.note_text.ends_with(after) {
+            self.note_text = format!("{before}{after}");
+            set_note_text(before, after);
         }
     }
 
