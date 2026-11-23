@@ -721,7 +721,7 @@ pub fn radial_sector_classify_between(
         .curve
         .as_ref()
         .ok_or_else(|| SolidError::query_missing(OP_RADIAL, "the other edge's curve"))?;
-    let tolerance = other.tolerance + this.tolerance;
+    let tolerance = crate::geom::tol::coincidence_tol_3d(k, other.tolerance, this.tolerance);
 
     // get the corresponding classify edge parameter value
     // 1. when the curves are the same - reuse param value

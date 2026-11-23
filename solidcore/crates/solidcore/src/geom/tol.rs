@@ -426,7 +426,7 @@ pub fn context_xsect_tol_3d(k: &Kernel, ctx: Option<&Context>, small: SmallTopoT
 /// their sum (`SmTol::GetXSectTol3d(const SmZoneTol3d&, const SmZoneTol3d&)`).
 #[must_use]
 pub fn xsect_tol_3d_from_zones(k: &Kernel, zone1: f64, zone2: f64) -> f64 {
-    xsect_tol3d(k, zone1 + zone2)
+    xsect_tol3d(k, coincidence_tol_3d(k, zone1, zone2))
 }
 
 /// Whether two objects with zone tolerances `zone1` and `zone2` are within each other's
