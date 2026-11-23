@@ -9,5 +9,16 @@
     "sc3000.preferences_hint": "These cloud controls are decorative. Your CAD works as usual.",
     "sc3000.tagline": "Now 100% in the cloud",
     "sc3000.title": "SolidCraft 3000"
+  },
+  "de": {
+    "sc3000.cloud": "SolidCraft 3000 Cloud",
+    "sc3000.extra_cloud": "Extra-Cloud aktivieren",
+    "sc3000.maintenance": "Wartung ohne Ausfallzeit läuft",
+    "sc3000.offline": "Offline-Modus erlauben: nur Premium",
+    "sc3000.parsecs": "Parsec pro vierzehn Tage",
+    "sc3000.predictive_sync": "Die Vollrundungen von morgen schon heute synchronisieren",
+    "sc3000.preferences_hint": "Diese Cloud-Einstellungen sind Dekoration. Ihr CAD funktioniert wie gewohnt.",
+    "sc3000.tagline": "Jetzt zu 100 % in der Cloud",
+    "sc3000.title": "SolidCraft 3000"
   }
 }
