@@ -1,0 +1,5 @@
+craft-plugin 
+craft-plugin-wasm 
+solidcraft-engine plugin::
+solidcraft-ui-egui plugin_menu
+solidcraft-ui-egui sketch_text::tests
