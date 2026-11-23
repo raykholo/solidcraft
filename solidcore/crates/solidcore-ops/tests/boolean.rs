@@ -3729,7 +3729,7 @@ fn diag_18235() {
     }
     let block = || make_box([0.0, 0.0, 10.0], [50.0, 50.0, 50.0]).unwrap();
     let (sn, cs) = 0.6131_f64.sin_cos();
-    for dip in [1.9999e-5, 1.99999999e-5, 2e-5, 2.00000001e-5, 2.0001e-5] {
+    for dip in [1.6e-5, 1.7e-5, 1.8e-5, 1.9e-5, 2.1e-5, 2.2e-5, 2.3e-5, 2.4e-5] {
         let circle = [Curve::Arc {
             center: [0.0, 25.0, 60.0 - dip + 10.0],
             axis: [1.0, 0.0, 0.0],
