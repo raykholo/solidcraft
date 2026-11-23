@@ -658,19 +658,22 @@ impl SourceReach {
     }
 
     /// The distance within which the curve is an edge that is not a seam, `edge` the edge's
-    /// tolerance: where the curve's reach across itself is proved and no more than the
-    /// larger of its own tolerance `own` and the edge's, the two places are one only within
-    /// that larger tolerance (the coincidence rule, `geom::tol::coincidence_tol_3d`; the
-    /// contact rule has taken two curves further apart for two crossings), and with any
-    /// more reach, or none proved, the sum `summed` of both tolerances (a curve that may lie
-    /// anywhere within its reach is an edge's within the band a boundary has).
+    /// tolerance. A curve known to its own tolerance `own` (an edge of the other B-rep
+    /// imprinted, which the contact rule has already read against this face's edges at their
+    /// crossings) and a curve whose proved reach across itself is no more than the larger of
+    /// the two tolerances are one with the edge only within that larger tolerance (the
+    /// coincidence rule, `geom::tol::coincidence_tol_3d`): the contact rule takes two
+    /// circles further apart than that for two crossings, two places, and the sum of the
+    /// tolerances would make the arcs between those crossings one edge. With more reach, or
+    /// none proved, the curve may lie anywhere within it, and is an edge's within the sum
+    /// `summed` of both tolerances (the band a boundary of material has).
     #[must_use]
     pub fn edge_tolerance(self, own: f64, edge: f64, summed: f64) -> f64 {
+        let larger = own.max(edge).min(summed);
         match self {
-            Self::Across(reach) if reach.is_finite() && reach <= own.max(edge) => {
-                own.max(edge).min(summed)
-            }
-            Self::Own | Self::Across(_) | Self::Unbounded | Self::Boundary => summed,
+            Self::Own => larger,
+            Self::Across(reach) if reach.is_finite() && reach <= own.max(edge) => larger,
+            Self::Across(_) | Self::Unbounded | Self::Boundary => summed,
         }
     }
 
