@@ -1829,11 +1829,13 @@ mod tests {
         // As the page draws a frame: the banner, then the app (which starts by clearing every
         // published target), then the cloud's own screens.
         let mut frame = |cloud: &mut crate::sc3000::Cloud, time: f64| {
-            let _ = ctx.run_ui(egui::RawInput { screen_rect: Some(bounds), time: Some(time), ..Default::default() }, |ui| {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(bounds), time: Some(time), ..Default::default() }, |ui| {
                 cloud.banner(ui);
                 clear_handles();
                 cloud.show(ui.ctx(), 0, 0, 0, "");
             });
+            // No renderer here: the font atlas upload is not needed.
+            output.textures_delta.clear();
         };
         frame(&mut cloud, 0.0);
         let at = handle_at("sc3000:banner:dismiss").expect("the banner's Dismiss is published for the browser check");
