@@ -161,6 +161,7 @@ impl Walk<'_> {
         let p = self.curve.point(t)?;
         let (q, off) = near(self.on, p, hint)?;
         if self.on.point(q)?.dist(self.on.point(hint)?) > reach {
+            eprintln!("DBG node reach t={t} hint={hint:?} q={q:?} off={off} reach={reach}");
             return None;
         }
         let m = slope(self.on, self.curve, t, q)?;
@@ -187,6 +188,7 @@ impl Walk<'_> {
             return Some(());
         }
         if depth >= MAX_DEPTH || out.len() >= MAX_NODES {
+            eprintln!("DBG pieces depth t={}..{}", a.t, b.t);
             return None;
         }
         let mid = a.t + 0.5 * h;
@@ -217,6 +219,7 @@ fn followed(
     // sheets a few hundredths of a millimetre apart).
     let (anchor_t, far_t, sign) = if backward { (t1, t0, -1.0) } else { (t0, t1, 1.0) };
     let q0 = pcurve::eval(seed, anchor_t)?;
+    eprintln!("DBG followed backward={backward} interval={interval:?} anchor q0={q0:?}");
     let first = Node {
         t: anchor_t,
         q: q0,
@@ -234,7 +237,10 @@ fn followed(
         let h = t - prev.t;
         let hint = [prev.q[0] + h * prev.m[0], prev.q[1] + h * prev.m[1]];
         let reach = REACH_SHARE * curve.point(prev.t)?.dist(curve.point(t)?) + REACH_MORE;
-        let node = walk.node(t, hint, reach)?;
+        let Some(node) = walk.node(t, hint, reach) else {
+            eprintln!("DBG coarse fail i={i} t={t}");
+            return None;
+        };
         prev = node;
         coarse.push(node);
     }
@@ -305,13 +311,17 @@ pub(super) fn retrack(
             };
             let eval = CurveEval::new(curve).map_err(|m| m.to_string())?;
             let off = gap(&on, &eval, pc, interval);
+            eprintln!("DBG retrack edge={e} off={off}");
             if !(off > FAR) {
                 continue;
             }
             let mut best: Option<(f64, Curve2)> = None;
             for backward in [false, true] {
-                if let Some(again) = followed(&on, &eval, interval, pc, backward) {
+                let r = followed(&on, &eval, interval, pc, backward);
+                eprintln!("DBG result backward={backward} some={}", r.is_some());
+                if let Some(again) = r {
                     let g = gap(&on, &eval, &again, interval);
+                    eprintln!("DBG gap {g}");
                     if g < off && best.as_ref().is_none_or(|(b, _)| g < *b) {
                         best = Some((g, again));
                     }
