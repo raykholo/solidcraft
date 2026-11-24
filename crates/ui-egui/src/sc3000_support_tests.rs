@@ -258,6 +258,15 @@ fn the_whole_first_exchange_shows_without_a_message_cut_off_under_the_header() {
             let line = rect_of(&format!("sc3000_support:line:{index}")).unwrap();
             assert!(shown.contains_rect(line), "{width}x{height}: line {index} {line:?} is cut off by {shown:?}");
         }
+        // The whole window sits below the top chrome (the maintenance strip's text is still in
+        // view) and ends on screen.
+        let window = rect_of("dialog:window").expect("the chat window");
+        let chrome = chrome_bottom(&h.ctx);
+        assert!(chrome > 0.0, "the app bar reports where the top chrome ends");
+        assert!(window.top() >= chrome, "{width}x{height}: the chat {window:?} covers the top chrome ending at {chrome}");
+        assert!(window.bottom() <= height as f32, "{width}x{height}: the chat {window:?} runs off the screen");
+        let strip = h.widget(&tr("sc3000.maintenance")).expect("the maintenance strip");
+        assert!((strip[1] as f32) < window.top(), "{width}x{height}: the maintenance strip at {strip:?} is under the chat {window:?}");
     }
 }
 
