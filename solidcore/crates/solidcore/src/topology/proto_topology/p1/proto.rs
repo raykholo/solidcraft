@@ -3869,6 +3869,23 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                 }
             }
         }
+        if ret_val.is_none()
+            && let Some(e) = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Edge)
+        {
+            let pv_tol = self.pv(Some(pv))?.tol;
+            let s = geometry.edge_start_vertex(e)?;
+            let o = geometry.edge_other_vertex(e, s)?;
+            let mut best = BIG_DOUBLE;
+            for end in [s, o].into_iter().flatten() {
+                let dist = ed_pos.distance(geometry.vertex_point(end)?);
+                let reach = pv_tol + geometry.topology_zone_tol_3d(end).unwrap_or(0.0);
+                eprintln!("DIAG15049 fallback end dist={dist:?} reach={reach:?} vtol={:?}", geometry.topology_zone_tol_3d(end));
+                if dist <= reach && dist < best {
+                    best = dist;
+                    ret_val = Some(end);
+                }
+            }
+        }
         if ret_val.is_none() {
             let src_edge = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Edge);
             let src_face = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Face);
