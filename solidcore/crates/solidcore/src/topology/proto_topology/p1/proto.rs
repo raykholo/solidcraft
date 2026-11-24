@@ -3869,8 +3869,9 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                 }
             }
         }
-        if ret_val.is_none()
-            && let Some(e) = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Edge)
+        if let Some(e) = brep_topo_ed
+            .filter(|o| o.class_kind() == ClassObjectKind::Edge)
+            .filter(|_| ret_val.is_none())
         {
             let pv_tol = self.pv(Some(pv))?.tol;
             let s = geometry.edge_start_vertex(e)?;
