@@ -1,0 +1,38 @@
+name: reprocheck
+on:
+  push:
+    branches: ["reprocheck/**"]
+jobs:
+  eval:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Build the CLI
+        working-directory: src
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: cargo build --release -p solidcraft-cli --locked 2>&1 | grep -E 'error' -A14 | head -80; test -x target/release/solidcraft-cli
+      - name: Run the repro
+        continue-on-error: true
+        run: |
+          mkdir work && cp ctl/*.json work/ && cd work
+          curl -sL -o m.zip https://github.com/user-attachments/files/34696955/mm2006-v2.sc.zip
+          unzip -q m.zip
+          CLI=../src/target/release/solidcraft-cli
+          for e in $(ls e_*.json | sort); do
+            echo "=== $e"; $CLI run $e --in mm2006-v2.sc --results --allow-errors 2>&1 | head -c 12000
+            echo
+          done
