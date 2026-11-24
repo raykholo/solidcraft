@@ -359,9 +359,7 @@ impl Cloud {
             let shown = Container::new(ui.ctx(), Surface::Chrome).edge("sc3000_offline", ui_kit::Edge::Bottom).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(tr("sc3000.web.offline"));
-                    let dismiss = ui_kit::button(ui, tr("sc3000.web.dismiss"), ui_kit::Button::Normal);
-                self.dismiss = Some(dismiss.rect);
-                if dismiss.clicked() {
+                    if ui_kit::button(ui, tr("sc3000.web.dismiss"), ui_kit::Button::Normal).clicked() {
                         self.offline_dismissed = true;
                     }
                 });
@@ -475,8 +473,7 @@ impl Cloud {
             ui.horizontal_wrapped(|ui| {
                 ui.label(format("sc3000.web.banner", &[("date", &self.date)]));
                 let dismiss = ui_kit::button(ui, tr("sc3000.web.dismiss"), ui_kit::Button::Normal);
-                // The browser check clicks it while Community Support is open: nothing covers it.
-                solidcraft_ui_egui::scenario::publish_target("sc3000:banner:dismiss", dismiss.rect);
+                self.dismiss = Some(dismiss.rect);
                 if dismiss.clicked() {
                     self.banner_at = ui.input(|i| i.time) + 60.0;
                     self.dismissals = self.dismissals.saturating_add(1);
