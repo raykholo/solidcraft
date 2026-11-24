@@ -1606,16 +1606,21 @@ mod tests {
         phone.tick(3.0, true, phone_available(&h.app, &ctx));
         assert_eq!(phone.step, None, "A hidden report can hold typing; never interrupt it");
         h.app.issue_report.draft = None;
-        let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+        // No renderer in these tests: each frame's texture uploads are dropped on purpose.
+        ctx.run_ui(egui::RawInput::default(), |ui| {
             Container::new(ui.ctx(), Surface::Window).modal(egui::Id::unique("other_modal")).show(ui.ctx(), |_| {
                 phone.tick(4.0, true, phone_available(&h.app, &ctx));
                 assert_eq!(phone.step, None, "Wait for any other modal");
             });
-        });
+        })
+        .textures_delta
+        .clear();
         for second in 5..9 {
-            let _ = ctx.run_ui(egui::RawInput::default(), |_| {
+            ctx.run_ui(egui::RawInput::default(), |_| {
                 phone.tick(f64::from(second), true, phone_available(&h.app, &ctx));
-            });
+            })
+            .textures_delta
+            .clear();
         }
         assert_eq!(phone.step, Some(crate::sc3000_phone::Step::Number), "Show the queued gag when the workspace is free");
     }
@@ -1707,7 +1712,7 @@ mod tests {
         use crate::sc3000_phone::{Phone, Step};
         use solidcraft_ui_kit::test_support::{each_shape, pointer};
         fn frame(ctx: &egui::Context, phone: &mut Phone, size: egui::Vec2, events: Vec<egui::Event>) -> egui::FullOutput {
-            ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
                     time: Some(5.0),
@@ -1717,7 +1722,10 @@ mod tests {
                 |ui| {
                     phone.show(ui.ctx(), 5.0);
                 },
-            )
+            );
+            // No renderer here: the font atlas upload is not needed.
+            output.textures_delta.clear();
+            output
         }
         fn label(output: &egui::FullOutput, wanted: &str) -> Result<egui::Rect, String> {
             let mut found = None;
@@ -1752,15 +1760,15 @@ mod tests {
                 let send = label(&output, "Send code")?;
                 assert!(bounds.contains_rect(label(&output, "Sign me up for surprise calls from our Customer Success Team")?));
                 assert!(bounds.contains_rect(label(&output, "SolidCraft 3000 is a parody. Nothing you type here is sent or stored.")?));
-                frame(&ctx, &mut phone, size, pointer(send.center(), true));
-                frame(&ctx, &mut phone, size, pointer(send.center(), false));
+                frame(&ctx, &mut phone, size, pointer(send.center(), true)).textures_delta.clear();
+                frame(&ctx, &mut phone, size, pointer(send.center(), false)).textures_delta.clear();
                 assert_eq!(phone.step, Some(Step::Code));
                 output = frame(&ctx, &mut phone, size, vec![]);
                 label(&output, "Enter the 6-digit code we texted you")?;
                 let skip = label(&output, "Skip for now (ask again in 3 minutes)")?;
                 assert!(bounds.contains_rect(skip));
-                frame(&ctx, &mut phone, size, pointer(skip.center(), true));
-                frame(&ctx, &mut phone, size, pointer(skip.center(), false));
+                frame(&ctx, &mut phone, size, pointer(skip.center(), true)).textures_delta.clear();
+                frame(&ctx, &mut phone, size, pointer(skip.center(), false)).textures_delta.clear();
                 assert_eq!(phone.step, None);
             }
         }
@@ -1895,9 +1903,11 @@ mod tests {
                 let mut textures = HashMap::new();
                 let mut output = frame(&ctx, &mut cloud, bounds, Vec::new());
                 textures_update(&mut textures, &output.textures_delta);
+                output.textures_delta.clear();
                 for _ in 0..2 {
                     output = frame(&ctx, &mut cloud, bounds, Vec::new());
                     textures_update(&mut textures, &output.textures_delta);
+                    output.textures_delta.clear();
                 }
                 let send = text_rect(&output, "Send report")?;
                 let relaunch = text_rect(&output, "Relaunch")?;
@@ -1907,14 +1917,15 @@ mod tests {
                     assert!(image.pixels().all(|pixel| pixel.0[3] == 255), "The error screen fills the window");
                     image.save(std::path::Path::new(dir).join(format!("pdf-crash{suffix}-{}.png", if dark { "dark" } else { "light" })))?;
                 }
-                frame(&ctx, &mut cloud, bounds, pointer(send.center(), true));
-                frame(&ctx, &mut cloud, bounds, pointer(send.center(), false));
+                frame(&ctx, &mut cloud, bounds, pointer(send.center(), true)).textures_delta.clear();
+                frame(&ctx, &mut cloud, bounds, pointer(send.center(), false)).textures_delta.clear();
                 assert_eq!(cloud.scene, Some(Scene::DrawingPdf { reported: true }));
                 output = frame(&ctx, &mut cloud, bounds, Vec::new());
+                output.textures_delta.clear();
                 text_rect(&output, "Report sent to the cloud. The cloud says thanks.")?;
                 let relaunch = text_rect(&output, "Relaunch")?;
-                frame(&ctx, &mut cloud, bounds, pointer(relaunch.center(), true));
-                frame(&ctx, &mut cloud, bounds, pointer(relaunch.center(), false));
+                frame(&ctx, &mut cloud, bounds, pointer(relaunch.center(), true)).textures_delta.clear();
+                frame(&ctx, &mut cloud, bounds, pointer(relaunch.center(), false)).textures_delta.clear();
                 assert_eq!(cloud.scene, None, "Relaunch dismisses the report screen");
             }
         }
