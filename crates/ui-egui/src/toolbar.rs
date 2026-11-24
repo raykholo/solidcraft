@@ -455,6 +455,9 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         });
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
+    // Community Support opens below the app bar and the maintenance strip.
+    #[cfg(feature = "sc3000")]
+    crate::sc3000_support::set_chrome_bottom(ui.ctx(), ui.available_rect_before_wrap().top());
     file_menu(app, ui.ctx());
     crate::plugin_menu::menu(app, &ui.ctx().clone());
     let help_x = ui.ctx().data(|d| d.get_temp::<f32>(egui::Id::unique("sc_help_anchor")).unwrap_or(300.0));

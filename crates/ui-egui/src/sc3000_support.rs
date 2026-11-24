@@ -20,6 +20,8 @@ pub const REPLY_SECONDS: f64 = 1.2;
 /// How long after the support bot a community member chimes in, in seconds.
 pub const COMMUNITY_SECONDS: f64 = 1.4;
 /// Longest message the input takes.
+/// The chat window's rows other than its lines (title, parody header, input), in control heights.
+const CHROME_ROWS: f32 = 6.0;
 const INPUT_LIMIT: usize = 500;
 
 /// Who said it.
@@ -150,6 +152,21 @@ fn role(who: Who) -> &'static str {
 }
 
 /// Draw the chat if it is open (or was just asked for).
+fn chrome_id() -> egui::Id {
+    egui::Id::unique("sc3000_support_chrome_bottom")
+}
+
+/// Where the app's top chrome (the app bar and the maintenance strip, under the page's banner)
+/// ends this frame: the chat opens below it. The app bar sets it as it draws.
+pub fn set_chrome_bottom(ctx: &egui::Context, y: f32) {
+    ctx.data_mut(|d| d.insert_temp(chrome_id(), y));
+}
+
+/// The bottom of the top chrome, or the top of the screen before the app bar has drawn.
+pub fn chrome_bottom(ctx: &egui::Context) -> f32 {
+    ctx.data(|d| d.get_temp::<f32>(chrome_id())).unwrap_or_else(|| ctx.content_rect().top())
+}
+
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let chat = &mut app.help.sc3000_support;
     if ctx.data_mut(|d| d.remove_temp::<bool>(request_id())).unwrap_or(false) {
@@ -165,7 +182,15 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
     let t = solidcraft_theme::Tokens::get();
     let title = tr("sc3000.support.title");
-    let closed = ui_kit::Window::new(egui::Id::unique("sc3000_support"), "help", title).cards(2.0).show_body(ctx, |ui| {
+    // Below the app bar, the maintenance strip and the page's own banner, never over them: their
+    // buttons (the banner's Dismiss) stay clickable while the chat is open.
+    let screen = ctx.content_rect();
+    let top = chrome_bottom(ctx).clamp(screen.top(), screen.bottom());
+    let gap = t.space_8;
+    let window = ui_kit::Window::new(egui::Id::unique("sc3000_support"), "help", title)
+        .cards(2.0)
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top - screen.top() + gap));
+    let closed = window.show_body(ctx, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         // The parody line, with the real community's link.
         ui.horizontal_wrapped(|ui| {
@@ -182,7 +207,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ui.separator();
         // Tall enough for a whole first exchange (greeting, two questions, the answers and a community
         // reply) on a laptop screen, so nothing starts out cut off under the header.
-        let height = (ui.ctx().content_rect().height() - t.control_height * 10.0).clamp(t.control_height * 4.0, t.control_height * 20.0);
+        let height = (screen.bottom() - top - gap * 2.0 - t.control_height * CHROME_ROWS).clamp(t.control_height * 4.0, t.control_height * 20.0);
         let scroll = egui::ScrollArea::vertical().max_height(height).min_scrolled_height(height).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
             ui.add_space(t.space_4);
             for (index, line) in chat.lines.iter().enumerate() {
