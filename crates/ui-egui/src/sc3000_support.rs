@@ -3,7 +3,6 @@
 //! browser tab. A cheerful support bot and two community members answer whatever you type with
 //! escalating non-answers.
 //!
-//! Idea: Luke, on the Dutchman CAD Discord.
 //!
 //! Nothing here leaves the app: no request, no storage, no log. What you type lives in this window
 //! only and is gone when it closes. The only link out is the real Discord, named in the parody line
