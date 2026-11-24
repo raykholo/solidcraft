@@ -1,0 +1,6 @@
+craft-plugin 
+craft-plugin-wasm 
+solidcraft-engine plugin
+solidcraft-ui-egui plugin
+solidcraft-ui-egui workspace
+solidcraft-panel-layout plugin_workspace
