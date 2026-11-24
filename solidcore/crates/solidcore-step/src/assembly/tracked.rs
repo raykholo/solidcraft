@@ -35,6 +35,8 @@ const FIRST_PIECES: usize = 64;
 /// The most nodes a followed pcurve has, and the most times a piece is halved.
 const MAX_NODES: usize = 1024;
 const MAX_DEPTH: u32 = 10;
+/// The most times a step along the edge is halved.
+const MAX_ADVANCE_DEPTH: u32 = 8;
 /// The farthest (mm) the followed pcurve's end may lie from the kernel's.
 const END_AGREE: f64 = 0.1;
 /// How far (mm) a followed point may lie from where the pcurve so far predicts it: this much of
@@ -168,6 +170,26 @@ impl Walk<'_> {
         Some(Node { t, q, m, off })
     }
 
+    /// The nodes from `prev` on to the edge's parameter `t` (at least the one at `t`): taken in one
+    /// step from where the slope predicts, or in halves where that lies too far off the part of
+    /// the surface the edge is on.
+    fn advance(&self, prev: Node, t: f64, depth: u32) -> Option<Vec<Node>> {
+        let h = t - prev.t;
+        let hint = [prev.q[0] + h * prev.m[0], prev.q[1] + h * prev.m[1]];
+        let reach = REACH_SHARE * self.curve.point(prev.t)?.dist(self.curve.point(t)?) + REACH_MORE;
+        if let Some(node) = self.node(t, hint, reach) {
+            return Some(vec![node]);
+        }
+        if depth >= MAX_ADVANCE_DEPTH {
+            return None;
+        }
+        let mid = prev.t + 0.5 * h;
+        let mut first = self.advance(prev, mid, depth + 1)?;
+        let from = *first.last()?;
+        first.extend(self.advance(from, t, depth + 1)?);
+        Some(first)
+    }
+
     /// The nodes after `a` up to and with `b`, halving until each piece fits.
     fn pieces(&self, a: Node, b: Node, depth: u32, out: &mut Vec<Node>) -> Option<()> {
         let h = b.t - a.t;
@@ -234,15 +256,14 @@ fn followed(
         } else {
             anchor_t + sign * (t1 - t0) * (i as f64 / FIRST_PIECES as f64)
         };
-        let h = t - prev.t;
-        let hint = [prev.q[0] + h * prev.m[0], prev.q[1] + h * prev.m[1]];
-        let reach = REACH_SHARE * curve.point(prev.t)?.dist(curve.point(t)?) + REACH_MORE;
-        let Some(node) = walk.node(t, hint, reach) else {
+        let Some(more) = walk.advance(prev, t, 0) else {
             eprintln!("DBG coarse fail i={i} t={t}");
             return None;
         };
-        prev = node;
-        coarse.push(node);
+        for n in more {
+            prev = n;
+            coarse.push(n);
+        }
     }
     if backward {
         coarse.reverse();
