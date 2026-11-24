@@ -3869,6 +3869,57 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                 }
             }
         }
+        if ret_val.is_none() {
+            let src_edge = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Edge);
+            let src_face = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Face);
+            eprintln!(
+                "DIAG15049 pv={:?} tol={:?} which={} at_start={} ed_pos={:?} src_edge={} src_face={} nvds={}",
+                self.pv(Some(pv))?.position,
+                self.pv(Some(pv))?.tol,
+                which,
+                at_start,
+                ed_pos,
+                src_edge.is_some(),
+                src_face.is_some(),
+                vds.len()
+            );
+            for &vd in vds {
+                let v = self.vd(vd)?;
+                let fv = v.final_vertex(which);
+                let fp = match fv {
+                    Some(x) => geometry.vertex_point(x).ok(),
+                    None => None,
+                };
+                let nf = match fv {
+                    Some(x) => geometry.vertex_use_faces(x).map(|f| f.len()).ok(),
+                    None => None,
+                };
+                let on_src_face = match (fv, src_face) {
+                    (Some(x), Some(f)) => geometry
+                        .vertex_use_faces(x)
+                        .map(|fs| fs.contains(&Some(f)))
+                        .ok(),
+                    _ => None,
+                };
+                eprintln!(
+                    "DIAG15049   vd pos={:?} final_point={:?} nfaces={:?} on_src_face={:?}",
+                    v.position, fp, nf, on_src_face
+                );
+            }
+            if let Some(e) = src_edge {
+                let s = geometry.edge_start_vertex(e).ok().flatten();
+                let o = geometry.edge_other_vertex(e, s).ok().flatten();
+                let sp = match s {
+                    Some(x) => geometry.vertex_point(x).ok(),
+                    None => None,
+                };
+                let op = match o {
+                    Some(x) => geometry.vertex_point(x).ok(),
+                    None => None,
+                };
+                eprintln!("DIAG15049   src edge start={:?} other={:?}", sp, op);
+            }
+        }
         Ok(ret_val)
     }
 
