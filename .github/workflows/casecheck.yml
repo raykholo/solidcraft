@@ -1,0 +1,73 @@
+name: casecheck
+on:
+  push:
+    branches: ["casecheck/**"]
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 170
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(sed -n 1p ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the CLI
+        working-directory: src
+        run: cargo build --release --locked -p solidcraft-cli
+      - name: Case 1390
+        working-directory: src
+        run: |
+          target/release/solidcraft-cli kernel-cases --json tests/kernel-cases/fillets/1390-chamfer-hole-rim-touching-bottom && echo CASE-1390-PASS || echo CASE-1390-FAIL
+      - name: The PR's kernel test
+        working-directory: src
+        continue-on-error: true
+        run: cargo test --locked -p solidcraft-kernel --lib blend -- --test-threads=4 2>&1 | grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" | tail -60
+      - name: The PR's solidcore tests
+        working-directory: src/solidcore
+        continue-on-error: true
+        run: |
+          cargo test --locked -p solidcore --test blend 2>&1 | grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" | tail -40
+          cargo test --locked -p solidcore --lib fillet 2>&1 | grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" | tail -40
+      - name: Every rig area against its known-failing list
+        working-directory: src
+        continue-on-error: true
+        run: |
+          for d in tests/kernel-cases/*/; do
+            a=$(basename "$d")
+            [ -f "$d/KNOWN_FAILING" ] || continue
+            echo "=== AREA $a"
+            cargo run -q --locked -p xtask -- kernel-cases --area "$a" --cli target/release/solidcraft-cli --out "/tmp/rig-$a" --known-failing "$d/KNOWN_FAILING" 2>&1 | grep -v "^PASS\|^FAIL  \|^KNOWN" | tail -15
+          done
+  head:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(sed -n 2p ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: The PR head's kernel test, unmerged
+        working-directory: src
+        run: cargo test --locked -p solidcraft-kernel --lib a_round_beside -- --nocapture 2>&1 | grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" | tail -30
