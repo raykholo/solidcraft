@@ -1,0 +1,33 @@
+name: shotk-21476
+on:
+  push:
+    branches: ["shotk-21476"]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: 61ccd75d21deded5c0fd9fcc1ef31b8459124df5
+          fetch-depth: 1
+      - name: Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config cmake build-essential libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libvulkan1
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Build the desktop app
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: cargo build --release -p solidcraft -p solidcraft-cli
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-app
+          path: target/release/solidcraft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-cli
+          path: target/release/solidcraft-cli
