@@ -1,0 +1,41 @@
+name: shot7-20425
+on:
+  push:
+    branches: ["shot7-20425"]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: 449c52ad667d599964d75ddd175c8bc332ee1112
+          fetch-depth: 1
+      - name: Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config cmake build-essential libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libvulkan1
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Build the desktop app
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: cargo build --release -p solidcraft -p solidcraft-cli
+      - name: Build the repo's own user-storage importer fixture
+        run: |
+          cargo install wasm-tools --locked --version 1.240.0
+          mkdir -p fixture-pkg
+          sed 's#__CODE__#i32.const 512 i32.const 5 i32.const 2048 i32.const 2 i32.const 128 call $set#' crates/craft-plugin-wasm/src/importer_storage_fixture.wat > fixture-pkg/importer.wat
+          wasm-tools parse fixture-pkg/importer.wat -o fixture-pkg/importer.wasm
+          rm fixture-pkg/importer.wat
+          ls -l fixture-pkg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-app
+          path: target/release/solidcraft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fixture-pkg
+          path: fixture-pkg/importer.wasm
