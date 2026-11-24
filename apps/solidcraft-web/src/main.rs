@@ -1936,6 +1936,31 @@ mod tests {
 
     #[cfg(feature = "sc3000")]
     #[test]
+    fn the_banners_dismiss_stays_published_after_the_app_clears_its_targets() {
+        use solidcraft_ui_egui::scenario::{clear_handles, handle_at};
+        solidcraft_ui_egui::i18n::install();
+        let ctx = egui::Context::default();
+        let mut cloud = crate::sc3000::Cloud::new(false, "2026-11-24".into(), "test".into());
+        let bounds = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 900.0));
+        // As the page draws a frame: the banner, then the app (which starts by clearing every
+        // published target), then the cloud's own screens.
+        let mut frame = |cloud: &mut crate::sc3000::Cloud, time: f64| {
+            let _ = ctx.run_ui(egui::RawInput { screen_rect: Some(bounds), time: Some(time), ..Default::default() }, |ui| {
+                cloud.banner(ui);
+                clear_handles();
+                cloud.show(ui.ctx(), 0, 0, 0, "");
+            });
+        };
+        frame(&mut cloud, 0.0);
+        let at = handle_at("sc3000:banner:dismiss").expect("the banner's Dismiss is published for the browser check");
+        assert!(bounds.contains(at), "{at:?}");
+        cloud.banner_at = 100.0;
+        frame(&mut cloud, 1.0);
+        assert!(handle_at("sc3000:banner:dismiss").is_none(), "a dismissed banner publishes no Dismiss");
+    }
+
+    #[cfg(feature = "sc3000")]
+    #[test]
     fn drawing_pdf_cloud_screen_reports_and_relaunches_in_both_themes() -> Result<(), Box<dyn std::error::Error>> {
         use crate::sc3000::{Cloud, Scene};
         use solidcraft_ui_kit::test_support::{each_shape, pointer, raster, textures_update};

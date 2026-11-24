@@ -23,6 +23,9 @@ pub(crate) struct Cloud {
     pub(crate) phone: crate::sc3000_phone::Phone,
     pub(crate) banner_at: f64,
     pub(crate) dismissals: u8,
+    /// Where the banner's Dismiss was drawn this frame. Published after the app has drawn: the app
+    /// starts its frame by clearing every published target, and the banner draws before it.
+    dismiss: Option<egui::Rect>,
     /// The bottom strip's height last told to the page (CSS px), so the parody note sits above it.
     note_lift: f32,
     /// The parody note's text last given to the page, in the person's language.
@@ -169,6 +172,7 @@ impl Cloud {
             phone: Default::default(),
             banner_at: 0.0,
             dismissals: 0,
+            dismiss: None,
             note_lift: 0.0,
             note_text: String::new(),
             active: 0.0,
@@ -356,8 +360,7 @@ impl Cloud {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(tr("sc3000.web.offline"));
                     let dismiss = ui_kit::button(ui, tr("sc3000.web.dismiss"), ui_kit::Button::Normal);
-                // The browser check clicks it while Community Support is open: nothing covers it.
-                solidcraft_ui_egui::scenario::publish_target("sc3000:banner:dismiss", dismiss.rect);
+                self.dismiss = Some(dismiss.rect);
                 if dismiss.clicked() {
                         self.offline_dismissed = true;
                     }
@@ -463,6 +466,7 @@ impl Cloud {
     }
 
     pub(crate) fn banner(&mut self, ui: &mut egui::Ui) {
+        self.dismiss = None;
         if ui.input(|i| i.time) < self.banner_at {
             return;
         }
@@ -482,6 +486,10 @@ impl Cloud {
     }
 
     pub(crate) fn show(&mut self, ctx: &egui::Context, saves: u64, fillets: u64, parsecs: u64, search: &str) {
+        // The browser check clicks Dismiss while Community Support is open: nothing covers it.
+        if let Some(rect) = self.dismiss {
+            solidcraft_ui_egui::scenario::publish_target("sc3000:banner:dismiss", rect);
+        }
         if let Some(Scene::DrawingPdf { reported }) = self.scene {
             self.drawing_pdf_screen(ctx, reported);
             return;
