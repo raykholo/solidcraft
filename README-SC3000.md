@@ -7,7 +7,7 @@ imitate or name another company or product. The real SolidCraft is at https://gi
 
 The `sc3000` Cargo feature is **off by default**; a normal build keeps SolidCraft's behaviour.
 
-Phone number verification gag requested by: **oursland** (cadmpeg). Community Support chat idea: **Luke** (Discord).
+Phone number verification gag requested by: **oursland** (cadmpeg).
 
 ## Build
 
