@@ -205,28 +205,31 @@ fn followed(
     curve: &CurveEval,
     interval: [f64; 2],
     seed: &Curve2,
+    backward: bool,
 ) -> Option<Curve2> {
     let [t0, t1] = interval;
     if !(t1 > t0) {
         return None;
     }
     let walk = Walk { on, curve };
-    let q0 = pcurve::eval(seed, t0)?;
+    // The edge is followed from the end of the kernel's pcurve that is on the right part of the
+    // surface: tried from its start, then from its end (the start may lie on the wrong one of two
+    // sheets a few hundredths of a millimetre apart).
+    let (anchor_t, far_t, sign) = if backward { (t1, t0, -1.0) } else { (t0, t1, 1.0) };
+    let q0 = pcurve::eval(seed, anchor_t)?;
     let first = Node {
-        t: t0,
+        t: anchor_t,
         q: q0,
-        m: slope(on, curve, t0, q0)?,
-        off: on.point(q0)?.dist(curve.point(t0)?),
+        m: slope(on, curve, anchor_t, q0)?,
+        off: on.point(q0)?.dist(curve.point(anchor_t)?),
     };
-    // The edge followed from the kernel's start, each point from where the last one's slope
-    // takes the parameters.
     let mut coarse = vec![first];
     let mut prev = first;
     for i in 1..=FIRST_PIECES {
         let t = if i == FIRST_PIECES {
-            t1
+            far_t
         } else {
-            t0 + (t1 - t0) * (i as f64 / FIRST_PIECES as f64)
+            anchor_t + sign * (t1 - t0) * (i as f64 / FIRST_PIECES as f64)
         };
         let h = t - prev.t;
         let hint = [prev.q[0] + h * prev.m[0], prev.q[1] + h * prev.m[1]];
@@ -235,17 +238,24 @@ fn followed(
         prev = node;
         coarse.push(node);
     }
-    // It ends where the kernel's pcurve does.
-    let mut last = *coarse.last()?;
-    let end = pcurve::eval(seed, t1)?;
-    if on.point(end)?.dist(on.point(last.q)?) > END_AGREE {
-        return None;
+    if backward {
+        coarse.reverse();
     }
-    last.q = end;
-    last.m = slope(on, curve, t1, end)?;
-    last.off = on.point(end)?.dist(curve.point(t1)?);
-    if let Some(slot) = coarse.last_mut() {
-        *slot = last;
+    // The far end (not the anchor) is kept where it was followed to when walking backward.
+    let first = *coarse.first()?;
+    if !backward {
+        // It ends where the kernel's pcurve does.
+        let mut last = *coarse.last()?;
+        let end = pcurve::eval(seed, t1)?;
+        if on.point(end)?.dist(on.point(last.q)?) > END_AGREE {
+            return None;
+        }
+        last.q = end;
+        last.m = slope(on, curve, t1, end)?;
+        last.off = on.point(end)?.dist(curve.point(t1)?);
+        if let Some(slot) = coarse.last_mut() {
+            *slot = last;
+        }
     }
     let mut nodes = vec![first];
     for pair in coarse.windows(2) {
@@ -298,10 +308,16 @@ pub(super) fn retrack(
             if !(off > FAR) {
                 continue;
             }
-            let Some(again) = followed(&on, &eval, interval, pc) else {
-                continue;
-            };
-            if gap(&on, &eval, &again, interval) < off {
+            let mut best: Option<(f64, Curve2)> = None;
+            for backward in [false, true] {
+                if let Some(again) = followed(&on, &eval, interval, pc, backward) {
+                    let g = gap(&on, &eval, &again, interval);
+                    if g < off && best.as_ref().is_none_or(|(b, _)| g < *b) {
+                        best = Some((g, again));
+                    }
+                }
+            }
+            if let Some((_, again)) = best {
                 *pc = again;
                 made += 1;
             }
