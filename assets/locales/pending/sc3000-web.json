@@ -1,6 +1,5 @@
 {
   "en": {
-    "sc3000.web.anything": "All identities accepted, including no identity. This pretend sign-in collects nothing.",
     "sc3000.web.banner": "SolidCraft 3000 will undergo no-downtime maintenance {date} from now until forever.",
     "sc3000.web.change_cloud": "Improved cloud",
     "sc3000.web.change_extrude": "Moved the Extrude button 3 px to the left",
@@ -9,7 +8,6 @@
     "sc3000.web.continue": "Continue to CAD",
     "sc3000.web.credits": "Cloud credits: you have 3. Extrudes cost 1. (Just kidding, they're free.)",
     "sc3000.web.dismiss": "Dismiss",
-    "sc3000.web.expired": "Your session has expired",
     "sc3000.web.fillet_outage": "SolidCraft 3000 is experiencing issues. We have identified the problem and are working on a fix. For now, please limit fillets to 3 operations per hour.",
     "sc3000.web.identical": "These versions are identical. Both choices keep the same local design.",
     "sc3000.web.offline": "Offline mode detected: everything works perfectly",
@@ -17,7 +15,6 @@
     "sc3000.web.parsecs": "Parsecs per fortnight is a speed, so every length in your design now reads 0 pc/fn: your part is standing perfectly still. Relativistic tolerances arrive in SolidCraft 3000 Ultra.",
     "sc3000.web.salmon": "A friendly service salmon",
     "sc3000.web.salmon_dispatched": "A friendly service salmon has been dispatched to your design.",
-    "sc3000.web.signin": "Sign in to SolidCraft 3000 Cloud",
     "sc3000.web.splash": "SolidCraft 3000 — Now 100% in the cloud",
     "sc3000.web.sync": "Syncing to the cloud… (step 1 of ∞)",
     "sc3000.web.tip_0": "Did you know? Your files are stored on your own computer. We're as surprised as you are.",
@@ -33,7 +30,6 @@
     "sc3000.web.yours_copy": "your version (1)"
   },
   "de": {
-    "sc3000.web.anything": "Alle Identitäten werden akzeptiert, auch keine Identität. Diese Schein-Anmeldung erfasst nichts.",
     "sc3000.web.banner": "SolidCraft 3000 wird am {date} ab sofort bis in alle Ewigkeit ohne Ausfallzeit gewartet.",
     "sc3000.web.change_cloud": "Verbesserte Cloud",
     "sc3000.web.change_extrude": "Die Schaltfläche „Extrudieren“ um 3 px nach links verschoben",
@@ -42,7 +38,6 @@
     "sc3000.web.continue": "Weiter zum CAD",
     "sc3000.web.credits": "Cloud-Guthaben: Sie haben 3. Ein Extrudieren kostet 1. (Nur ein Scherz, es ist kostenlos.)",
     "sc3000.web.dismiss": "Schließen",
-    "sc3000.web.expired": "Ihre Sitzung ist abgelaufen",
     "sc3000.web.fillet_outage": "Bei SolidCraft 3000 treten Probleme auf. Wir haben die Ursache gefunden und arbeiten an einer Lösung. Bitte beschränken Sie Vollrundungen vorerst auf 3 Vorgänge pro Stunde.",
     "sc3000.web.identical": "Diese Versionen sind identisch. Beide Optionen behalten denselben lokalen Entwurf.",
     "sc3000.web.offline": "Offline-Modus erkannt: Alles funktioniert einwandfrei",
@@ -50,7 +45,6 @@
     "sc3000.web.parsecs": "Parsec pro vierzehn Tage ist eine Geschwindigkeit, also zeigt jede Länge in Ihrem Entwurf jetzt 0 pc/14 d: Ihr Teil steht vollkommen still. Relativistische Toleranzen kommen mit SolidCraft 3000 Ultra.",
     "sc3000.web.salmon": "Ein freundlicher Service-Lachs",
     "sc3000.web.salmon_dispatched": "Ein freundlicher Service-Lachs wurde zu Ihrem Entwurf geschickt.",
-    "sc3000.web.signin": "Bei SolidCraft 3000 Cloud anmelden",
     "sc3000.web.splash": "SolidCraft 3000 — jetzt zu 100 % in der Cloud",
     "sc3000.web.sync": "Synchronisierung mit der Cloud … (Schritt 1 von ∞)",
     "sc3000.web.tip_0": "Schon gewusst? Ihre Dateien liegen auf Ihrem eigenen Computer. Wir sind genauso überrascht wie Sie.",

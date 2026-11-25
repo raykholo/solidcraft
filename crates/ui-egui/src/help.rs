@@ -29,6 +29,9 @@ pub struct HelpState {
     /// SolidCraft 3000: the Community Support chat the Discord and Documentation links open.
     #[cfg(feature = "sc3000")]
     pub sc3000_support: crate::sc3000_support::Chat,
+    /// SolidCraft 3000: the pretend Cloud Account (sign-ins, sign-outs, the back-up note).
+    #[cfg(feature = "sc3000")]
+    pub sc3000_account: crate::sc3000_account::Account,
 }
 
 /// One line per fact, for bug reports.
@@ -217,6 +220,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
     crate::messages::show(app, ctx);
     #[cfg(feature = "sc3000")]
     crate::sc3000_support::show(app, ctx);
+    #[cfg(feature = "sc3000")]
+    crate::sc3000_account::show(app, ctx);
 }
 
 fn about(app: &mut SolveApp, ctx: &egui::Context) {

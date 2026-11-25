@@ -34,8 +34,8 @@ The parody note is English until the app starts, then follows the app's language
   more padding each time (bounded so it cannot grow over the whole workspace).
 - The daily update reaches 99% after two seconds, holds there for eight seconds,
   then shows its fictional changelog. Continue skips it at any time.
-- After ten minutes with the tab focused, the pretend session expires. Any text,
-  including no text, signs in; dismissing also returns to CAD.
+- Every ten to twenty minutes with the tab focused, the pretend session expires
+  “for your security” (see [Cloud Account](#cloud-account)); Not now returns to CAD.
 - A successful Save or Save As triggers three seconds of pretend syncing and
   two identical conflict choices. The joke does not delay or alter the real save.
 - On load and at ten-minute intervals there is a one-in-twenty chance of a
@@ -115,18 +115,50 @@ own Discord (https://discord.gg/FtU4NQNVDH, the same one Join the Discord opens)
 way out, opened only when clicked. Ko-fi still opens its real page. The tests are in
 `crates/ui-egui/src/sc3000_support_tests.rs`.
 
+## Cloud Account
+
+The maintenance strip under the app bar has a **Sign in** link (once signed in, it shows your Cloud ID). Any Cloud ID
+and any password sign in, the first time.
+
+1. **Random sign-outs.** Every ten to twenty minutes of use (the tab focused; never twice within ten minutes, and
+   never while the account window or the recovery report is open) you are signed out: “Your session has expired for
+   your security”, with Sign in and Not now.
+2. **Incorrect password.** After a sign-out every password is “Incorrect password.”, so you must **Reset your
+   password**.
+3. **The reset.** The first new password is refused: “You cannot use your existing password.” (it can’t actually tell:
+   it never kept it). Then the rules arrive one at a time, each new one once you keep all the others: it must contain
+   a fillet (the word will do), it must contain 3000, it cannot contain the letter you just typed, and it must be
+   longer than your old password, “which we definitely don’t remember”. The rules never contradict each other, so
+   knowing them it takes five tries; the eighth try is accepted whatever it is (“The rules have been forwarded to the
+   Enterprise Plus team”).
+4. **The back-up note.** While the design has unsaved changes, “Your design is not backed up to the cloud. Save now?”
+   appears every fifteen seconds of use. Save now runs the real save; Ctrl+S (or any Save) and Not now dismiss it
+   until the next fifteen seconds.
+5. **Recovery.** After thirty minutes of unsaved use, once per unsaved stretch, “SolidCraft 3000 has recovered 0 of 47
+   hours of work.” Restore 0 hours and Close both only close it: it never closes, clears or changes the design, which
+   stays open and unsaved exactly as it was.
+
+Every account page ends with “Parody: there is no cloud account; nothing leaves this browser tab.” Nothing is sent
+anywhere. The password itself is never kept, not even in the field’s undo history: the account keeps only the Cloud
+ID, the password’s length and when it was set, in one `localStorage` entry, `sc3000_account`. Every access to it is
+guarded; where the browser blocks storage, the account lasts until the tab closes and the page says so. No window is
+modal, each closes in one click, and saving and exporting work throughout. The code is
+`crates/ui-egui/src/sc3000_account.rs` (the browser store is in `apps/solidcraft-web/src/sc3000.rs`); the tests are in
+`crates/ui-egui/src/sc3000_account_tests.rs`.
+
 ## The cloud is fictional
 
 The parody adds no telemetry, network calls, remote account or cloud storage.
-The sign-in box accepts anything, including an empty identity. Its temporary
-text is cleared on dismissal and is never sent or persisted.
+The Cloud Account's sign-in accepts any Cloud ID and password; the password is
+never sent or kept, only its length.
 The fake cloud sync choices refer to the same local design. Timed jokes can be
 dismissed, and normal CAD work continues underneath.
 
 The once-per-day update and tip markers use browser `localStorage` with an `sc3000_`
-prefix. Clearing that marker allows the joke to appear again. These are the only
-persistent state added by the parody; SolidCraft's existing browser design
-storage continues to work as usual.
+prefix. Clearing that marker allows the joke to appear again. With the Cloud
+Account's `sc3000_account` entry (a Cloud ID, a password length and a time),
+these are the only persistent state added by the parody; SolidCraft's existing
+browser design storage continues to work as usual.
 
 ## Checks
 

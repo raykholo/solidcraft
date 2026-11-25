@@ -6,7 +6,6 @@ use solidcraft_ui_text::{format, tr};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Scene {
     Update(f64),
-    Expired,
     Sync(f64),
     Conflict,
     Outage(f64),
@@ -32,11 +31,9 @@ pub(crate) struct Cloud {
     note_text: String,
     active: f64,
     previous: Option<f64>,
-    next_session: f64,
     next_outage: f64,
     saves: u64,
     pending_save: bool,
-    identity: String,
     pending_outage: bool,
     pending_fillet: bool,
     fillets_seen: u64,
@@ -177,9 +174,7 @@ impl Cloud {
             note_text: String::new(),
             active: 0.0,
             previous: None,
-            next_session: 600.0,
             next_outage: 600.0,
-            identity: String::new(),
             pending_outage: false,
             pending_fillet: false,
             fillets_seen: 0,
@@ -431,9 +426,6 @@ impl Cloud {
             } else if self.pending_outage {
                 self.pending_outage = false;
                 self.scene = Some(Scene::Outage(0.0));
-            } else if self.active >= self.next_session {
-                self.next_session = self.active + 600.0;
-                self.scene = Some(Scene::Expired);
             } else if self.active >= self.next_outage {
                 self.next_outage = self.active + 600.0;
                 if outage_roll {
@@ -538,14 +530,6 @@ impl Cloud {
                         }
                     }
                 }
-                Scene::Expired => {
-                    ui.heading(tr("sc3000.web.expired"));
-                    ui.label(tr("sc3000.web.signin"));
-                    ui.label(tr("sc3000.web.anything"));
-                    // A transient joke identity, cleared on every dismissal; never persisted.
-                    ui.text_edit_singleline(&mut self.identity);
-                    close |= ui_kit::button(ui, tr("sc3000.web.signin"), ui_kit::Button::Normal).clicked();
-                }
                 Scene::Sync(_) => {
                     ui.label(tr("sc3000.web.sync"));
                     ui.spinner();
@@ -570,9 +554,33 @@ impl Cloud {
             close |= ui_kit::button(ui, tr("sc3000.web.continue"), ui_kit::Button::Normal).clicked();
         });
         if close || response.should_close() {
-            self.identity.clear();
             self.scene = None;
         }
+    }
+}
+
+/// The pretend Cloud Account's one `localStorage` entry: a Cloud ID, a password's length and when
+/// it was set (never the password; see `solidcraft_ui_egui::sc3000_account`).
+const ACCOUNT_KEY: &str = "sc3000_account";
+
+/// The account's store in this browser. Every access is guarded: a browser that blocks storage,
+/// or throws on it, reads as no account and keeps nothing, and the account lasts for the tab.
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct AccountStorage;
+
+#[cfg(target_arch = "wasm32")]
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+#[cfg(target_arch = "wasm32")]
+impl solidcraft_ui_egui::sc3000_account::Store for AccountStorage {
+    fn read(&self) -> Option<String> {
+        local_storage()?.get_item(ACCOUNT_KEY).ok().flatten()
+    }
+
+    fn write(&self, value: &str) -> bool {
+        local_storage().is_some_and(|storage| storage.set_item(ACCOUNT_KEY, value).is_ok())
     }
 }
 
