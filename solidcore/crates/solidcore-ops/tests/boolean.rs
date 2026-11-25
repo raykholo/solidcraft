@@ -4433,7 +4433,7 @@ fn probe_15049_swept_round_pinch() {
     all_fixes();
     // (half width, front radius, top arc centre depth, back radius)
     for (w, r0, c, r2) in [(15.0_f64, 30.0_f64, 56.0_f64, 18.0_f64), (12.5, 25.0, 47.0, 15.0)] {
-        for n in [0.0_f64, 1.7e-9, -1.7e-9, 5e-10, 4e-9, 2e-8] {
+        'cases: for n in [0.0_f64, 1.7e-9, -1.7e-9, 5e-10, 4e-9, 2e-8] {
             let tag = format!("w={w} n={n:e}");
             let rb = r0 + c;
             let q = ((rb - r2).powi(2) - c * c).sqrt();
@@ -4543,21 +4543,17 @@ fn probe_15049_swept_round_pinch() {
                     v
                 }
             };
-            let mut failed = false;
             for s2 in tools2 {
                 p15049_report(&format!("{tag} tool2"), &s2);
                 body = match boolean(body, s2, BooleanOp::Subtract) {
                     Ok(Some(b)) => b,
                     other => {
                         eprintln!("P15049 {tag} cut2: {:?}", other.map(|o| o.is_some()));
-                        failed = true;
-                        break;
+                        continue 'cases;
                     }
                 };
             }
-            if failed {
-                continue;
-            }
+
             p15049_report(&format!("{tag} cut2"), &body);
             // Cut 3: the same triangles from the top arc's end, along the back arc.
             let alpha = phi_t - PI / 2.0;
