@@ -170,19 +170,21 @@ fn closing_forgets_everything_typed() {
 }
 
 #[test]
-fn the_parody_line_names_the_real_discord_and_opens_it_only_when_clicked() {
+fn the_parody_line_sends_real_support_to_solidcrafts_discord_only_when_clicked() {
     let _language = solidcraft_ui_text::scope("en");
     let mut h = harness();
     h.step(&json!({"click":{"handle":"titlebar:discord"}})).unwrap();
     h.frames(3);
-    assert!(h.widget("Parody. Not a real support channel. The real Discord is").is_some());
-    assert!(h.widget("discord.gg/yTcseBEdeu").is_some());
+    assert!(h.widget("Parody. Not a real support channel. Real SolidCraft support is on the").is_some());
+    assert!(h.widget("SolidCraft Discord").is_some());
     wait(&mut h, 3.0);
     assert_eq!(h.take_opened(), Vec::<String>::new(), "nothing opens by itself");
     h.step(&json!({"click":{"handle":"sc3000_support:real_discord"}})).unwrap();
     h.frames(2);
     assert_eq!(h.take_opened(), [REAL_DISCORD_URL]);
-    assert_eq!(REAL_DISCORD_URL, "https://discord.gg/yTcseBEdeu");
+    // SolidCraft's own server (its README's link), the same one Join the Discord opens.
+    assert_eq!(REAL_DISCORD_URL, "https://discord.gg/FtU4NQNVDH");
+    assert_eq!(REAL_DISCORD_URL, crate::links::DISCORD_URL);
 }
 
 #[test]
@@ -190,7 +192,7 @@ fn every_line_is_in_english_and_german() {
     crate::i18n::install();
     let ids = [
         "attach", "bot_name", "bot_role", "bump", "cloud", "forwarded", "greeting", "hint", "how", "member_role", "moderating",
-        "parody", "private", "reopen", "same", "send", "signout", "solved", "title", "typing", "update", "you",
+        "parody", "private", "real_discord", "reopen", "same", "send", "signout", "solved", "title", "typing", "update", "you",
     ];
     for (_, id, community) in SCRIPT {
         let short = id.trim_start_matches("sc3000.support.");
