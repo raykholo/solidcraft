@@ -4432,8 +4432,8 @@ fn probe_15049_swept_round_pinch() {
     use solidcore_ops::sweep::{sweep_placed, SweepFrame};
     all_fixes();
     // (half width, front radius, top arc centre depth, back radius)
-    for (w, r0, c, r2) in [(15.0, 30.0, 56.0, 18.0), (12.5, 25.0, 47.0, 15.0)] {
-        for (mode, e) in [(0u8, 0.0), (1, 1e-10), (1, 1e-9), (1, 2e-9), (2, 1e-10), (2, 1e-9)] {
+    for (w, r0, c, r2) in [(15.0_f64, 30.0_f64, 56.0_f64, 18.0_f64), (12.5, 25.0, 47.0, 15.0)] {
+        for (mode, e) in [(0u8, 0.0_f64), (1, 1e-10), (1, 1e-9), (1, 2e-9), (2, 1e-10), (2, 1e-9)] {
             let tag = format!("w={w} mode={mode} e={e:e}");
             let rb = r0 + c;
             let q = ((rb - r2).powi(2) - c * c).sqrt();
