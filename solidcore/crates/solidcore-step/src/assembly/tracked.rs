@@ -47,6 +47,9 @@ const REACH_MORE: f64 = 0.05;
 const NEWTON_STEPS: usize = 40;
 /// The longest step (in the surface's parameters) a nearest point takes.
 const LONGEST_STEP: f64 = 0.5;
+/// The farthest (mm) a followed point may lie from the edge: the edge is on the surface to within
+/// far less, so a nearest point farther off has settled on another part of it.
+const NODE_OFF: f64 = 0.02;
 
 /// A point of the followed pcurve: the edge's parameter, its parameters on the surface, the
 /// slope of those in the edge's parameter, and how far (mm) the surface at them lies off the edge.
@@ -56,6 +59,26 @@ struct Node {
     q: [f64; 2],
     m: [f64; 2],
     off: f64,
+}
+
+/// `q` put back into the surface's box along each periodic direction, for evaluating. The followed
+/// parameters themselves are not wrapped: they run on across a seam as one continuous pcurve.
+fn fold(on: &SurfaceEval, q: [f64; 2]) -> [f64; 2] {
+    let domain = on.domain();
+    let mut out = q;
+    for ((x, range), period) in out.iter_mut().zip(domain.range).zip(domain.period) {
+        if let (Some((lo, _)), Some(p)) = (range, period)
+            && p > 0.0
+        {
+            *x = lo + (*x - lo).rem_euclid(p);
+        }
+    }
+    out
+}
+
+/// The point of the surface at `q`, folded ([`fold`]).
+fn at(on: &SurfaceEval, q: [f64; 2]) -> Option<Vec3> {
+    on.point(fold(on, q))
 }
 
 /// How far the surface at `pc` lies off the edge, over the samples the record check takes.
@@ -68,7 +91,7 @@ fn gap(on: &SurfaceEval, curve: &CurveEval, pc: &Curve2, [t0, t1]: [f64; 2]) -> 
             t0 + (t1 - t0) * (k as f64 / EDGE_GAP_SAMPLES as f64)
         };
         if let (Some(q), Some(p)) = (pcurve::eval(pc, t), curve.point(t))
-            && let Some(s) = on.point(q)
+            && let Some(s) = at(on, q)
         {
             worst = worst.max(s.dist(p));
         }
@@ -83,7 +106,8 @@ fn near(on: &SurfaceEval, p: Vec3, from: [f64; 2]) -> Option<([f64; 2], f64)> {
     let domain = on.domain();
     let mut q = from;
     for _ in 0..NEWTON_STEPS {
-        let (s, su, sv) = on.derivs(q[0], q[1])?;
+        let f = fold(on, q);
+        let (s, su, sv) = on.derivs(f[0], f[1])?;
         let r = p - s;
         let (a, b, c) = (su.dot(su), su.dot(sv), sv.dot(sv));
         let det = a * c - b * b;
@@ -103,8 +127,10 @@ fn near(on: &SurfaceEval, p: Vec3, from: [f64; 2]) -> Option<([f64; 2], f64)> {
             ];
         }
         let mut next = [q[0] + step[0], q[1] + step[1]];
-        for (x, range) in next.iter_mut().zip(domain.range) {
-            if let Some((lo, hi)) = range {
+        // A periodic direction runs on across its seam (folded for evaluating); the others stay in
+        // their box.
+        for ((x, range), period) in next.iter_mut().zip(domain.range).zip(domain.period) {
+            if let (Some((lo, hi)), None) = (range, period) {
                 *x = x.clamp(lo, hi);
             }
         }
@@ -114,14 +140,15 @@ fn near(on: &SurfaceEval, p: Vec3, from: [f64; 2]) -> Option<([f64; 2], f64)> {
             break;
         }
     }
-    let s = on.point(q)?;
+    let s = at(on, q)?;
     Some((q, s.dist(p)))
 }
 
 /// The slope in the edge's parameter, at `t`, of the parameters `q` of its points.
 fn slope(on: &SurfaceEval, curve: &CurveEval, t: f64, q: [f64; 2]) -> Option<[f64; 2]> {
     let (_, d) = curve.derivs(t)?;
-    let (_, su, sv) = on.derivs(q[0], q[1])?;
+    let f = fold(on, q);
+    let (_, su, sv) = on.derivs(f[0], f[1])?;
     let (a, b, c) = (su.dot(su), su.dot(sv), sv.dot(sv));
     let det = a * c - b * b;
     if !(det > 1e-12 * a * c) {
@@ -162,8 +189,7 @@ impl Walk<'_> {
     fn node(&self, t: f64, hint: [f64; 2], reach: f64) -> Option<Node> {
         let p = self.curve.point(t)?;
         let (q, off) = near(self.on, p, hint)?;
-        if self.on.point(q)?.dist(self.on.point(hint)?) > reach {
-            eprintln!("DBG node reach t={t} hint={hint:?} q={q:?} off={off} reach={reach}");
+        if off > NODE_OFF || at(self.on, q)?.dist(at(self.on, hint)?) > reach {
             return None;
         }
         let m = slope(self.on, self.curve, t, q)?;
@@ -198,7 +224,7 @@ impl Walk<'_> {
             let t = a.t + s * h;
             let hq = between(&a, &b, s);
             let p = self.curve.point(t)?;
-            let on = self.on.point(hq)?.dist(p);
+            let on = at(self.on, hq)?.dist(p);
             let nearest = near(self.on, p, hq).map_or(on, |(_, d)| d);
             if on > nearest.max(a.off).max(b.off) + FIT {
                 fits = false;
@@ -210,7 +236,6 @@ impl Walk<'_> {
             return Some(());
         }
         if depth >= MAX_DEPTH || out.len() >= MAX_NODES {
-            eprintln!("DBG pieces depth t={}..{}", a.t, b.t);
             return None;
         }
         let mid = a.t + 0.5 * h;
@@ -239,14 +264,17 @@ fn followed(
     // The edge is followed from the end of the kernel's pcurve that is on the right part of the
     // surface: tried from its start, then from its end (the start may lie on the wrong one of two
     // sheets a few hundredths of a millimetre apart).
-    let (anchor_t, far_t, sign) = if backward { (t1, t0, -1.0) } else { (t0, t1, 1.0) };
+    let (anchor_t, far_t, sign) = if backward {
+        (t1, t0, -1.0)
+    } else {
+        (t0, t1, 1.0)
+    };
     let q0 = pcurve::eval(seed, anchor_t)?;
-    eprintln!("DBG followed backward={backward} interval={interval:?} anchor q0={q0:?}");
     let first = Node {
         t: anchor_t,
         q: q0,
         m: slope(on, curve, anchor_t, q0)?,
-        off: on.point(q0)?.dist(curve.point(anchor_t)?),
+        off: at(on, q0)?.dist(curve.point(anchor_t)?),
     };
     let mut coarse = vec![first];
     let mut prev = first;
@@ -257,7 +285,6 @@ fn followed(
             anchor_t + sign * (t1 - t0) * (i as f64 / FIRST_PIECES as f64)
         };
         let Some(more) = walk.advance(prev, t, 0) else {
-            eprintln!("DBG coarse fail i={i} t={t}");
             return None;
         };
         for n in more {
@@ -274,12 +301,12 @@ fn followed(
         // It ends where the kernel's pcurve does.
         let mut last = *coarse.last()?;
         let end = pcurve::eval(seed, t1)?;
-        if on.point(end)?.dist(on.point(last.q)?) > END_AGREE {
+        if at(on, end)?.dist(at(on, last.q)?) > END_AGREE {
             return None;
         }
         last.q = end;
         last.m = slope(on, curve, t1, end)?;
-        last.off = on.point(end)?.dist(curve.point(t1)?);
+        last.off = at(on, end)?.dist(curve.point(t1)?);
         if let Some(slot) = coarse.last_mut() {
             *slot = last;
         }
@@ -332,17 +359,14 @@ pub(super) fn retrack(
             };
             let eval = CurveEval::new(curve).map_err(|m| m.to_string())?;
             let off = gap(&on, &eval, pc, interval);
-            eprintln!("DBG retrack edge={e} off={off}");
             if !(off > FAR) {
                 continue;
             }
             let mut best: Option<(f64, Curve2)> = None;
             for backward in [false, true] {
                 let r = followed(&on, &eval, interval, pc, backward);
-                eprintln!("DBG result backward={backward} some={}", r.is_some());
                 if let Some(again) = r {
                     let g = gap(&on, &eval, &again, interval);
-                    eprintln!("DBG gap {g}");
                     if g < off && best.as_ref().is_none_or(|(b, _)| g < *b) {
                         best = Some((g, again));
                     }
