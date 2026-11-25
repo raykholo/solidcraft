@@ -50,6 +50,8 @@ const LONGEST_STEP: f64 = 0.5;
 /// The farthest (mm) a followed point may lie from the edge: the edge is on the surface to within
 /// far less, so a nearest point farther off has settled on another part of it.
 const NODE_OFF: f64 = 0.02;
+/// How far (of the surface's width) the followed end may lie from the neighbour's in parameters.
+const FAR_SHARE: f64 = 0.02;
 
 /// A point of the followed pcurve: the edge's parameter, its parameters on the surface, the
 /// slope of those in the edge's parameter, and how far (mm) the surface at them lies off the edge.
@@ -306,13 +308,23 @@ fn followed(
         None => pcurve::eval(seed, far_t)?,
     };
     let mut end = *coarse.last()?;
-    let period = on.domain().period;
-    eprintln!(
-        "DBG L6 end back={backward} followed={:?} far={:?} period={period:?}",
-        end.q, far
-    );
-    for ((x, y), p) in end.q.iter().zip(far).zip(period) {
-        if p.is_some_and(|p| (x - y).abs() > 0.5 * p) {
+    // The neighbour's end is the same point of a closed surface a period away where the loop runs
+    // to the other side of the seam (its seam edge between): the followed end is not moved a
+    // period, it meets the neighbour where the loop's own jump check expects it.
+    let domain = on.domain();
+    let mut far = far;
+    for ((x, y), (p, range)) in far
+        .iter_mut()
+        .zip(end.q)
+        .zip(domain.period.into_iter().zip(domain.range))
+    {
+        if let Some(p) = p.filter(|p| *p > 0.0) {
+            *x += ((y - *x) / p).round() * p;
+        }
+        // On the same sheet: the parameters, not only the points, lie close.
+        if let Some((lo, hi)) = range
+            && (*x - y).abs() > FAR_SHARE * (hi - lo)
+        {
             return None;
         }
     }
