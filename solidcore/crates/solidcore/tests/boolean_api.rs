@@ -2527,45 +2527,60 @@ fn pinch_wedge(k: &mut Kernel, tri: [(f64, f64); 3], top: f64, depth: f64) -> Br
 }
 
 #[test]
-fn probe_15049_pinch_second_cut() {
+fn probe_15049_pinch_stacked_cut() {
     use solidcore::topology::brep::p1;
-    for d in [0.0, 1e-5, 2e-5, 5e-5, 9.4e-5, 3e-4] {
-        for (nx, ny) in [(0.0, 0.0), (1e-10, 0.0), (3e-10, -2e-10)] {
-            let mut k = Kernel::default();
-            let mut body = Some(
-                api::create_box(&mut k, Point3::new(-30.0, -30.0, 0.0), 60.0, 60.0, 10.0).unwrap(),
-            );
-            let mut log = String::new();
-            for (i, (depth, (sx, sy))) in [(4.0, (0.0, 0.0)), (4.0 + d, (nx, ny))]
-                .into_iter()
-                .enumerate()
-            {
-                for sign in [1.0, -1.0] {
-                    let tri = [
-                        (sx, sy),
-                        (sx + sign * 10.0, sy + 5.0),
-                        (sx + sign * 10.0, sy - 5.0),
-                    ];
-                    let tool = pinch_wedge(&mut k, tri, 10.0, depth);
-                    let Some(cur) = body.take() else { break };
-                    match boolean_difference(&mut k, cur, tool) {
-                        Ok(b) => body = Some(b),
-                        Err(e) => log.push_str(&format!(" cut{i}/{sign}: ERR {e}")),
+    for combined in [false, true] {
+        for dz in [0.0, 1e-5, -1e-5, 5e-5, -5e-5, 9.4e-5, -9.4e-5, 3e-4, -3e-4] {
+            for (nx, ny) in [(0.0, 0.0), (1e-10, 0.0), (3e-10, -2e-10)] {
+                let mut k = Kernel::default();
+                let mut body = Some(
+                    api::create_box(&mut k, Point3::new(-30.0, -30.0, 0.0), 60.0, 60.0, 10.0)
+                        .unwrap(),
+                );
+                let mut log = String::new();
+                for (i, (top, depth, (sx, sy))) in
+                    [(10.0, 4.0, (0.0, 0.0)), (6.0 + dz, 4.0, (nx, ny))]
+                        .into_iter()
+                        .enumerate()
+                {
+                    let mut tools = Vec::new();
+                    for sign in [1.0, -1.0] {
+                        let tri = [
+                            (sx, sy),
+                            (sx + sign * 10.0, sy + 5.0),
+                            (sx + sign * 10.0, sy - 5.0),
+                        ];
+                        tools.push(pinch_wedge(&mut k, tri, top, depth));
+                    }
+                    if combined {
+                        let b = tools.pop().unwrap();
+                        let a = tools.pop().unwrap();
+                        match boolean_union(&mut k, a, b) {
+                            Ok(u) => tools.push(u),
+                            Err(e) => log.push_str(&format!(" union{i}: ERR {e}")),
+                        }
+                    }
+                    for tool in tools {
+                        let Some(cur) = body.take() else { break };
+                        match boolean_difference(&mut k, cur, tool) {
+                            Ok(b) => body = Some(b),
+                            Err(e) => log.push_str(&format!(" cut{i}: ERR {e}")),
+                        }
                     }
                 }
+                let Some(mut body) = body else {
+                    eprintln!("PROBE15049S comb={combined} dz={dz:e} noise=({nx:e},{ny:e}){log}");
+                    continue;
+                };
+                let f = p1::faces(&body, None).unwrap().len();
+                let e = p1::edges(&body, None).unwrap().len();
+                let v = p1::vertices(&body, None).unwrap().len();
+                let vol = volume_of(&k, &mut body);
+                let chk = check_brep(&mut k, &mut body, CheckLevel::Level2)
+                    .map(|c| c.lines())
+                    .unwrap_or_default();
+                eprintln!("PROBE15049S comb={combined} dz={dz:e} noise=({nx:e},{ny:e}) f/e/v={f}/{e}/{v} vol={vol} check={chk:?}{log}");
             }
-            let Some(mut body) = body else {
-                eprintln!("PROBE15049 d={d:e} noise=({nx:e},{ny:e}){log}");
-                continue;
-            };
-            let f = p1::faces(&body, None).unwrap().len();
-            let e = p1::edges(&body, None).unwrap().len();
-            let v = p1::vertices(&body, None).unwrap().len();
-            let vol = volume_of(&k, &mut body);
-            let chk = check_brep(&mut k, &mut body, CheckLevel::Level2)
-                .map(|c| c.lines())
-                .unwrap_or_default();
-            eprintln!("PROBE15049 d={d:e} noise=({nx:e},{ny:e}) f/e/v={f}/{e}/{v} vol={vol} check={chk:?}{log}");
         }
     }
 }
