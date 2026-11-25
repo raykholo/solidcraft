@@ -11,8 +11,8 @@ use crate::SolveApp;
 use crate::ui_kit;
 use solidcraft_ui_text::tr;
 
-/// The real community, named in the parody line.
-pub const REAL_DISCORD_URL: &str = "https://discord.gg/yTcseBEdeu";
+/// SolidCraft's own Discord, where real support is: named in the parody line.
+pub const REAL_DISCORD_URL: &str = crate::links::DISCORD_URL;
 /// How long the support bot "types" before it answers, in seconds.
 pub const REPLY_SECONDS: f64 = 1.2;
 /// How long after the support bot a community member chimes in, in seconds.
@@ -190,16 +190,17 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, top - screen.top() + gap));
     let closed = window.show_body(ctx, |ui| {
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-        // The parody line, with the real community's link.
+        // The parody line, with a link to SolidCraft's own Discord.
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.label(egui::RichText::new(tr("sc3000.support.parody")).strong().color(t.warning));
             ui.label(" ");
-            let link = ui.link("discord.gg/yTcseBEdeu");
+            let link = ui.link(egui::RichText::new(tr("sc3000.support.real_discord")).strong());
             crate::scenario::publish_target("sc3000_support:real_discord", link.rect);
             if link.clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(REAL_DISCORD_URL));
             }
+            ui.label(egui::RichText::new(".").strong().color(t.warning));
         });
         ui.label(egui::RichText::new(tr("sc3000.support.private")).small().color(t.text_dim));
         ui.separator();

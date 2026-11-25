@@ -110,7 +110,8 @@ of the cloud and back in, attach your designs’ designs and a photo of your mon
 team, marked Solved. Two community members chime in with “same problem here, any update?” and “bump”.
 
 It is all local. The chat makes no request and stores nothing; what you type is gone when the window closes. The top
-line says “Parody. Not a real support channel. The real Discord is discord.gg/yTcseBEdeu”, and that link is the only
+line says “Parody. Not a real support channel. Real SolidCraft support is on the SolidCraft Discord”, linking SolidCraft’s
+own Discord (https://discord.gg/FtU4NQNVDH, the same one Join the Discord opens), and that link is the only
 way out, opened only when clicked. Ko-fi still opens its real page. The tests are in
 `crates/ui-egui/src/sc3000_support_tests.rs`.
 
