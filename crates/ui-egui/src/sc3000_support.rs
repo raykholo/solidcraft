@@ -195,17 +195,18 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.label(egui::RichText::new(tr("sc3000.support.parody")).strong().color(t.warning));
             ui.label(" ");
-            // One piece: a link split across two rows gets a box spanning both, and its middle is
-            // empty space (German puts it at the end of a row).
-            let link = ui.scope(|ui| {
+            // One piece with its full stop: a link split across two rows gets a box spanning both,
+            // and its middle is empty space (German puts it at the end of a row).
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                ui.link(egui::RichText::new(tr("sc3000.support.real_discord")).color(t.accent))
-            }).inner;
-            crate::scenario::publish_target("sc3000_support:real_discord", link.rect);
-            if link.clicked() {
-                ui.ctx().open_url(egui::OpenUrl::new_tab(REAL_DISCORD_URL));
-            }
-            ui.label(egui::RichText::new(".").strong().color(t.warning));
+                let link = ui.link(egui::RichText::new(tr("sc3000.support.real_discord")).color(t.accent));
+                crate::scenario::publish_target("sc3000_support:real_discord", link.rect);
+                if link.clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(REAL_DISCORD_URL));
+                }
+                ui.label(egui::RichText::new(".").strong().color(t.warning));
+            });
         });
         ui.label(egui::RichText::new(tr("sc3000.support.private")).small().color(t.text_dim));
         ui.separator();

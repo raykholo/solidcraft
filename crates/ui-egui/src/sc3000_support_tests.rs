@@ -181,6 +181,12 @@ fn the_parody_line_sends_real_support_to_solidcrafts_discord_only_when_clicked()
         h.frames(3);
         assert!(h.widget(&tr("sc3000.support.parody")).is_some(), "{language}");
         assert!(h.widget(&tr("sc3000.support.real_discord")).is_some(), "{language}");
+        // The sentence's full stop stays on the link's row, right after it.
+        let link = rect_of("sc3000_support:real_discord").expect("the link is drawn");
+        assert!(
+            h.widgets(".").iter().any(|[x, y]| (link.top()..=link.bottom()).contains(&(*y as f32)) && (*x as f32) > link.right() && (*x as f32) < link.right() + 20.0),
+            "{language}: the full stop follows the link on its row"
+        );
         wait(&mut h, 3.0);
         assert_eq!(h.take_opened(), Vec::<String>::new(), "{language}: nothing opens by itself");
         h.step(&json!({"click":{"handle":"sc3000_support:real_discord"}})).unwrap();
