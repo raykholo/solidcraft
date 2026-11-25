@@ -195,7 +195,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.label(egui::RichText::new(tr("sc3000.support.parody")).strong().color(t.warning));
             ui.label(" ");
-            let link = ui.link(egui::RichText::new(tr("sc3000.support.real_discord")).strong());
+            let link = ui.link(egui::RichText::new(tr("sc3000.support.real_discord")));
             crate::scenario::publish_target("sc3000_support:real_discord", link.rect);
             if link.clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(REAL_DISCORD_URL));
