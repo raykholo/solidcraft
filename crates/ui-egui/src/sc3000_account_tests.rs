@@ -505,6 +505,28 @@ fn the_recovery_report_recovers_nothing_and_leaves_the_design_alone() {
 }
 
 #[test]
+fn the_strips_account_link_is_never_cut_off_at_the_windows_edge() {
+    for language in ["en", "de"] {
+        let _language = solidcraft_ui_text::scope(language);
+        let (mut h, _) = harness(None);
+        h.app.preferences.language = language.into();
+        h.settle();
+        let right = h.ctx.content_rect().right();
+        let link = rect_of("sc3000_account:open").expect("the strip shows Sign in");
+        assert!(link.right() <= right - 4.0, "{language}: Sign in ends at {} of {right}", link.right());
+        sign_in(&mut h, "a.very.long.cloud.id.that.goes.on.and.on", "correct horse");
+        if rect_of("sc3000_account:close").is_some() {
+            click(&mut h, "sc3000_account:close");
+        }
+        h.frames(3);
+        let link = rect_of("sc3000_account:open").expect("the strip shows the Cloud ID");
+        assert!(link.right() <= right - 4.0, "{language}: the Cloud ID ends at {} of {right}", link.right());
+        assert!(h.widget("a.very.long.cloud.id.th…").is_some(), "{language}: a long Cloud ID is cut short");
+    }
+    assert_eq!(strip_name("jane.doe"), "jane.doe");
+}
+
+#[test]
 fn every_string_is_in_english_and_german() {
     crate::i18n::install();
     let file: serde_json::Value = serde_json::from_str(include_str!("../../../assets/locales/pending/sc3000-account.json")).unwrap();
