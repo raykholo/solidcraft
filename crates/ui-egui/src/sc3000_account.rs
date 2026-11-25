@@ -393,11 +393,25 @@ impl Account {
 pub fn strip(app: &mut SolveApp, ui: &mut egui::Ui) {
     let account = &mut app.help.sc3000_account;
     let t = solidcraft_theme::Tokens::get();
-    let text = if account.saved.signed_in { account.saved.name.clone() } else { tr("sc3000.account.sign_in").to_string() };
-    let link = ui.link(egui::RichText::new(text).size(t.font_small));
+    let text = if account.saved.signed_in { strip_name(&account.saved.name) } else { tr("sc3000.account.sign_in").to_string() };
+    // One piece, never wrapped or squeezed against the window's edge.
+    let link = ui.scope(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        ui.link(egui::RichText::new(text).size(t.font_small))
+    }).inner;
     crate::scenario::publish_target("sc3000_account:open", link.rect);
     if link.clicked() {
         account.open();
+    }
+}
+
+/// The Cloud ID as the strip shows it: a long one is cut short with an ellipsis.
+fn strip_name(name: &str) -> String {
+    const MOST: usize = 24;
+    if name.chars().count() <= MOST {
+        name.to_string()
+    } else {
+        format!("{}…", name.chars().take(MOST - 1).collect::<String>())
     }
 }
 
