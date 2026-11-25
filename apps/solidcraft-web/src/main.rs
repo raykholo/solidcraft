@@ -1634,6 +1634,12 @@ mod web {
                         let font_language = app.preferences.language.clone();
                         let linked = crate::linked::Download::start(launch.open.as_deref(), &cc.egui_ctx);
                         let full_url = window.location().href().ok().and_then(|value| url::Url::parse(&value).ok()).map(|url| launch.full_app_url(url));
+                        // The pretend Cloud Account keeps to this browser's storage, when it allows any.
+                        #[cfg(feature = "sc3000")]
+                        {
+                            use solidcraft_ui_egui::sc3000_account::{Account, unix_now};
+                            app.help.sc3000_account = Account::new(Some(Box::new(crate::sc3000::AccountStorage)), js_sys::Math::random, unix_now);
+                        }
                         Ok(Box::new(Shell {
                             #[cfg(feature = "sc3000")]
                             cloud: crate::sc3000::Cloud::browser(),
@@ -2071,10 +2077,10 @@ mod tests {
             cloud.tick(f64::from(second), true, false);
         }
         assert_eq!(cloud.scene, None);
-        for second in 19..=600 {
+        for second in 19..=1300 {
             cloud.tick(f64::from(second), true, false);
         }
-        assert_eq!(cloud.scene, Some(Scene::Expired));
+        assert_eq!(cloud.scene, None, "sign-outs belong to the Cloud Account (solidcraft_ui_egui::sc3000_account)");
         let mut same_day = Cloud::new(false, String::new(), String::new());
         for second in 0..=1000 {
             same_day.tick(f64::from(second), false, false);

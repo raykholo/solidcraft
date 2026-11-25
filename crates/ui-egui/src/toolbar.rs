@@ -446,6 +446,7 @@ pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
         let frame = Container::new(ui.ctx(), Surface::ApplicationBar).edge_frame(t.app_bar);
         Container::new(ui.ctx(), Surface::ApplicationBar).show_edge(ui, panel.show_separator_line(false), frame, |ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::sc3000_account::strip(app, ui);
                 ui.label(egui::RichText::new(app.tr("sc3000.maintenance")).size(t.font_small).color(t.text_dim));
                 let (rect, _) = ui.allocate_exact_size(vec2(t.space_16, t.space_16), egui::Sense::hover());
                 let angle = ui.input(|i| i.time) as f32 * 0.5;
@@ -945,6 +946,8 @@ pub fn save(app: &mut SolveApp) {
         }
         return;
     }
+    #[cfg(feature = "sc3000")]
+    app.help.sc3000_account.saving();
     if crate::browser::needs_capture(app, crate::browser::SAVE) {
         app.tree.capture_prompt = Some(crate::browser::SAVE.into());
         return;
@@ -960,6 +963,8 @@ pub fn save(app: &mut SolveApp) {
 }
 
 pub(crate) fn save_as(app: &mut SolveApp) {
+    #[cfg(feature = "sc3000")]
+    app.help.sc3000_account.saving();
     save_as_with_extension(app, solidcraft_engine::io::DESIGN_EXT);
 }
 
