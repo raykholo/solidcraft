@@ -4432,8 +4432,8 @@ fn probe_15049_swept_round_pinch() {
     use solidcore_ops::sweep::{sweep_placed, SweepFrame};
     all_fixes();
     // (half width, front radius, top arc centre depth, back radius)
-    for (w, r0, c, r2) in [(15.0_f64, 30.0_f64, 56.0_f64, 18.0_f64), (12.5, 25.0, 47.0, 15.0)] {
-        'cases: for n in [0.0_f64, 1.7e-9] {
+    for (w, r0, c, r2) in [(15.0_f64, 30.0_f64, 56.0_f64, 18.0_f64)] {
+        'cases: for n in [0.0_f64] {
             let tag = format!("w={w} n={n:e}");
             let rb = r0 + c;
             let q = ((rb - r2).powi(2) - c * c).sqrt();
@@ -4620,7 +4620,11 @@ fn probe_15049_swept_round_pinch() {
                         let Some(cur) = acc.take() else { break };
                         match boolean(cur, t.copy().unwrap(), BooleanOp::Subtract) {
                             Ok(Some(b)) => acc = Some(b),
-                            other => outcome.push_str(&format!("{order:?}@{k}: {:?} ", other.map(|o| o.is_some()))),
+                            other => {
+                                let detail = solidcore_ops::session::take_failure_detail().unwrap_or_default();
+                                let detail: String = detail.chars().take(160).collect();
+                                outcome.push_str(&format!("{order:?}@{k}: {:?} [{detail}] ", other.map(|o| o.is_some())));
+                            }
                         }
                     }
                     if let Some(b) = acc {
@@ -4628,10 +4632,12 @@ fn probe_15049_swept_round_pinch() {
                         outcome.push_str(&format!("{order:?} {:?} valid={ok} ", b.counts().unwrap()));
                     }
                 }
-                if !outcome.contains("[8, 17, 11] valid=true [0, 1] [8, 17, 11] valid=true") {
+                if outcome.contains("final vertex") || outcome.contains("connected to the edge") {
                     eprintln!("P15049 {tag} v={v} scale={scale:e} pts={:?}: {outcome}", [p1, p2, p3, p4, p5, p6]);
                 }
-                *tally.entry(outcome).or_insert(0) += 1;
+                let key: String = outcome.split('[').map(|x| x.split(' ').next().unwrap_or("")).collect::<Vec<_>>().join("|");
+                *tally.entry(key).or_insert(0) += 1;
+                eprintln!("P15049 {tag} v={v} {outcome}");
             }
             eprintln!("P15049 {tag} tally={tally:?}");
         }
