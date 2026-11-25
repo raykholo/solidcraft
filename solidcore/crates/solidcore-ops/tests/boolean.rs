@@ -4559,17 +4559,29 @@ fn probe_15049_swept_round_pinch() {
             let alpha = phi_t - PI / 2.0;
             let tri3: Vec<Curve> = tri.iter().map(|k| p15049_turn_curve(k, 0.0, -c, alpha)).collect();
             let path3 = [arc_x([0.0, -q, 0.0], r2, phi_t, PI)];
-            let (s3, _, route) = match sweep_placed(&tri3, &path3, SweepFrame::Follow, true) {
-                Ok(s) => s,
-                Err(err) => {
-                    eprintln!("P15049 {tag} sweep3: {err:?}");
-                    continue;
+            let mut tools3 = Vec::new();
+            for half in tri3.chunks(3) {
+                match sweep_placed(half, &path3, SweepFrame::Follow, true) {
+                    Ok((s3, _, route)) => {
+                        eprintln!("P15049 {tag} sweep3 route={route:?}");
+                        tools3.push(s3);
+                    }
+                    Err(err) => eprintln!("P15049 {tag} sweep3 half: {err:?}"),
                 }
-            };
-            eprintln!("P15049 {tag} sweep3 route={route:?}");
-            match boolean(body, s3, BooleanOp::Subtract) {
-                Ok(Some(b)) => p15049_report(&format!("{tag} cut3"), &b),
-                other => eprintln!("P15049 {tag} cut3: {:?}", other.map(|o| o.is_some())),
+            }
+            for order in [[0usize, 1], [1, 0]] {
+                let mut acc = Some(body.copy().unwrap());
+                for k in order {
+                    let Some(t) = tools3.get(k) else { continue };
+                    let Some(cur) = acc.take() else { break };
+                    match boolean(cur, t.copy().unwrap(), BooleanOp::Subtract) {
+                        Ok(Some(b)) => {
+                            p15049_report(&format!("{tag} cut3 {order:?} after {k}"), &b);
+                            acc = Some(b);
+                        }
+                        other => eprintln!("P15049 {tag} cut3 {order:?} at {k}: {:?}", other.map(|o| o.is_some())),
+                    }
+                }
             }
         }
     }
