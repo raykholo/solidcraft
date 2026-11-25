@@ -2818,6 +2818,7 @@ pub fn face_intersect_breps_cached(
         uv_curves1 = r.surface1_uv_curves;
         uv_curves2 = r.surface2_uv_curves;
         curve_types = r.curve_types;
+        dbg15049_ssi(k, &surface, other_surface, &curves_3d, &curve_types);
 
         // A crossing curve that bounds a cap within the tolerance is a touch at the
         // B-rep's tolerance (not upstream; WR-79, #2412): it becomes the touching point at
@@ -3158,5 +3159,70 @@ mod tests {
         // the face, each of its edge uses and each of its vertex uses
         assert!(heard.load(Ordering::Relaxed) > 2 * n as u64);
         assert_eq!(notify(NotifyOperation::ChangeGeometry, Some(&mut quiet)), 1);
+    }
+}
+
+/// DEBUG 15049: the face pair's intersection curves near the point in `SC15049_PT`.
+fn dbg15049_ssi(
+    k: &Kernel,
+    a: &Surface,
+    b: &Surface,
+    curves: &[Curve],
+    types: &[TsectCurveType],
+) {
+    let spec = match std::env::var_os("SC15049_PT") {
+        Some(s) => s,
+        None if std::env::var_os("SC15049_DEBUG").is_some() => {
+            std::ffi::OsString::from("0,-51.0091743118,16.6972477065,0.05")
+        }
+        None => return,
+    };
+    let v: Vec<f64> = spec
+        .to_string_lossy()
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let [x, y, z, r] = v[..] else {
+        return;
+    };
+    let at = Point3::new(x, y, z);
+    let sk = |s: &Surface| match s.kind() {
+        crate::surface::surface::SurfaceKind::Plane(_) => "plane",
+        crate::surface::surface::SurfaceKind::Cone(_) => "cone",
+        crate::surface::surface::SurfaceKind::Torus(_) => "torus",
+        crate::surface::surface::SurfaceKind::Sphere(_) => "sphere",
+        crate::surface::surface::SurfaceKind::BSpline(_) => "bspline",
+        crate::surface::surface::SurfaceKind::SurfOfRevolution(_) => "rev",
+        crate::surface::surface::SurfaceKind::SurfOfExtrusion(_) => "extr",
+        _ => "other",
+    };
+    for (i, c) in curves.iter().enumerate() {
+        let ivl = c.natural_interval();
+        let n = 16;
+        let mut best = f64::MAX;
+        let mut pts = Vec::new();
+        for j in 0..=n {
+            let t = ivl.min() + (ivl.max() - ivl.min()) * f64::from(j) / f64::from(n);
+            if let Ok(p) = c.evaluate_point(k, t) {
+                best = best.min(p.distance(at));
+                if j % 8 == 0 {
+                    pts.push(p);
+                }
+            }
+        }
+        if best < r * 20.0 {
+            let kind = match c.kind() {
+                crate::curve::curve::CurveKind::Line(_) => "line",
+                crate::curve::curve::CurveKind::Ellipse(_) => "ellipse",
+                crate::curve::curve::CurveKind::BSpline(_) => "bspline",
+                _ => "other",
+            };
+            eprintln!(
+                "DBG15049 ssi {} x {}: curve {i} {kind} type={:?} near={best:e} pts={pts:?}",
+                sk(a),
+                sk(b),
+                types.get(i)
+            );
+        }
     }
 }
