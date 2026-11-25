@@ -171,17 +171,22 @@ fn closing_forgets_everything_typed() {
 
 #[test]
 fn the_parody_line_sends_real_support_to_solidcrafts_discord_only_when_clicked() {
-    let _language = solidcraft_ui_text::scope("en");
-    let mut h = harness();
-    h.step(&json!({"click":{"handle":"titlebar:discord"}})).unwrap();
-    h.frames(3);
-    assert!(h.widget("Parody. Not a real support channel. Real SolidCraft support is on the").is_some());
-    assert!(h.widget("SolidCraft Discord").is_some());
-    wait(&mut h, 3.0);
-    assert_eq!(h.take_opened(), Vec::<String>::new(), "nothing opens by itself");
-    h.step(&json!({"click":{"handle":"sc3000_support:real_discord"}})).unwrap();
-    h.frames(2);
-    assert_eq!(h.take_opened(), [REAL_DISCORD_URL]);
+    // German wraps the link onto its own row: the click must still land on it.
+    for language in ["en", "de"] {
+        let _language = solidcraft_ui_text::scope(language);
+        let mut h = harness();
+        h.app.preferences.language = language.into();
+        h.settle();
+        h.step(&json!({"click":{"handle":"titlebar:discord"}})).unwrap();
+        h.frames(3);
+        assert!(h.widget(&tr("sc3000.support.parody")).is_some(), "{language}");
+        assert!(h.widget(&tr("sc3000.support.real_discord")).is_some(), "{language}");
+        wait(&mut h, 3.0);
+        assert_eq!(h.take_opened(), Vec::<String>::new(), "{language}: nothing opens by itself");
+        h.step(&json!({"click":{"handle":"sc3000_support:real_discord"}})).unwrap();
+        h.frames(2);
+        assert_eq!(h.take_opened(), [REAL_DISCORD_URL], "{language}");
+    }
     // SolidCraft's own server (its README's link), the same one Join the Discord opens.
     assert_eq!(REAL_DISCORD_URL, "https://discord.gg/FtU4NQNVDH");
     assert_eq!(REAL_DISCORD_URL, crate::links::DISCORD_URL);
