@@ -2537,6 +2537,14 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         // one of them is the same point and already imprinted, it is combined with that one
         // and takes its vertices: imprinted as well, it would put a second vertex beside that
         // one's (#20408's collars; `ProtoTopologyManager::combine_with_imprinted`).
+        //
+        // Not upstream (#15049): first, an edge definition's source edge that its end's vertex
+        // lies within tolerance of without being on it (the vertex went to a coincident
+        // sibling edge, tangent to it at a corner) is split there too, so the definition has
+        // a vertex on its own edge at that end (`split_coincident_source_edges`).
+        if !record(mgr.split_coincident_source_edges(k, brep), ret)? {
+            *failure_edited = true;
+        }
         for _ in 0..LATE_VERTEX_PASSES {
             let late: Vec<VertexDefId> = mgr
                 .all_vertex_definitions()?

@@ -1039,6 +1039,146 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         Ok(())
     }
 
+    /// Not upstream (#15049): splits each edge definition's source edge at a proto vertex
+    /// whose imprinted vertex lies within tolerance of that edge yet is not on it, so the
+    /// definition finds a final vertex there ([`ProtoTopologyManager::proto_vertex_final_vertex`]).
+    ///
+    /// Two edges of a face that meet tangentially at a corner (an arc running into a line, a
+    /// cusp) stay within tolerance of each other for a stretch past the corner. A cut that
+    /// grazes that face crosses it there at a point within tolerance of both, and its
+    /// classification puts the vertex on one of them, the arc, say. An edge definition
+    /// along the other edge, the line, then ends at a proto vertex whose vertex does not
+    /// split the line, and imprinting it failed with no vertex at its end connected to the
+    /// line (upstream's `SM_ERR_NULL_POINTER`). Here the line is split at the vertex's point as
+    /// well, and the proto topology on it updated as for any split
+    /// ([`ProtoTopologyManager::update_edges`]); the vertex this makes is a final vertex of
+    /// the proto vertex for the definitions on the line. The two vertices lie within tolerance
+    /// of each other, and the boolean glues them into one after the imprint
+    /// ([`ProtoTopologyManager::glue_coincident_brep_vertices`]).
+    ///
+    /// A vertex within the tolerance of either end of the source edge is left alone: no edge
+    /// is split that close to its end.
+    ///
+    /// # Errors
+    ///
+    /// Those of the point drops, of [`ProtoBrep::merge_point_class_into_brep`] and of
+    /// [`ProtoTopologyManager::update_edges`]; [`SolidError::InvalidInput`] for deleted
+    /// objects.
+    pub fn split_coincident_source_edges(
+        &mut self,
+        k: &mut Kernel,
+        brep: &mut impl ProtoBrep<O>,
+    ) -> Result<()> {
+        for ed in self.all_edge_definitions()? {
+            for which in [1, 2] {
+                for at_start in [true, false] {
+                    self.split_coincident_source_edge(k, brep, ed, which, at_start)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`ProtoTopologyManager::split_coincident_source_edges`] for one end of `ed` in B-rep
+    /// `which`.
+    fn split_coincident_source_edge(
+        &mut self,
+        k: &mut Kernel,
+        brep: &mut impl ProtoBrep<O>,
+        ed: EdgeDefId,
+        which: i32,
+        at_start: bool,
+    ) -> Result<()> {
+        let Some(d) = self.edge_def(ed) else {
+            return Ok(());
+        };
+        if d.src_topo_type(which) != PointClassType::Edge {
+            return Ok(());
+        }
+        let Some(edge) = as_kind(d.src_topo(which), ClassObjectKind::Edge) else {
+            return Ok(());
+        };
+        let pv = if at_start {
+            self.edge_def_start_proto_vertex(ed)?
+        } else {
+            self.edge_def_end_proto_vertex(ed)?
+        };
+        let pv = self.pv_live(pv)?;
+        if self
+            .proto_vertex_final_vertex(k, brep, pv, which, ed, at_start)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        // the vertex imprinted at the proto vertex, and a definition imprinted on it
+        let vds = self
+            .proto_vertex(pv)
+            .ok_or(dangling("proto vertex is deleted"))?
+            .vertex_definitions()
+            .to_vec();
+        let mut imprinted = None;
+        for vd in vds {
+            if let Some(v) = self.vd_ref(vd)?.final_vertex(which) {
+                imprinted = Some((vd, v));
+                break;
+            }
+        }
+        let Some((vd, vertex)) = imprinted else {
+            return Ok(());
+        };
+        let (Some(point), Some(vertex_tol), Some(edge_tol), Some(interval)) = (
+            brep.classification_vertex_point(vertex),
+            brep.topology_tolerance(vertex),
+            brep.topology_tolerance(edge),
+            brep.edge_interval(edge),
+        ) else {
+            return Ok(());
+        };
+        let tol = max2(vertex_tol, edge_tol);
+        // the edge's ends: the point must lie clear of both
+        let start = brep.edge_start_vertex(edge)?;
+        let end = brep.edge_other_vertex(edge, start)?;
+        for v in [start, end].into_iter().flatten() {
+            let (Some(at), Some(end_tol)) =
+                (brep.classification_vertex_point(v), brep.topology_tolerance(v))
+            else {
+                return Ok(());
+            };
+            if at.distance(point) <= max2(tol, end_tol) {
+                return Ok(());
+            }
+        }
+        let Some(curve_handle) = brep.edge_curve(edge).flatten() else {
+            return Ok(());
+        };
+        let dropped = curve_of(&*brep, Some(curve_handle))?.drop_point(
+            k,
+            &interval,
+            point,
+            None,
+            0.0,
+            Some(interval.mid()),
+            SolverOperation::Minimize,
+        )?;
+        if !dropped.success
+            || !(dropped.distance <= tol)
+            || !interval.contains_value(dropped.parameter, interval.scaled_zero())
+        {
+            return Ok(());
+        }
+        let mut pc = *self.vd_ref(vd)?.brep_point_classif(which);
+        pc.set_class_object(PointClassType::Edge, Some(edge));
+        pc.set_t_param(dropped.parameter, true);
+        pc.set_gap_3d(dropped.distance);
+        let outputs = brep.merge_point_class_into_brep(k, &mut pc, point)?;
+        let [split_vertex] = outputs.new_vertices[..] else {
+            return Ok(());
+        };
+        self.update_edges(k, brep, which, Some(edge), &outputs.new_edges, Some(vd))?;
+        self.note_sibling_split_vertex(pv, which, split_vertex);
+        Ok(())
+    }
+
     /// Not upstream (#21801): combines the vertex definition `vd` with an imprinted
     /// definition of its proto vertex, as [`ProtoTopologyManager::resolve_proto_vertex`]
     /// combines a proto vertex's definitions before they are imprinted. A definition added

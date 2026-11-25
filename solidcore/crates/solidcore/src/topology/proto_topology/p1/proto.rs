@@ -2693,6 +2693,12 @@ pub struct ProtoTopologyManager<O> {
     /// whose collapsed speck definition `SmEdgeDefinition::Imprint` skipped, so
     /// `ImprintIntersections` grows each vertex's tolerance to cover the speck's span.
     skipped_speck_vertices: Vec<(O, f64, Point3, Point3)>,
+    /// Not upstream (#15049): vertices `(proto vertex, B-rep 1 or 2, vertex)` split into an
+    /// edge definition's source edge where the vertex imprinted at the proto vertex lies on a
+    /// coincident sibling of that edge instead
+    /// ([`ProtoTopologyManager::split_coincident_source_edges`]): each is a final vertex of
+    /// that proto vertex in that B-rep too.
+    sibling_split_vertices: Vec<(ProtoVertexId, i32, O)>,
     /// Not upstream: the contact points a rule has proved one point
     /// ([`ProtoTopologyManager::set_declared_contacts`]).
     declared_contacts: Vec<DeclaredContact>,
@@ -2925,6 +2931,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             pe_store: Vec::new(),
             pf_store: Vec::new(),
             skipped_speck_vertices: Vec::new(),
+            sibling_split_vertices: Vec::new(),
             declared_contacts: Vec::new(),
             regions: Vec::new(),
             coincident_edges: Vec::new(),
@@ -2978,6 +2985,12 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         }
     }
 
+    /// Not upstream (#15049): records `vertex`, split into a source edge in B-rep `which`, as
+    /// a final vertex of the proto vertex `pv` there.
+    pub(crate) fn note_sibling_split_vertex(&mut self, pv: ProtoVertexId, which: i32, vertex: O) {
+        self.sibling_split_vertices.push((pv, which, vertex));
+    }
+
     /// Records a final vertex whose collapsed speck definition was skipped at imprint.
     pub(crate) fn note_skipped_speck_vertex(
         &mut self,
@@ -3029,6 +3042,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             self.delete_proto_vertex(pv);
         }
         self.skipped_speck_vertices.clear();
+        self.sibling_split_vertices.clear();
         deleted
     }
 
@@ -3083,6 +3097,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         self.pes.clear();
         self.pfs.clear();
         self.skipped_speck_vertices.clear();
+        self.sibling_split_vertices.clear();
     }
 
     /// Not upstream: notes `region`, the uncertainty region of a point `pv` was made of or
@@ -3859,10 +3874,21 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         let brep_topo_ed = d.src_topo(which);
         let ed_pos = d.end_position(k, geometry, at_start)?;
 
-        for &vd in vds {
-            let Some(vtx) = self.vd(vd)?.final_vertex(which) else {
-                continue;
-            };
+        // Not upstream (#15049): the vertices split into a source edge at this proto vertex.
+        let split = self
+            .sibling_split_vertices
+            .iter()
+            .filter(|&&(p, w, _)| p == pv && w == which)
+            .map(|&(_, _, v)| v);
+        let finals: Vec<O> = vds
+            .iter()
+            .map(|&vd| Ok(self.vd(vd)?.final_vertex(which)))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .chain(split)
+            .collect();
+        for vtx in finals {
             if are_connected(geometry, brep_topo_ed, Some(vtx))? {
                 let dist = ed_pos.distance(geometry.vertex_point(vtx)?);
                 if dist < max_dist {
