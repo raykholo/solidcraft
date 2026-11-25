@@ -2507,3 +2507,65 @@ fn issue_21104_cylinder_sunk_the_contact_tolerance_on_its_seam_unions_as_tangent
         );
     }
 }
+
+// ---- two cuts that touch along an edge, then a second pair of cuts at that edge ----------
+
+/// A triangular prism with its top at `z = top`, swept `depth` down.
+fn pinch_wedge(k: &mut Kernel, tri: [(f64, f64); 3], top: f64, depth: f64) -> Brep {
+    use solidcore::primitive::api_curves as curves;
+    let p = |q: (f64, f64)| Point3::new(q.0, q.1, top);
+    let line = |a: (f64, f64), b: (f64, f64)| {
+        Curve::from(curves::create_line_segment(p(a), p(b)).unwrap())
+    };
+    let profile = [
+        line(tri[0], tri[1]),
+        line(tri[1], tri[2]),
+        line(tri[2], tri[0]),
+    ];
+    let refs: Vec<Option<&Curve>> = profile.iter().map(Some).collect();
+    create_linear_sweep(k, &refs, Vec3::new(0.0, 0.0, -1.0), depth, true).unwrap()
+}
+
+#[test]
+fn probe_15049_pinch_second_cut() {
+    use solidcore::topology::brep::p1;
+    for d in [0.0, 1e-5, 2e-5, 5e-5, 9.4e-5, 3e-4] {
+        for (nx, ny) in [(0.0, 0.0), (1e-10, 0.0), (3e-10, -2e-10)] {
+            let mut k = Kernel::default();
+            let mut body = Some(
+                api::create_box(&mut k, Point3::new(-30.0, -30.0, 0.0), 60.0, 60.0, 10.0).unwrap(),
+            );
+            let mut log = String::new();
+            for (i, (depth, (sx, sy))) in [(4.0, (0.0, 0.0)), (4.0 + d, (nx, ny))]
+                .into_iter()
+                .enumerate()
+            {
+                for sign in [1.0, -1.0] {
+                    let tri = [
+                        (sx, sy),
+                        (sx + sign * 10.0, sy + 5.0),
+                        (sx + sign * 10.0, sy - 5.0),
+                    ];
+                    let tool = pinch_wedge(&mut k, tri, 10.0, depth);
+                    let Some(cur) = body.take() else { break };
+                    match boolean_difference(&mut k, cur, tool) {
+                        Ok(b) => body = Some(b),
+                        Err(e) => log.push_str(&format!(" cut{i}/{sign}: ERR {e}")),
+                    }
+                }
+            }
+            let Some(mut body) = body else {
+                eprintln!("PROBE15049 d={d:e} noise=({nx:e},{ny:e}){log}");
+                continue;
+            };
+            let f = p1::faces(&body, None).unwrap().len();
+            let e = p1::edges(&body, None).unwrap().len();
+            let v = p1::vertices(&body, None).unwrap().len();
+            let vol = volume_of(&k, &mut body);
+            let chk = check_brep(&mut k, &mut body, CheckLevel::Level2)
+                .map(|c| c.lines())
+                .unwrap_or_default();
+            eprintln!("PROBE15049 d={d:e} noise=({nx:e},{ny:e}) f/e/v={f}/{e}/{v} vol={vol} check={chk:?}{log}");
+        }
+    }
+}
