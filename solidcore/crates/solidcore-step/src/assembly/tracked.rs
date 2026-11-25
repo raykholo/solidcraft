@@ -285,6 +285,7 @@ fn followed(
             anchor_t + sign * (t1 - t0) * (i as f64 / FIRST_PIECES as f64)
         };
         let Some(more) = walk.advance(prev, t, 0) else {
+            eprintln!("DBG L6 coarse fail back={backward} i={i} t={t} prev.t={} prev.q={:?}", prev.t, prev.q);
             return None;
         };
         for n in more {
@@ -298,6 +299,7 @@ fn followed(
     let far = pcurve::eval(seed, far_t)?;
     let mut end = *coarse.last()?;
     let period = on.domain().period;
+    eprintln!("DBG L6 end back={backward} followed={:?} far={:?} period={period:?}", end.q, far);
     for ((x, y), p) in end.q.iter().zip(far).zip(period) {
         if p.is_some_and(|p| (x - y).abs() > 0.5 * p) {
             return None;
@@ -319,7 +321,10 @@ fn followed(
     let mut nodes = vec![first];
     for pair in coarse.windows(2) {
         let (a, b) = (*pair.first()?, *pair.get(1)?);
-        walk.pieces(a, b, 0, &mut nodes)?;
+        if walk.pieces(a, b, 0, &mut nodes).is_none() {
+            eprintln!("DBG L6 pieces fail {}..{}", a.t, b.t);
+            return None;
+        }
     }
     // A cubic Hermite piece from each pair of nodes, as a spline through them.
     let mut knots = vec![t0; 4];
@@ -364,12 +369,14 @@ pub(super) fn retrack(
             };
             let eval = CurveEval::new(curve).map_err(|m| m.to_string())?;
             let off = gap(&on, &eval, pc, interval);
+            eprintln!("DBG L6 retrack edge={e} off={off}");
             if !(off > FAR) {
                 continue;
             }
             let mut best: Option<(f64, Curve2)> = None;
             for backward in [false, true] {
                 let r = followed(&on, &eval, interval, pc, backward);
+                eprintln!("DBG L6 followed back={backward} some={}", r.is_some());
                 if let Some(again) = r {
                     let g = gap(&on, &eval, &again, interval);
                     if g < off && best.as_ref().is_none_or(|(b, _)| g < *b) {
