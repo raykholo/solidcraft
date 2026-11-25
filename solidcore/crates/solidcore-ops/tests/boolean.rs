@@ -4429,6 +4429,15 @@ fn p15049_report(tag: &str, b: &Body) {
 
 #[test]
 fn probe_15049_swept_round_pinch() {
+    p15049_probe(&(0..120).collect::<Vec<u32>>(), false);
+}
+
+#[test]
+fn probe_15049_fast() {
+    p15049_probe(&[3, 7, 12, 2, 4], true);
+}
+
+fn p15049_probe(seeds: &[u32], debug: bool) {
     use solidcore_ops::sweep::{sweep_placed, SweepFrame};
     all_fixes();
     // (half width, front radius, top arc centre depth, back radius)
@@ -4588,7 +4597,13 @@ fn probe_15049_swept_round_pinch() {
             let side = c + ya(w);
             let top = c + r0;
             let mut tally = std::collections::BTreeMap::new();
-            for v in 0..120u32 {
+            if debug {
+                let cusp = world(0.0, top);
+                std::env::set_var("SC15049_PT", format!("{},{},{},0.05", cusp[0], cusp[1], cusp[2]));
+                std::env::set_var("SC15049_DEBUG", "1");
+                eprintln!("P15049 cusp={cusp:?}");
+            }
+            for &v in seeds {
                 let scale = [0.0, 1e-10, 5e-10, 1e-9, 3e-9][(v % 5) as usize];
                 let rnd = |j: u32| {
                     let t = (f64::from(v) * 12.9898 + f64::from(j) * 78.233).sin() * 43758.5453;
@@ -4638,6 +4653,9 @@ fn probe_15049_swept_round_pinch() {
                 let key: String = outcome.split('[').map(|x| x.split(' ').next().unwrap_or("")).collect::<Vec<_>>().join("|");
                 *tally.entry(key).or_insert(0) += 1;
                 eprintln!("P15049 {tag} v={v} {outcome}");
+                if debug {
+                    eprintln!("P15049 ---- end of v={v}");
+                }
             }
             eprintln!("P15049 {tag} tally={tally:?}");
         }

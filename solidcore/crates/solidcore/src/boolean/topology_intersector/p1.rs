@@ -2542,7 +2542,9 @@ impl<O: ClassObject + SolutionObject + Ord> TopologyIntersector<O> {
         // lies within tolerance of without being on it (the vertex went to a coincident
         // sibling edge, tangent to it at a corner) is split there too, so the definition has
         // a vertex on its own edge at that end (`split_coincident_source_edges`).
-        if !record(mgr.split_coincident_source_edges(k, brep), ret)? {
+        if std::env::var_os("SC15049_SPLIT").is_some()
+            && !record(mgr.split_coincident_source_edges(k, brep), ret)?
+        {
             *failure_edited = true;
         }
         for _ in 0..LATE_VERTEX_PASSES {

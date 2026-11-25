@@ -677,6 +677,7 @@ impl<O: ClassObject> CurveClassification<O> {
                 }
             }
         }
+        dbg15049_edge_solutions(k, working, target, &self.interval(), edge, &solutions, tolerance);
         Ok((solutions, tolerance))
     }
 
@@ -1370,5 +1371,75 @@ mod tests {
         }
         assert_eq!(hits, 3);
         assert!(reused >= 3);
+    }
+}
+
+/// DEBUG 15049: the solutions of a curve against an edge near the point in `SC15049_PT`
+/// ("x,y,z,radius").
+fn dbg15049_edge_solutions<O: Copy>(
+    k: &Kernel,
+    working: &Curve,
+    target: &Curve,
+    interval: &Extent1d,
+    edge: &BoundaryEdge<O>,
+    solutions: &[Solution<O>],
+    tolerance: f64,
+) {
+    let Some(spec) = std::env::var_os("SC15049_PT") else {
+        return;
+    };
+    let v: Vec<f64> = spec
+        .to_string_lossy()
+        .split(',')
+        .filter_map(|s| s.trim().parse().ok())
+        .collect();
+    let [x, y, z, r] = v[..] else {
+        return;
+    };
+    let at = Point3::new(x, y, z);
+    let name = |c: &Curve| match c.kind() {
+        CurveKind::Line(_) => "line",
+        CurveKind::Ellipse(_) => "ellipse",
+        CurveKind::BSpline(_) => "bspline",
+        CurveKind::CrvOnSurf(_) => "crvonsurf",
+        _ => "other",
+    };
+    let ends = |c: &Curve, i: &Extent1d| {
+        (
+            c.evaluate_point(k, i.min()).ok(),
+            c.evaluate_point(k, i.max()).ok(),
+        )
+    };
+    let (ws, we) = ends(working, interval);
+    let (ts, te) = ends(target, &edge.interval);
+    let near = |p: Option<Point3>| p.is_some_and(|p| p.distance(at) < r);
+    let mut lines = Vec::new();
+    let mut any = false;
+    for s in solutions {
+        let a = s.start.param(0).ok().and_then(|t| working.evaluate_point(k, t).ok());
+        let b = s.end.param(0).ok().and_then(|t| working.evaluate_point(k, t).ok());
+        any |= near(a) || near(b);
+        lines.push(format!(
+            "  sol {:?} t0=({:?},{:?}) t1=({:?},{:?}) a={a:?} b={b:?} val={:e}",
+            s.solution_type,
+            s.start.param(0).ok(),
+            s.end.param(0).ok(),
+            s.start.param(1).ok(),
+            s.end.param(1).ok(),
+            s.start.solution_value
+        ));
+    }
+    if !(any || near(ws) || near(we)) || !(near(ts) || near(te) || any) {
+        return;
+    }
+    eprintln!(
+        "DBG15049 es: src {} [{ws:?} .. {we:?}] vs edge {} [{ts:?} .. {te:?}] zone={:e} tol={tolerance:e} n={}",
+        name(working),
+        name(target),
+        edge.zone_tol_3d,
+        solutions.len()
+    );
+    for l in lines {
+        eprintln!("DBG15049 {l}");
     }
 }
