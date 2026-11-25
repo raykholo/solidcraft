@@ -1039,6 +1039,146 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         Ok(())
     }
 
+    /// Not upstream (#15049): splits each edge definition's source edge at a proto vertex
+    /// whose imprinted vertex lies within tolerance of that edge yet is not on it, so the
+    /// definition finds a final vertex there ([`ProtoTopologyManager::proto_vertex_final_vertex`]).
+    ///
+    /// Two edges of a face that meet tangentially at a corner (an arc running into a line, a
+    /// cusp) stay within tolerance of each other for a stretch past the corner. A cut that
+    /// grazes that face crosses it there at a point within tolerance of both, and its
+    /// classification puts the vertex on one of them, the arc, say. An edge definition
+    /// along the other edge, the line, then ends at a proto vertex whose vertex does not
+    /// split the line, and imprinting it failed with no vertex at its end connected to the
+    /// line (upstream's `SM_ERR_NULL_POINTER`). Here the line is split at the vertex's point as
+    /// well, and the proto topology on it updated as for any split
+    /// ([`ProtoTopologyManager::update_edges`]); the vertex this makes is a final vertex of
+    /// the proto vertex for the definitions on the line. The two vertices lie within tolerance
+    /// of each other, and the boolean glues them into one after the imprint
+    /// ([`ProtoTopologyManager::glue_coincident_brep_vertices`]).
+    ///
+    /// A vertex within the tolerance of either end of the source edge is left alone: no edge
+    /// is split that close to its end.
+    ///
+    /// # Errors
+    ///
+    /// Those of the point drops, of [`ProtoBrep::merge_point_class_into_brep`] and of
+    /// [`ProtoTopologyManager::update_edges`]; [`SolidError::InvalidInput`] for deleted
+    /// objects.
+    pub fn split_coincident_source_edges(
+        &mut self,
+        k: &mut Kernel,
+        brep: &mut impl ProtoBrep<O>,
+    ) -> Result<()> {
+        for ed in self.all_edge_definitions()? {
+            for which in [1, 2] {
+                for at_start in [true, false] {
+                    self.split_coincident_source_edge(k, brep, ed, which, at_start)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// [`ProtoTopologyManager::split_coincident_source_edges`] for one end of `ed` in B-rep
+    /// `which`.
+    fn split_coincident_source_edge(
+        &mut self,
+        k: &mut Kernel,
+        brep: &mut impl ProtoBrep<O>,
+        ed: EdgeDefId,
+        which: i32,
+        at_start: bool,
+    ) -> Result<()> {
+        let Some(d) = self.edge_def(ed) else {
+            return Ok(());
+        };
+        if d.src_topo_type(which) != PointClassType::Edge {
+            return Ok(());
+        }
+        let Some(edge) = as_kind(d.src_topo(which), ClassObjectKind::Edge) else {
+            return Ok(());
+        };
+        let pv = if at_start {
+            self.edge_def_start_proto_vertex(ed)?
+        } else {
+            self.edge_def_end_proto_vertex(ed)?
+        };
+        let pv = self.pv_live(pv)?;
+        if self
+            .proto_vertex_final_vertex(k, brep, pv, which, ed, at_start)?
+            .is_some()
+        {
+            return Ok(());
+        }
+        // the vertex imprinted at the proto vertex, and a definition imprinted on it
+        let vds = self
+            .proto_vertex(pv)
+            .ok_or(dangling("proto vertex is deleted"))?
+            .vertex_definitions()
+            .to_vec();
+        let mut imprinted = None;
+        for vd in vds {
+            if let Some(v) = self.vd_ref(vd)?.final_vertex(which) {
+                imprinted = Some((vd, v));
+                break;
+            }
+        }
+        let Some((vd, vertex)) = imprinted else {
+            return Ok(());
+        };
+        let (Some(point), Some(vertex_tol), Some(edge_tol), Some(interval)) = (
+            brep.classification_vertex_point(vertex),
+            brep.topology_tolerance(vertex),
+            brep.topology_tolerance(edge),
+            brep.edge_interval(edge),
+        ) else {
+            return Ok(());
+        };
+        let tol = max2(vertex_tol, edge_tol);
+        // the edge's ends: the point must lie clear of both
+        let start = brep.edge_start_vertex(edge)?;
+        let end = brep.edge_other_vertex(edge, start)?;
+        for v in [start, end].into_iter().flatten() {
+            let (Some(at), Some(end_tol)) =
+                (brep.classification_vertex_point(v), brep.topology_tolerance(v))
+            else {
+                return Ok(());
+            };
+            if at.distance(point) <= max2(tol, end_tol) {
+                return Ok(());
+            }
+        }
+        let Some(curve_handle) = brep.edge_curve(edge).flatten() else {
+            return Ok(());
+        };
+        let dropped = curve_of(&*brep, Some(curve_handle))?.drop_point(
+            k,
+            &interval,
+            point,
+            None,
+            0.0,
+            Some(interval.mid()),
+            SolverOperation::Minimize,
+        )?;
+        if !dropped.success
+            || !(dropped.distance <= tol)
+            || !interval.contains_value(dropped.parameter, interval.scaled_zero())
+        {
+            return Ok(());
+        }
+        let mut pc = *self.vd_ref(vd)?.brep_point_classif(which);
+        pc.set_class_object(PointClassType::Edge, Some(edge));
+        pc.set_t_param(dropped.parameter, true);
+        pc.set_gap_3d(dropped.distance);
+        let outputs = brep.merge_point_class_into_brep(k, &mut pc, point)?;
+        let [split_vertex] = outputs.new_vertices[..] else {
+            return Ok(());
+        };
+        self.update_edges(k, brep, which, Some(edge), &outputs.new_edges, Some(vd))?;
+        self.note_sibling_split_vertex(pv, which, split_vertex);
+        Ok(())
+    }
+
     /// Not upstream (#21801): combines the vertex definition `vd` with an imprinted
     /// definition of its proto vertex, as [`ProtoTopologyManager::resolve_proto_vertex`]
     /// combines a proto vertex's definitions before they are imprinted. A definition added
@@ -1158,74 +1298,6 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         let mut edited = false;
         let result = self.imprint_edge_definition_inner(k, brep, ed, &mut edited);
         (result, edited)
-    }
-
-    /// Not upstream (#15049): when the definition `ed`, both of whose ends are the proto vertex
-    /// `pv`, is a speck on the vertex imprinted at `pv` in each B-rep, though that vertex is not
-    /// on the definition's source there, the vertex in each B-rep, each with a bound of its
-    /// distance to the speck and the speck's start and end points; else `None`.
-    ///
-    /// Where a cut grazes a face along two edges of it that are tangent at a corner (an arc
-    /// running into a line), their crossing a hair from the corner lies within tolerance of
-    /// both edges. The proto vertex there is imprinted on one of them, and the definition of
-    /// zero length that the other edge's coincidence leaves at it names the other edge as its
-    /// source, so no vertex imprinted at the proto vertex is connected to its source. Such a
-    /// definition carries no geometry the vertex does not have ([`speck_on_vertex`], within
-    /// both that vertex's tolerance and the definition's own) and makes no edge, as
-    /// [`ProtoTopologyManager::collapsed_beside_sibling`]'s specks make none: the vertex's
-    /// tolerance comes to cover it.
-    ///
-    /// # Errors
-    ///
-    /// Those of the curve evaluations; [`SolidError::InvalidInput`] for deleted objects.
-    fn speck_off_its_source(
-        &self,
-        k: &Kernel,
-        brep: &impl ProtoBrep<O>,
-        ed: EdgeDefId,
-        pv: ProtoVertexId,
-    ) -> Result<Option<Vec<(O, f64, Point3, Point3)>>> {
-        let def = self.ed_ref(ed)?;
-        let curve = curve_of(brep, def.xsect_curve_3d())?;
-        let interval = def.xsect_interval();
-        let vds = self
-            .proto_vertex(pv)
-            .ok_or(dangling("proto vertex is deleted"))?
-            .vertex_definitions()
-            .to_vec();
-        let mut skipped = Vec::with_capacity(2);
-        for which in [1, 2] {
-            // The vertex imprinted at the proto vertex in this B-rep: one for all its
-            // definitions, else the speck is not on one vertex.
-            let mut vertex = None;
-            for &vd in &vds {
-                let Some(v) = self.vd_ref(vd)?.final_vertex(which) else {
-                    continue;
-                };
-                if vertex.is_some_and(|w| w != v) {
-                    eprintln!("DBG15049   speck: two vertices in {which}");
-                    return Ok(None);
-                }
-                vertex = Some(v);
-            }
-            let Some(v) = vertex else {
-                return Ok(None);
-            };
-            let (Some(point), Some(tol)) = (
-                brep.classification_vertex_point(v),
-                brep.topology_tolerance(v),
-            ) else {
-                return Ok(None);
-            };
-            let Some((gap, p0, p1)) =
-                speck_on_vertex(k, curve, interval, point, min2(tol, def.raw_tolerance()))?
-            else {
-                eprintln!("DBG15049   speck: not on vertex {point:?} tol={tol:e} in {which}");
-                return Ok(None);
-            };
-            skipped.push((v, gap, p0, p1));
-        }
-        Ok(Some(skipped))
     }
 
     /// Not upstream (WR-619): when the
@@ -1570,46 +1642,18 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         let end_pv = self.pv_live(end_pv)?;
 
         let null = || SolidError::topology(OP_IMPRINT_ED, TopologyFailure::NoFinalVertexAtEnd);
-        let found = [
-            self.proto_vertex_final_vertex(k, brep, start_pv, 1, ed, true)?,
-            self.proto_vertex_final_vertex(k, brep, end_pv, 1, ed, false)?,
-            self.proto_vertex_final_vertex(k, brep, start_pv, 2, ed, true)?,
-            self.proto_vertex_final_vertex(k, brep, end_pv, 2, ed, false)?,
-        ];
-        let [Some(start_vtx1), Some(end_vtx1), Some(start_vtx2), Some(end_vtx2)] = found else {
-            // Not upstream (#15049): a speck on one proto vertex whose vertex was imprinted on
-            // a coincident sibling of the definition's source edge makes no edge.
-            {
-                let d = self.ed_ref(ed)?;
-                let iv = d.xsect_interval();
-                let c = curve_of(&*brep, d.xsect_curve_3d())?;
-                let a = c.evaluate_point(k, iv.min())?;
-                let b = c.evaluate_point(k, iv.max())?;
-                let m = c.evaluate_point(k, 0.5 * (iv.min() + iv.max()))?;
-                eprintln!(
-                    "DBG15049 imprint miss: same_pv={} found={:?} interval=[{}, {}] a={a:?} mid={m:?} b={b:?} raw_tol={:e} src1={:?} src2={:?}",
-                    start_pv == end_pv,
-                    found.map(|f| f.is_some()),
-                    iv.min(),
-                    iv.max(),
-                    d.raw_tolerance(),
-                    d.src_topo_type(1),
-                    d.src_topo_type(2)
-                );
-                let sp = self.proto_vertex(start_pv).map(|p| p.position());
-                let ep = self.proto_vertex(end_pv).map(|p| p.position());
-                eprintln!("DBG15049   start_pv={sp:?} end_pv={ep:?}");
-            }
-            if start_pv == end_pv {
-                if let Some(skipped) = self.speck_off_its_source(k, &*brep, ed, start_pv)? {
-                    for (vertex, gap, p0, p1) in skipped {
-                        self.note_skipped_speck_vertex(vertex, gap, p0, p1);
-                    }
-                    return Ok(());
-                }
-            }
-            return Err(null());
-        };
+        let start_vtx1 = self
+            .proto_vertex_final_vertex(k, brep, start_pv, 1, ed, true)?
+            .ok_or_else(null)?;
+        let end_vtx1 = self
+            .proto_vertex_final_vertex(k, brep, end_pv, 1, ed, false)?
+            .ok_or_else(null)?;
+        let start_vtx2 = self
+            .proto_vertex_final_vertex(k, brep, start_pv, 2, ed, true)?
+            .ok_or_else(null)?;
+        let end_vtx2 = self
+            .proto_vertex_final_vertex(k, brep, end_pv, 2, ed, false)?
+            .ok_or_else(null)?;
         let brep1 = self.which_brep(1);
         let brep2 = self.which_brep(2);
 
