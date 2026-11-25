@@ -87,6 +87,10 @@
     "sc3000.web.note_before": "SolidCraft 3000은 패러디입니다. 클라우드도 계정도 없습니다. 그 아래에서 돌아가는 CAD는 진짜 ",
     "sc3000.web.note_after": "이며, 무료 오픈 소스입니다."
   },
+  "lo": {
+    "sc3000.web.note_before": "SolidCraft 3000 ເປັນການລໍ້ລຽນ: ບໍ່ມີຄລາວ ແລະ ບໍ່ມີບັນຊີ. CAD ທີ່ຢູ່ເບື້ອງລຸ່ມແມ່ນ ",
+    "sc3000.web.note_after": " ຂອງແທ້, ຟຣີ ແລະ ເປັນໂອເພນຊອດ."
+  },
   "lv": {
     "sc3000.web.note_before": "SolidCraft 3000 ir parodija: nav ne mākoņa, ne konta. Zem tās darbojas īstais ",
     "sc3000.web.note_after": ", bezmaksas un atvērtā koda."
