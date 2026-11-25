@@ -4376,3 +4376,169 @@ fn a_fitted_loft_insert_with_a_knife_on_the_floor_gets_through_imprint_and_relat
         }
     }
 }
+
+// ---- probe 15049: a block rounded along its top by swept pinched triangles ----------------
+
+/// A point turned `a` radians about the x-parallel axis through `(_, cy, cz)`.
+fn p15049_turn(p: [f64; 3], cy: f64, cz: f64, a: f64) -> [f64; 3] {
+    let (y, z) = (p[1] - cy, p[2] - cz);
+    [p[0], cy + y * a.cos() - z * a.sin(), cz + y * a.sin() + z * a.cos()]
+}
+
+fn p15049_turn_curve(c: &Curve, cy: f64, cz: f64, a: f64) -> Curve {
+    let v = |d: [f64; 3]| p15049_turn(d, 0.0, 0.0, a);
+    match c {
+        Curve::Line { start, end } => Curve::Line {
+            start: p15049_turn(*start, cy, cz, a),
+            end: p15049_turn(*end, cy, cz, a),
+        },
+        Curve::Arc { center, axis, reference, radius, start, end } => Curve::Arc {
+            center: p15049_turn(*center, cy, cz, a),
+            axis: v(*axis),
+            reference: v(*reference),
+            radius: *radius,
+            start: *start,
+            end: *end,
+        },
+        other => other.clone(),
+    }
+}
+
+fn p15049_report(tag: &str, b: &Body) {
+    use solidcore::topology::brep::p1;
+    let counts = b.counts().unwrap();
+    let chk = b.check(CheckLevel::All).map(|r| r.text).unwrap_or_else(|e| format!("{e:?}"));
+    let vol = b.volume(1e-8).map(|v| format!("{v:.6}")).unwrap_or_else(|e| format!("{e:?}"));
+    let brep = b.kernel();
+    let mut pts = Vec::new();
+    for v in p1::vertices(&*brep, None).unwrap() {
+        pts.push(solidcore::topology::vertex::point(&*brep, v).unwrap());
+    }
+    let mut close = Vec::new();
+    for i in 0..pts.len() {
+        for j in i + 1..pts.len() {
+            let d = (pts[i] - pts[j]).length();
+            if d < 1e-3 {
+                close.push(format!("{:?}~{:?} d={d:e}", pts[i], pts[j]));
+            }
+        }
+    }
+    eprintln!("P15049 {tag}: f/e/v={counts:?} vol={vol} close={close:?} check={chk:?}");
+    eprintln!("P15049 {tag}: verts={pts:?}");
+}
+
+#[test]
+fn probe_15049_swept_round_pinch() {
+    use solidcore_ops::sweep::{sweep_placed, SweepFrame};
+    all_fixes();
+    // (half width, front radius, top arc centre depth, back radius)
+    for (w, r0, c, r2) in [(15.0, 30.0, 56.0, 18.0), (12.5, 25.0, 47.0, 15.0)] {
+        for (mode, e) in [(0u8, 0.0), (1, 1e-10), (1, 1e-9), (1, 2e-9), (2, 1e-10), (2, 1e-9)] {
+            let tag = format!("w={w} mode={mode} e={e:e}");
+            let rb = r0 + c;
+            let q = ((rb - r2).powi(2) - c * c).sqrt();
+            let phi_t = c.atan2(-q);
+            let x = [1.0, 0.0, 0.0];
+            let yv = [0.0, 1.0, 0.0];
+            let arc_x = |center: [f64; 3], radius: f64, start: f64, end: f64| Curve::Arc {
+                center,
+                axis: x,
+                reference: yv,
+                radius,
+                start,
+                end,
+            };
+            // the block: front quarter circle, the long top arc, the small back arc, the floor
+            let profile = [
+                arc_x([-w, 0.0, 0.0], r0, 0.0, PI / 2.0),
+                arc_x([-w, 0.0, -c], rb, PI / 2.0, phi_t),
+                arc_x([-w, -q, 0.0], r2, phi_t, PI),
+                Curve::Line { start: [-w, -q - r2, 0.0], end: [-w, r0, 0.0] },
+            ];
+            let mut body = match extrude(&profile, x, 2.0 * w, 0.0, DraftCorner::Curvature, true) {
+                Ok(b) => b,
+                Err(err) => {
+                    eprintln!("P15049 {tag} extrude: {err:?}");
+                    continue;
+                }
+            };
+            p15049_report(&format!("{tag} extrude"), &body);
+            // Cut 1: the front rounded to a ball.
+            let yw = (r0 * r0 - w * w).sqrt();
+            let t1 = yw.atan2(w);
+            let h = r0 + 15.0;
+            let tool1 = [
+                Curve::Arc { center: [0.0; 3], axis: [0.0, 0.0, 1.0], reference: x, radius: r0, start: t1, end: PI - t1 },
+                Curve::Line { start: [-w, yw, 0.0], end: [-w, h, 0.0] },
+                Curve::Line { start: [-w, h, 0.0], end: [w, h, 0.0] },
+                Curve::Line { start: [w, h, 0.0], end: [w, yw, 0.0] },
+            ];
+            let path1 = [arc_x([0.0; 3], r0, 0.0, PI / 2.0)];
+            let (s1, _, route) = match sweep_placed(&tool1, &path1, SweepFrame::Follow, true) {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!("P15049 {tag} sweep1: {err:?}");
+                    continue;
+                }
+            };
+            eprintln!("P15049 {tag} sweep1 route={route:?}");
+            body = match boolean(body, s1, BooleanOp::Subtract) {
+                Ok(Some(b)) => b,
+                other => {
+                    eprintln!("P15049 {tag} cut1: {:?}", other.map(|o| o.is_some()));
+                    continue;
+                }
+            };
+            p15049_report(&format!("{tag} cut1"), &body);
+            // Cut 2: two curved triangles touching at the top, on the plane y = 0, along the top arc.
+            let zw = (r0 * r0 - w * w).sqrt();
+            let th = zw.atan2(w);
+            let mut tri = Vec::new();
+            for s in [1.0, -1.0] {
+                let (a0, a1) = if s > 0.0 { (th, PI / 2.0) } else { (PI / 2.0, PI - th) };
+                let ce = match mode {
+                    2 => [e, 0.0, -e],
+                    _ => [0.0; 3],
+                };
+                let ea = if mode == 1 { e } else { 0.0 };
+                tri.push(Curve::Arc { center: ce, axis: [0.0, -1.0, 0.0], reference: x, radius: r0, start: a0, end: a1 });
+                tri.push(Curve::Line { start: [0.0, 0.0, r0], end: [s * w, 0.0, r0] });
+                tri.push(Curve::Line { start: [s * w, 0.0, r0], end: [s * w + ea, 0.0, zw - ea] });
+            }
+            let path2 = [arc_x([0.0, 0.0, -c], rb, PI / 2.0, phi_t)];
+            let (s2, _, route) = match sweep_placed(&tri, &path2, SweepFrame::Follow, true) {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!("P15049 {tag} sweep2: {err:?}");
+                    continue;
+                }
+            };
+            eprintln!("P15049 {tag} sweep2 route={route:?}");
+            p15049_report(&format!("{tag} tool2"), &s2);
+            body = match boolean(body, s2, BooleanOp::Subtract) {
+                Ok(Some(b)) => b,
+                other => {
+                    eprintln!("P15049 {tag} cut2: {:?}", other.map(|o| o.is_some()));
+                    continue;
+                }
+            };
+            p15049_report(&format!("{tag} cut2"), &body);
+            // Cut 3: the same triangles from the top arc's end, along the back arc.
+            let alpha = phi_t - PI / 2.0;
+            let tri3: Vec<Curve> = tri.iter().map(|k| p15049_turn_curve(k, 0.0, -c, alpha)).collect();
+            let path3 = [arc_x([0.0, -q, 0.0], r2, phi_t, PI)];
+            let (s3, _, route) = match sweep_placed(&tri3, &path3, SweepFrame::Follow, true) {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!("P15049 {tag} sweep3: {err:?}");
+                    continue;
+                }
+            };
+            eprintln!("P15049 {tag} sweep3 route={route:?}");
+            match boolean(body, s3, BooleanOp::Subtract) {
+                Ok(Some(b)) => p15049_report(&format!("{tag} cut3"), &b),
+                other => eprintln!("P15049 {tag} cut3: {:?}", other.map(|o| o.is_some())),
+            }
+        }
+    }
+}
