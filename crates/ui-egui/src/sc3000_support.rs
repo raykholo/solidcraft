@@ -195,7 +195,12 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ui.spacing_mut().item_spacing.x = 0.0;
             ui.label(egui::RichText::new(tr("sc3000.support.parody")).strong().color(t.warning));
             ui.label(" ");
-            let link = ui.link(egui::RichText::new(tr("sc3000.support.real_discord")));
+            // One piece: a link split across two rows gets a box spanning both, and its middle is
+            // empty space (German puts it at the end of a row).
+            let link = ui.scope(|ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                ui.link(egui::RichText::new(tr("sc3000.support.real_discord")).color(t.accent))
+            }).inner;
             crate::scenario::publish_target("sc3000_support:real_discord", link.rect);
             if link.clicked() {
                 ui.ctx().open_url(egui::OpenUrl::new_tab(REAL_DISCORD_URL));
