@@ -3009,6 +3009,20 @@ fn touch_of_edges<O: ClassObject>(
         pc1.obj_zone_tol_3d(k, geometry)?,
         pc2.obj_zone_tol_3d(k, geometry)?,
     );
+    if std::env::var_os("SC15049_DEBUG").is_some() {
+        let kind = |c: &Curve| match c.kind() {
+            CurveKind::Line(_) => "line",
+            CurveKind::Ellipse(_) => "ellipse",
+            CurveKind::BSpline(_) => "bspline",
+            _ => "other",
+        };
+        eprintln!(
+            "DBG15049 touch_of_edges {} x {} at {:?}",
+            kind(curve1),
+            kind(curve2),
+            curve1.evaluate_point(k, pc1.t_param()).ok()
+        );
+    }
     let touch = match (curve1.kind(), curve2.kind()) {
         (CurveKind::Ellipse(a), CurveKind::Ellipse(b)) if a.is_circle() && b.is_circle() => {
             let (pa, pb) = (a.position(), b.position());

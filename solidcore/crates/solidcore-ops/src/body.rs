@@ -841,6 +841,17 @@ pub(crate) fn finish_under(
         && !is_manifold_solid(&b)?
         && !(expect.touching && brep_is_closed_touching_solids(&b)?)
     {
+        if std::env::var_os("SC15049_DEBUG").is_some() {
+            for e in solidcore::topology::brep::p1::edges(&b, None)? {
+                if !solidcore::topology::edge::is_manifold(&b, e)? {
+                    let (v0, v1) = solidcore::topology::edge::start_end_vertices(&b, e)?;
+                    let pt = |v: Option<solidcore::topology::VertexId>| {
+                        v.and_then(|v| solidcore::topology::vertex::point(&b, v).ok())
+                    };
+                    eprintln!("DBG15049 nonmanifold edge {:?} .. {:?}", pt(v0), pt(v1));
+                }
+            }
+        }
         return Ok(Err(Error::NotSolid));
     }
     Ok(Ok((b, None)))
