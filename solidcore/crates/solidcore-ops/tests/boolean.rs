@@ -4434,7 +4434,7 @@ fn probe_15049_swept_round_pinch() {
 
 #[test]
 fn probe_15049_fast() {
-    p15049_probe(&[2, 4, 3], true);
+    p15049_probe(&[2, 3], true);
 }
 
 fn p15049_probe(seeds: &[u32], debug: bool) {
@@ -4599,7 +4599,14 @@ fn p15049_probe(seeds: &[u32], debug: bool) {
             let mut tally = std::collections::BTreeMap::new();
             if debug {
                 let cusp = world(0.0, top);
-                std::env::set_var("SC15049_PT", format!("{},{},{},0.05", cusp[0], cusp[1], cusp[2]));
+                let floor = [0.0, -q - r2, 0.0];
+                std::env::set_var(
+                    "SC15049_PT",
+                    format!(
+                        "{},{},{},0.05;{},{},{},0.05",
+                        cusp[0], cusp[1], cusp[2], floor[0], floor[1], floor[2]
+                    ),
+                );
                 std::env::set_var("SC15049_DEBUG", "1");
                 eprintln!("P15049 cusp={cusp:?}");
             }

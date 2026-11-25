@@ -3099,6 +3099,17 @@ fn line_touch(
         None,
         None,
     )?;
+    if std::env::var_os("SC15049_DEBUG").is_some() {
+        eprintln!(
+            "DBG15049 line_touch: {} in contact: {:?}",
+            in_contact.solutions.len(),
+            in_contact
+                .solutions
+                .iter()
+                .map(|t| t.start.param(0).ok().and_then(|u| circle_curve.evaluate_point(k, u).ok()))
+                .collect::<Vec<_>>()
+        );
+    }
     let [touch] = in_contact.solutions[..] else {
         return Ok(None);
     };

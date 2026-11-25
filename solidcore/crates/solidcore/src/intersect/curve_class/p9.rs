@@ -1388,15 +1388,17 @@ fn dbg15049_edge_solutions<O: Copy>(
     let Some(spec) = std::env::var_os("SC15049_PT") else {
         return;
     };
-    let v: Vec<f64> = spec
+    let pts: Vec<(Point3, f64)> = spec
         .to_string_lossy()
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
+        .split(';')
+        .filter_map(|one| {
+            let v: Vec<f64> = one.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            match v[..] {
+                [x, y, z, r] => Some((Point3::new(x, y, z), r)),
+                _ => None,
+            }
+        })
         .collect();
-    let [x, y, z, r] = v[..] else {
-        return;
-    };
-    let at = Point3::new(x, y, z);
     let name = |c: &Curve| match c.kind() {
         CurveKind::Line(_) => "line",
         CurveKind::Ellipse(_) => "ellipse",
@@ -1412,7 +1414,7 @@ fn dbg15049_edge_solutions<O: Copy>(
     };
     let (ws, we) = ends(working, interval);
     let (ts, te) = ends(target, &edge.interval);
-    let near = |p: Option<Point3>| p.is_some_and(|p| p.distance(at) < r);
+    let near = |p: Option<Point3>| p.is_some_and(|p| pts.iter().any(|&(at, r)| p.distance(at) < r));
     let mut lines = Vec::new();
     let mut any = false;
     for s in solutions {
