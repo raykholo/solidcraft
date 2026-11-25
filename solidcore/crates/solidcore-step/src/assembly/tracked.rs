@@ -254,6 +254,7 @@ fn followed(
     curve: &CurveEval,
     interval: [f64; 2],
     seed: &Curve2,
+    meets: [Option<[f64; 2]>; 2],
     backward: bool,
 ) -> Option<Curve2> {
     let [t0, t1] = interval;
@@ -285,7 +286,10 @@ fn followed(
             anchor_t + sign * (t1 - t0) * (i as f64 / FIRST_PIECES as f64)
         };
         let Some(more) = walk.advance(prev, t, 0) else {
-            eprintln!("DBG L6 coarse fail back={backward} i={i} t={t} prev.t={} prev.q={:?}", prev.t, prev.q);
+            eprintln!(
+                "DBG L6 coarse fail back={backward} i={i} t={t} prev.t={} prev.q={:?}",
+                prev.t, prev.q
+            );
             return None;
         };
         for n in more {
@@ -293,13 +297,20 @@ fn followed(
             coarse.push(n);
         }
     }
-    // The far end meets the kernel's pcurve there, where its neighbour in the loop starts or ends:
-    // on the same sheet and the same turn (a followed end a period away would leave a jump across
-    // a seam that the loop has no edge for).
-    let far = pcurve::eval(seed, far_t)?;
+    // The far end meets the pcurve of its neighbour in the loop (the kernel's own, where the loop
+    // has no other use): on the same sheet and the same turn (a followed end a period away would
+    // leave a jump across a seam that the loop has no edge for). The kernel's own end may be the
+    // wrong one: it is where the trim starts on another sheet.
+    let far = match meets[usize::from(!backward)] {
+        Some(q) => q,
+        None => pcurve::eval(seed, far_t)?,
+    };
     let mut end = *coarse.last()?;
     let period = on.domain().period;
-    eprintln!("DBG L6 end back={backward} followed={:?} far={:?} period={period:?}", end.q, far);
+    eprintln!(
+        "DBG L6 end back={backward} followed={:?} far={:?} period={period:?}",
+        end.q, far
+    );
     for ((x, y), p) in end.q.iter().zip(far).zip(period) {
         if p.is_some_and(|p| (x - y).abs() > 0.5 * p) {
             return None;
@@ -361,21 +372,43 @@ pub(super) fn retrack(
     let on = SurfaceEval::new(surface).map_err(|m| m.to_string())?;
     let mut made = 0;
     for (l, loop_pcs) in edge_loops.iter().zip(pcs.iter_mut()) {
-        for (&(e, _), pc) in l.iter().zip(loop_pcs.iter_mut()) {
+        let n = l.len();
+        for k in 0..n {
+            let (&(e, forward), Some(pc)) = (l.get(k).ok_or("edge use")?, loop_pcs.get(k).cloned())
+            else {
+                continue;
+            };
             let edge = edges.get(e as usize).ok_or("edge reference")?;
             let (curve, interval) = match &edge.form {
                 Some((c, i)) => (c, *i),
                 None => (&edge.curve, edge.interval),
             };
             let eval = CurveEval::new(curve).map_err(|m| m.to_string())?;
-            let off = gap(&on, &eval, pc, interval);
+            let off = gap(&on, &eval, &pc, interval);
             eprintln!("DBG L6 retrack edge={e} off={off}");
             if !(off > FAR) {
                 continue;
             }
+            // Where the uses next to this one end and start, as ends of this pcurve.
+            let end_of = |j: usize, start: bool| -> Option<[f64; 2]> {
+                let &(_, fwd) = l.get(j)?;
+                let c = loop_pcs.get(j)?;
+                let [a, b] = c.interval()?;
+                pcurve::eval(c, if fwd == start { a } else { b })
+            };
+            let meets = if n < 2 {
+                [None, None]
+            } else {
+                let (before, after) = (end_of((k + n - 1) % n, false), end_of((k + 1) % n, true));
+                if forward {
+                    [before, after]
+                } else {
+                    [after, before]
+                }
+            };
             let mut best: Option<(f64, Curve2)> = None;
             for backward in [false, true] {
-                let r = followed(&on, &eval, interval, pc, backward);
+                let r = followed(&on, &eval, interval, &pc, meets, backward);
                 eprintln!("DBG L6 followed back={backward} some={}", r.is_some());
                 if let Some(again) = r {
                     let g = gap(&on, &eval, &again, interval);
@@ -384,8 +417,8 @@ pub(super) fn retrack(
                     }
                 }
             }
-            if let Some((_, again)) = best {
-                *pc = again;
+            if let (Some((_, again)), Some(slot)) = (best, loop_pcs.get_mut(k)) {
+                *slot = again;
                 made += 1;
             }
         }
