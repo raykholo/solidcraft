@@ -4433,8 +4433,8 @@ fn probe_15049_swept_round_pinch() {
     all_fixes();
     // (half width, front radius, top arc centre depth, back radius)
     for (w, r0, c, r2) in [(15.0_f64, 30.0_f64, 56.0_f64, 18.0_f64), (12.5, 25.0, 47.0, 15.0)] {
-        for (mode, e) in [(0u8, 0.0_f64), (1, 1e-10), (1, 1e-9), (1, 2e-9), (2, 1e-10), (2, 1e-9)] {
-            let tag = format!("w={w} mode={mode} e={e:e}");
+        for n in [0.0_f64, 1.7e-9, -1.7e-9, 5e-10, 4e-9, 2e-8] {
+            let tag = format!("w={w} n={n:e}");
             let rb = r0 + c;
             let q = ((rb - r2).powi(2) - c * c).sqrt();
             let phi_t = c.atan2(-q);
@@ -4464,14 +4464,22 @@ fn probe_15049_swept_round_pinch() {
             };
             p15049_report(&format!("{tag} extrude"), &body);
             // Cut 1: the front rounded to a ball.
-            let yw = (r0 * r0 - w * w).sqrt();
-            let t1 = yw.atan2(w);
             let h = r0 + 15.0;
+            // The cut's profile a hair off centre along x, its right side leaning out.
+            let ya = |x: f64| (r0 * r0 - x * x).sqrt();
+            let (xr, xl) = (w + n, -w + n);
             let tool1 = [
-                Curve::Arc { center: [0.0; 3], axis: [0.0, 0.0, 1.0], reference: x, radius: r0, start: t1, end: PI - t1 },
-                Curve::Line { start: [-w, yw, 0.0], end: [-w, h, 0.0] },
-                Curve::Line { start: [-w, h, 0.0], end: [w, h, 0.0] },
-                Curve::Line { start: [w, h, 0.0], end: [w, yw, 0.0] },
+                Curve::Arc {
+                    center: [n, 0.0, 0.0],
+                    axis: [0.0, 0.0, 1.0],
+                    reference: x,
+                    radius: r0,
+                    start: ya(w).atan2(w),
+                    end: ya(w).atan2(-w),
+                },
+                Curve::Line { start: [xl, ya(w), 0.0], end: [xl, h, 0.0] },
+                Curve::Line { start: [xl, h, 0.0], end: [w + 0.2, h, 0.0] },
+                Curve::Line { start: [w + 0.2, h, 0.0], end: [xr, ya(w), 0.0] },
             ];
             let path1 = [arc_x([0.0; 3], r0, 0.0, PI / 2.0)];
             let (s1, _, route) = match sweep_placed(&tool1, &path1, SweepFrame::Follow, true) {
@@ -4491,37 +4499,65 @@ fn probe_15049_swept_round_pinch() {
             };
             p15049_report(&format!("{tag} cut1"), &body);
             // Cut 2: two curved triangles touching at the top, on the plane y = 0, along the top arc.
-            let zw = (r0 * r0 - w * w).sqrt();
-            let th = zw.atan2(w);
+            // Its end face: two curved triangles touching at the top.
             let mut tri = Vec::new();
-            for s in [1.0, -1.0] {
-                let (a0, a1) = if s > 0.0 { (th, PI / 2.0) } else { (PI / 2.0, PI - th) };
-                let ce = match mode {
-                    2 => [e, 0.0, -e],
-                    _ => [0.0; 3],
+            for s in [1.0_f64, -1.0] {
+                let za = ya(s * w - n);
+                let a = [s * w, 0.0, za];
+                let b = [n, 0.0, r0];
+                let cc = [s * w, 0.0, r0];
+                let ta = za.atan2(s * w - n);
+                let arc = |start: f64, end: f64| Curve::Arc {
+                    center: [n, 0.0, 0.0],
+                    axis: [0.0, -1.0, 0.0],
+                    reference: x,
+                    radius: r0,
+                    start,
+                    end,
                 };
-                let ea = if mode == 1 { e } else { 0.0 };
-                tri.push(Curve::Arc { center: ce, axis: [0.0, -1.0, 0.0], reference: x, radius: r0, start: a0, end: a1 });
-                tri.push(Curve::Line { start: [0.0, 0.0, r0], end: [s * w, 0.0, r0] });
-                tri.push(Curve::Line { start: [s * w, 0.0, r0], end: [s * w + ea, 0.0, zw - ea] });
+                if s > 0.0 {
+                    tri.push(arc(ta, PI / 2.0));
+                    tri.push(Curve::Line { start: b, end: cc });
+                    tri.push(Curve::Line { start: cc, end: a });
+                } else {
+                    tri.push(arc(PI / 2.0, ta));
+                    tri.push(Curve::Line { start: a, end: cc });
+                    tri.push(Curve::Line { start: cc, end: b });
+                }
             }
             let path2 = [arc_x([0.0, 0.0, -c], rb, PI / 2.0, phi_t)];
-            let (s2, _, route) = match sweep_placed(&tri, &path2, SweepFrame::Follow, true) {
-                Ok(s) => s,
+            let tools2 = match sweep_placed(&tri, &path2, SweepFrame::Follow, true) {
+                Ok((s2, _, route)) => {
+                    eprintln!("P15049 {tag} sweep2 route={route:?}");
+                    vec![s2]
+                }
                 Err(err) => {
-                    eprintln!("P15049 {tag} sweep2: {err:?}");
-                    continue;
+                    eprintln!("P15049 {tag} sweep2: {err:?}; one triangle at a time");
+                    let mut v = Vec::new();
+                    for half in tri.chunks(3) {
+                        match sweep_placed(half, &path2, SweepFrame::Follow, true) {
+                            Ok((s2, _, _)) => v.push(s2),
+                            Err(err) => eprintln!("P15049 {tag} sweep2 half: {err:?}"),
+                        }
+                    }
+                    v
                 }
             };
-            eprintln!("P15049 {tag} sweep2 route={route:?}");
-            p15049_report(&format!("{tag} tool2"), &s2);
-            body = match boolean(body, s2, BooleanOp::Subtract) {
-                Ok(Some(b)) => b,
-                other => {
-                    eprintln!("P15049 {tag} cut2: {:?}", other.map(|o| o.is_some()));
-                    continue;
-                }
-            };
+            let mut failed = false;
+            for s2 in tools2 {
+                p15049_report(&format!("{tag} tool2"), &s2);
+                body = match boolean(body, s2, BooleanOp::Subtract) {
+                    Ok(Some(b)) => b,
+                    other => {
+                        eprintln!("P15049 {tag} cut2: {:?}", other.map(|o| o.is_some()));
+                        failed = true;
+                        break;
+                    }
+                };
+            }
+            if failed {
+                continue;
+            }
             p15049_report(&format!("{tag} cut2"), &body);
             // Cut 3: the same triangles from the top arc's end, along the back arc.
             let alpha = phi_t - PI / 2.0;
