@@ -1160,6 +1160,72 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         (result, edited)
     }
 
+    /// Not upstream (#15049): when the definition `ed`, both of whose ends are the proto vertex
+    /// `pv`, is a speck on the vertex imprinted at `pv` in each B-rep, though that vertex is not
+    /// on the definition's source there, the vertex in each B-rep, each with a bound of its
+    /// distance to the speck and the speck's start and end points; else `None`.
+    ///
+    /// Where a cut grazes a face along two edges of it that are tangent at a corner (an arc
+    /// running into a line), their crossing a hair from the corner lies within tolerance of
+    /// both edges. The proto vertex there is imprinted on one of them, and the definition of
+    /// zero length that the other edge's coincidence leaves at it names the other edge as its
+    /// source, so no vertex imprinted at the proto vertex is connected to its source. Such a
+    /// definition carries no geometry the vertex does not have ([`speck_on_vertex`], within
+    /// both that vertex's tolerance and the definition's own) and makes no edge, as
+    /// [`ProtoTopologyManager::collapsed_beside_sibling`]'s specks make none: the vertex's
+    /// tolerance comes to cover it.
+    ///
+    /// # Errors
+    ///
+    /// Those of the curve evaluations; [`SolidError::InvalidInput`] for deleted objects.
+    fn speck_off_its_source(
+        &self,
+        k: &Kernel,
+        brep: &impl ProtoBrep<O>,
+        ed: EdgeDefId,
+        pv: ProtoVertexId,
+    ) -> Result<Option<Vec<(O, f64, Point3, Point3)>>> {
+        let def = self.ed_ref(ed)?;
+        let curve = curve_of(brep, def.xsect_curve_3d())?;
+        let interval = def.xsect_interval();
+        let vds = self
+            .proto_vertex(pv)
+            .ok_or(dangling("proto vertex is deleted"))?
+            .vertex_definitions()
+            .to_vec();
+        let mut skipped = Vec::with_capacity(2);
+        for which in [1, 2] {
+            // The vertex imprinted at the proto vertex in this B-rep: one for all its
+            // definitions, else the speck is not on one vertex.
+            let mut vertex = None;
+            for &vd in &vds {
+                let Some(v) = self.vd_ref(vd)?.final_vertex(which) else {
+                    continue;
+                };
+                if vertex.is_some_and(|w| w != v) {
+                    return Ok(None);
+                }
+                vertex = Some(v);
+            }
+            let Some(v) = vertex else {
+                return Ok(None);
+            };
+            let (Some(point), Some(tol)) = (
+                brep.classification_vertex_point(v),
+                brep.topology_tolerance(v),
+            ) else {
+                return Ok(None);
+            };
+            let Some((gap, p0, p1)) =
+                speck_on_vertex(k, curve, interval, point, min2(tol, def.raw_tolerance()))?
+            else {
+                return Ok(None);
+            };
+            skipped.push((v, gap, p0, p1));
+        }
+        Ok(Some(skipped))
+    }
+
     /// Not upstream (WR-619): when the
     /// definition `ed`, with proto vertices `pvs` and final vertices `vertices` (start, end in
     /// B-reps 1 and 2), is a collapsed speck, returns a bound of each B-rep vertex's maximum
@@ -1502,18 +1568,25 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         let end_pv = self.pv_live(end_pv)?;
 
         let null = || SolidError::topology(OP_IMPRINT_ED, TopologyFailure::NoFinalVertexAtEnd);
-        let start_vtx1 = self
-            .proto_vertex_final_vertex(k, brep, start_pv, 1, ed, true)?
-            .ok_or_else(null)?;
-        let end_vtx1 = self
-            .proto_vertex_final_vertex(k, brep, end_pv, 1, ed, false)?
-            .ok_or_else(null)?;
-        let start_vtx2 = self
-            .proto_vertex_final_vertex(k, brep, start_pv, 2, ed, true)?
-            .ok_or_else(null)?;
-        let end_vtx2 = self
-            .proto_vertex_final_vertex(k, brep, end_pv, 2, ed, false)?
-            .ok_or_else(null)?;
+        let found = [
+            self.proto_vertex_final_vertex(k, brep, start_pv, 1, ed, true)?,
+            self.proto_vertex_final_vertex(k, brep, end_pv, 1, ed, false)?,
+            self.proto_vertex_final_vertex(k, brep, start_pv, 2, ed, true)?,
+            self.proto_vertex_final_vertex(k, brep, end_pv, 2, ed, false)?,
+        ];
+        let [Some(start_vtx1), Some(end_vtx1), Some(start_vtx2), Some(end_vtx2)] = found else {
+            // Not upstream (#15049): a speck on one proto vertex whose vertex was imprinted on
+            // a coincident sibling of the definition's source edge makes no edge.
+            if start_pv == end_pv {
+                if let Some(skipped) = self.speck_off_its_source(k, &*brep, ed, start_pv)? {
+                    for (vertex, gap, p0, p1) in skipped {
+                        self.note_skipped_speck_vertex(vertex, gap, p0, p1);
+                    }
+                    return Ok(());
+                }
+            }
+            return Err(null());
+        };
         let brep1 = self.which_brep(1);
         let brep2 = self.which_brep(2);
 
