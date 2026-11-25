@@ -418,12 +418,32 @@ pub(super) fn retrack(
                     [after, before]
                 }
             };
+            eprintln!(
+                "DBG L6 domain={:?} use k={k} e={e} fwd={forward} meets={meets:?}",
+                on.domain()
+            );
+            for (j, (&(ej, fj), cj)) in l.iter().zip(loop_pcs.iter()).enumerate() {
+                if let Some([a, b]) = cj.interval() {
+                    eprintln!(
+                        "DBG L6   use {j} e={ej} fwd={fj} t={a}..{b} start={:?} end={:?}",
+                        pcurve::eval(cj, a),
+                        pcurve::eval(cj, b)
+                    );
+                }
+            }
             let mut best: Option<(f64, Curve2)> = None;
             for backward in [false, true] {
                 let r = followed(&on, &eval, interval, &pc, meets, backward);
                 eprintln!("DBG L6 followed back={backward} some={}", r.is_some());
                 if let Some(again) = r {
                     let g = gap(&on, &eval, &again, interval);
+                    if let Some([a, b]) = again.interval() {
+                        eprintln!(
+                            "DBG L6 again back={backward} gap={g} start={:?} end={:?}",
+                            pcurve::eval(&again, a),
+                            pcurve::eval(&again, b)
+                        );
+                    }
                     if g < off && best.as_ref().is_none_or(|(b, _)| g < *b) {
                         best = Some((g, again));
                     }
