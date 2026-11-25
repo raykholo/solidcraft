@@ -292,25 +292,30 @@ fn followed(
             coarse.push(n);
         }
     }
+    // The far end meets the kernel's pcurve there, where its neighbour in the loop starts or ends:
+    // on the same sheet and the same turn (a followed end a period away would leave a jump across
+    // a seam that the loop has no edge for).
+    let far = pcurve::eval(seed, far_t)?;
+    let mut end = *coarse.last()?;
+    let period = on.domain().period;
+    for ((x, y), p) in end.q.iter().zip(far).zip(period) {
+        if p.is_some_and(|p| (x - y).abs() > 0.5 * p) {
+            return None;
+        }
+    }
+    if at(on, far)?.dist(at(on, end.q)?) > END_AGREE {
+        return None;
+    }
+    end.q = far;
+    end.m = slope(on, curve, far_t, far)?;
+    end.off = at(on, far)?.dist(curve.point(far_t)?);
+    if let Some(slot) = coarse.last_mut() {
+        *slot = end;
+    }
     if backward {
         coarse.reverse();
     }
-    // The far end (not the anchor) is kept where it was followed to when walking backward.
     let first = *coarse.first()?;
-    if !backward {
-        // It ends where the kernel's pcurve does.
-        let mut last = *coarse.last()?;
-        let end = pcurve::eval(seed, t1)?;
-        if at(on, end)?.dist(at(on, last.q)?) > END_AGREE {
-            return None;
-        }
-        last.q = end;
-        last.m = slope(on, curve, t1, end)?;
-        last.off = at(on, end)?.dist(curve.point(t1)?);
-        if let Some(slot) = coarse.last_mut() {
-            *slot = last;
-        }
-    }
     let mut nodes = vec![first];
     for pair in coarse.windows(2) {
         let (a, b) = (*pair.first()?, *pair.get(1)?);
