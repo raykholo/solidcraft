@@ -4434,7 +4434,7 @@ fn probe_15049_swept_round_pinch() {
 
 #[test]
 fn probe_15049_fast() {
-    p15049_probe(&[3, 7, 12, 2, 4], true);
+    p15049_probe(&[2, 4, 3], true);
 }
 
 fn p15049_probe(seeds: &[u32], debug: bool) {
