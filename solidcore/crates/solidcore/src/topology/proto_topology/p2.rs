@@ -1203,6 +1203,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                     continue;
                 };
                 if vertex.is_some_and(|w| w != v) {
+                    eprintln!("DBG15049   speck: two vertices in {which}");
                     return Ok(None);
                 }
                 vertex = Some(v);
@@ -1219,6 +1220,7 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
             let Some((gap, p0, p1)) =
                 speck_on_vertex(k, curve, interval, point, min2(tol, def.raw_tolerance()))?
             else {
+                eprintln!("DBG15049   speck: not on vertex {point:?} tol={tol:e} in {which}");
                 return Ok(None);
             };
             skipped.push((v, gap, p0, p1));
@@ -1577,6 +1579,27 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
         let [Some(start_vtx1), Some(end_vtx1), Some(start_vtx2), Some(end_vtx2)] = found else {
             // Not upstream (#15049): a speck on one proto vertex whose vertex was imprinted on
             // a coincident sibling of the definition's source edge makes no edge.
+            {
+                let d = self.ed_ref(ed)?;
+                let iv = d.xsect_interval();
+                let c = curve_of(&*brep, d.xsect_curve_3d())?;
+                let a = c.evaluate_point(k, iv.min())?;
+                let b = c.evaluate_point(k, iv.max())?;
+                let m = c.evaluate_point(k, 0.5 * (iv.min() + iv.max()))?;
+                eprintln!(
+                    "DBG15049 imprint miss: same_pv={} found={:?} interval=[{}, {}] a={a:?} mid={m:?} b={b:?} raw_tol={:e} src1={:?} src2={:?}",
+                    start_pv == end_pv,
+                    found.map(|f| f.is_some()),
+                    iv.min(),
+                    iv.max(),
+                    d.raw_tolerance(),
+                    d.src_topo_type(1),
+                    d.src_topo_type(2)
+                );
+                let sp = self.proto_vertex(start_pv).map(|p| p.position());
+                let ep = self.proto_vertex(end_pv).map(|p| p.position());
+                eprintln!("DBG15049   start_pv={sp:?} end_pv={ep:?}");
+            }
             if start_pv == end_pv {
                 if let Some(skipped) = self.speck_off_its_source(k, &*brep, ed, start_pv)? {
                     for (vertex, gap, p0, p1) in skipped {
