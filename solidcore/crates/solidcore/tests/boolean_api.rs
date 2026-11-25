@@ -2526,32 +2526,52 @@ fn pinch_wedge(k: &mut Kernel, tri: [(f64, f64); 3], top: f64, depth: f64) -> Br
     create_linear_sweep(k, &refs, Vec3::new(0.0, 0.0, -1.0), depth, true).unwrap()
 }
 
+/// A triangle in the plane `y = 0` (coordinates `(x, z)`), revolved `sweep` degrees about the
+/// z axis, then turned `turn` degrees.
+fn pinch_revolved(k: &mut Kernel, tri: [(f64, f64); 3], sweep: f64, turn: f64) -> Brep {
+    use solidcore::primitive::api_curves as curves;
+    let p = |q: (f64, f64)| Point3::new(q.0, 0.0, q.1);
+    let line = |a: (f64, f64), b: (f64, f64)| {
+        Curve::from(curves::create_line_segment(p(a), p(b)).unwrap())
+    };
+    let profile = [
+        line(tri[0], tri[1]),
+        line(tri[1], tri[2]),
+        line(tri[2], tri[0]),
+    ];
+    let refs: Vec<Option<&Curve>> = profile.iter().map(Some).collect();
+    let o = Point3::new(0.0, 0.0, 0.0);
+    let axis = Vec3::new(0.0, 0.0, 1.0);
+    let mut b = solidcore::sweep::api_brep::create_rotational_sweep(k, &refs, o, axis, sweep, true)
+        .unwrap();
+    if turn != 0.0 {
+        api_rotate(k, Some(TransformObject::Brep(&mut b)), o, axis, turn).unwrap();
+    }
+    b
+}
+
 #[test]
-fn probe_15049_pinch_stacked_cut() {
+fn probe_15049_pinch_revolved_cut() {
     use solidcore::topology::brep::p1;
-    for combined in [false, true] {
-        for dz in [0.0, 1e-5, -1e-5, 5e-5, -5e-5, 9.4e-5, -9.4e-5, 3e-4, -3e-4] {
-            for (nx, ny) in [(0.0, 0.0), (1e-10, 0.0), (3e-10, -2e-10)] {
+    for sgn in [1.0, -1.0] {
+        for combined in [false, true] {
+            for dang in [0.0, 1e-9, 1e-8, 1e-7, 2.7e-4, -2.7e-4, 1e-3, -1e-3] {
                 let mut k = Kernel::default();
                 let mut body = Some(
                     api::create_box(&mut k, Point3::new(-30.0, -30.0, 0.0), 60.0, 60.0, 10.0)
                         .unwrap(),
                 );
                 let mut log = String::new();
-                for (i, (top, depth, (sx, sy))) in
-                    [(10.0, 4.0, (0.0, 0.0)), (6.0 + dz, 4.0, (nx, ny))]
-                        .into_iter()
-                        .enumerate()
-                {
-                    let mut tools = Vec::new();
-                    for sign in [1.0, -1.0] {
-                        let tri = [
-                            (sx, sy),
-                            (sx + sign * 10.0, sy + 5.0),
-                            (sx + sign * 10.0, sy - 5.0),
-                        ];
-                        tools.push(pinch_wedge(&mut k, tri, top, depth));
-                    }
+                let mut vols = Vec::new();
+                for (i, turn) in [0.0, sgn * 30.0 + dang].into_iter().enumerate() {
+                    let tris = [
+                        [(20.0, 6.5), (25.0, 10.0), (25.0, 3.0)],
+                        [(20.0, 6.5), (15.0, 10.0), (15.0, 3.0)],
+                    ];
+                    let mut tools: Vec<Brep> = tris
+                        .iter()
+                        .map(|t| pinch_revolved(&mut k, *t, 30.0, turn))
+                        .collect();
                     if combined {
                         let b = tools.pop().unwrap();
                         let a = tools.pop().unwrap();
@@ -2567,19 +2587,21 @@ fn probe_15049_pinch_stacked_cut() {
                             Err(e) => log.push_str(&format!(" cut{i}: ERR {e}")),
                         }
                     }
+                    if let Some(b) = body.as_mut() {
+                        vols.push(volume_of(&k, b));
+                    }
                 }
                 let Some(mut body) = body else {
-                    eprintln!("PROBE15049S comb={combined} dz={dz:e} noise=({nx:e},{ny:e}){log}");
+                    eprintln!("PROBE15049R sgn={sgn} comb={combined} dang={dang:e}{log}");
                     continue;
                 };
                 let f = p1::faces(&body, None).unwrap().len();
                 let e = p1::edges(&body, None).unwrap().len();
                 let v = p1::vertices(&body, None).unwrap().len();
-                let vol = volume_of(&k, &mut body);
                 let chk = check_brep(&mut k, &mut body, CheckLevel::Level2)
                     .map(|c| c.lines())
                     .unwrap_or_default();
-                eprintln!("PROBE15049S comb={combined} dz={dz:e} noise=({nx:e},{ny:e}) f/e/v={f}/{e}/{v} vol={vol} check={chk:?}{log}");
+                eprintln!("PROBE15049R sgn={sgn} comb={combined} dang={dang:e} f/e/v={f}/{e}/{v} vols={vols:?} check={chk:?}{log}");
             }
         }
     }
