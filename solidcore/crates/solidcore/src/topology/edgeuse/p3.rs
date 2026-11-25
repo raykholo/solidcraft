@@ -1601,7 +1601,7 @@ fn brute_force(
         let solutions = surface.global_point_solve::<NoObject>(
             k,
             Some(NoObject),
-            &solve_domain,
+            face_domain,
             SolverOperation::Minimize,
             p0,
             edge_tol,
