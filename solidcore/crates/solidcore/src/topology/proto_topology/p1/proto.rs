@@ -3871,6 +3871,45 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                 }
             }
         }
+        if ret_val.is_none() && std::env::var_os("SC15049_DEBUG").is_some() {
+            let p = self.pv(Some(pv))?;
+            eprintln!(
+                "DBG15049 pvfv none: which={which} at_start={at_start} pv_pos={:?} pv_tol={:e} ed_pos={:?} ed_src_kind={:?} ed_src_type={:?} ed_tol={:e}",
+                p.position(),
+                p.tol,
+                ed_pos,
+                brep_topo_ed.map(|o| o.class_kind()),
+                d.src_topo_type(which),
+                d.raw_tolerance()
+            );
+            if let Some(e) = brep_topo_ed.filter(|o| o.class_kind() == ClassObjectKind::Edge) {
+                let s = geometry.edge_start_vertex(e)?;
+                let o = geometry.edge_other_vertex(e, s)?;
+                let sp = s.map(|v| geometry.vertex_point(v)).transpose()?;
+                let op = o.map(|v| geometry.vertex_point(v)).transpose()?;
+                eprintln!("DBG15049   src edge ends {sp:?} {op:?}");
+            }
+            for &vd in vds {
+                let v = self.vd(vd)?;
+                let fv = v.final_vertex(which);
+                let fp = fv.map(|x| geometry.vertex_point(x)).transpose()?;
+                let conn = match fv {
+                    Some(x) => Some(are_connected(geometry, brep_topo_ed, Some(x))?),
+                    None => None,
+                };
+                let nfaces = match fv {
+                    Some(x) => geometry.vertex_use_faces(x)?.len(),
+                    None => 0,
+                };
+                eprintln!(
+                    "DBG15049   vd pos={:?} gap={:e} src={:?}/{:?} final={fp:?} connected={conn:?} final_faces={nfaces}",
+                    v.position(),
+                    v.gap(),
+                    v.src_topo(which).map(|o| o.class_kind()),
+                    v.src_topo_type(which),
+                );
+            }
+        }
         Ok(ret_val)
     }
 
