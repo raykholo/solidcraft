@@ -1385,8 +1385,12 @@ fn dbg15049_edge_solutions<O: Copy>(
     solutions: &[Solution<O>],
     tolerance: f64,
 ) {
-    let Some(spec) = std::env::var_os("SC15049_PT") else {
-        return;
+    let spec = match std::env::var_os("SC15049_PT") {
+        Some(s) => s,
+        None if std::env::var_os("SC15049_DEBUG").is_some() => {
+            std::ffi::OsString::from("0,-51.0091743118,16.6972477065,0.05")
+        }
+        None => return,
     };
     let v: Vec<f64> = spec
         .to_string_lossy()
