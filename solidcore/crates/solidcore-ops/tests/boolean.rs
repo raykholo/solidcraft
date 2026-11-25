@@ -4433,7 +4433,7 @@ fn probe_15049_swept_round_pinch() {
     all_fixes();
     // (half width, front radius, top arc centre depth, back radius)
     for (w, r0, c, r2) in [(15.0_f64, 30.0_f64, 56.0_f64, 18.0_f64), (12.5, 25.0, 47.0, 15.0)] {
-        'cases: for n in [0.0_f64, 1.7e-9, -1.7e-9, 5e-10, 4e-9, 2e-8] {
+        'cases: for n in [0.0_f64, 1.7e-9] {
             let tag = format!("w={w} n={n:e}");
             let rb = r0 + c;
             let q = ((rb - r2).powi(2) - c * c).sqrt();
@@ -4555,34 +4555,85 @@ fn probe_15049_swept_round_pinch() {
             }
 
             p15049_report(&format!("{tag} cut2"), &body);
-            // Cut 3: the same triangles from the top arc's end, along the back arc.
+            // Cut 3: the end face's triangles as a sketch reads them back (each point a few
+            // billionths off, each arc's radius taken from its start point), along the back arc.
             let alpha = phi_t - PI / 2.0;
-            let tri3: Vec<Curve> = tri.iter().map(|k| p15049_turn_curve(k, 0.0, -c, alpha)).collect();
+            let k_dir = p15049_turn([0.0, 0.0, 1.0], 0.0, 0.0, alpha);
+            let origin = [0.0, 0.0, -c];
+            let ux = [-1.0, 0.0, 0.0];
+            let normal = [
+                ux[1] * k_dir[2] - ux[2] * k_dir[1],
+                ux[2] * k_dir[0] - ux[0] * k_dir[2],
+                ux[0] * k_dir[1] - ux[1] * k_dir[0],
+            ];
+            let world = |u: f64, v: f64| {
+                [
+                    origin[0] + ux[0] * u + k_dir[0] * v,
+                    origin[1] + ux[1] * u + k_dir[1] * v,
+                    origin[2] + ux[2] * u + k_dir[2] * v,
+                ]
+            };
+            // A sketch arc: centre, radius to its start, counter-clockwise from start to end.
+            let sk_arc = |cen: (f64, f64), a: (f64, f64), b: (f64, f64)| {
+                let start = (a.1 - cen.1).atan2(a.0 - cen.0);
+                let mut sweep = (b.1 - cen.1).atan2(b.0 - cen.0) - start;
+                while sweep <= 1e-12 {
+                    sweep += 2.0 * PI;
+                }
+                let radius = ((a.0 - cen.0).powi(2) + (a.1 - cen.1).powi(2)).sqrt();
+                Curve::Arc { center: world(cen.0, cen.1), axis: normal, reference: ux, radius, start, end: start + sweep }
+            };
+            let sk_line = |a: (f64, f64), b: (f64, f64)| Curve::Line { start: world(a.0, a.1), end: world(b.0, b.1) };
             let path3 = [arc_x([0.0, -q, 0.0], r2, phi_t, PI)];
-            let mut tools3 = Vec::new();
-            for half in tri3.chunks(3) {
-                match sweep_placed(half, &path3, SweepFrame::Follow, true) {
-                    Ok((s3, _, route)) => {
-                        eprintln!("P15049 {tag} sweep3 route={route:?}");
-                        tools3.push(s3);
+            let side = c + ya(w);
+            let top = c + r0;
+            let mut tally = std::collections::BTreeMap::new();
+            for v in 0..120u32 {
+                let scale = [0.0, 1e-10, 5e-10, 1e-9, 3e-9][(v % 5) as usize];
+                let rnd = |j: u32| {
+                    let t = (f64::from(v) * 12.9898 + f64::from(j) * 78.233).sin() * 43758.5453;
+                    (t - t.floor()) * 2.0 - 1.0
+                };
+                let pt = |j: u32, u: f64, vv: f64| (u + scale * rnd(2 * j), vv + scale * rnd(2 * j + 1));
+                let p1 = pt(1, w, side);
+                let p2 = pt(2, w, top);
+                let p3 = pt(3, 0.0, c);
+                let p4 = pt(4, 0.0, top);
+                let p5 = pt(5, -w, side);
+                let p6 = pt(6, -w, top);
+                let regions = [
+                    vec![sk_line(p1, p2), sk_arc(p3, p1, p4), sk_line(p2, p4)],
+                    vec![sk_arc(p3, p4, p5), sk_line(p4, p6), sk_line(p5, p6)],
+                ];
+                let mut tools3 = Vec::new();
+                let mut outcome = String::new();
+                for r in &regions {
+                    match sweep_placed(r, &path3, SweepFrame::Follow, true) {
+                        Ok((s3, _, _)) => tools3.push(s3),
+                        Err(err) => outcome.push_str(&format!("sweep {err:?} ")),
                     }
-                    Err(err) => eprintln!("P15049 {tag} sweep3 half: {err:?}"),
                 }
-            }
-            for order in [[0usize, 1], [1, 0]] {
-                let mut acc = Some(body.copy().unwrap());
-                for k in order {
-                    let Some(t) = tools3.get(k) else { continue };
-                    let Some(cur) = acc.take() else { break };
-                    match boolean(cur, t.copy().unwrap(), BooleanOp::Subtract) {
-                        Ok(Some(b)) => {
-                            p15049_report(&format!("{tag} cut3 {order:?} after {k}"), &b);
-                            acc = Some(b);
+                for order in [[1usize, 0], [0, 1]] {
+                    let mut acc = Some(body.copy().unwrap());
+                    for k in order {
+                        let Some(t) = tools3.get(k) else { continue };
+                        let Some(cur) = acc.take() else { break };
+                        match boolean(cur, t.copy().unwrap(), BooleanOp::Subtract) {
+                            Ok(Some(b)) => acc = Some(b),
+                            other => outcome.push_str(&format!("{order:?}@{k}: {:?} ", other.map(|o| o.is_some()))),
                         }
-                        other => eprintln!("P15049 {tag} cut3 {order:?} at {k}: {:?}", other.map(|o| o.is_some())),
+                    }
+                    if let Some(b) = acc {
+                        let ok = b.check(CheckLevel::All).map(|r| r.is_valid()).unwrap_or(false);
+                        outcome.push_str(&format!("{order:?} {:?} valid={ok} ", b.counts().unwrap()));
                     }
                 }
+                if !outcome.contains("[8, 17, 11] valid=true [0, 1] [8, 17, 11] valid=true") {
+                    eprintln!("P15049 {tag} v={v} scale={scale:e} pts={:?}: {outcome}", [p1, p2, p3, p4, p5, p6]);
+                }
+                *tally.entry(outcome).or_insert(0) += 1;
             }
+            eprintln!("P15049 {tag} tally={tally:?}");
         }
     }
 }
