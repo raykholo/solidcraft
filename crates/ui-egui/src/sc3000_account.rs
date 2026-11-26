@@ -610,7 +610,8 @@ fn nag(ctx: &egui::Context) -> Option<bool> {
     let free = egui::Rect::from_min_max(screen.min + egui::vec2(t.space_16, 0.0), screen.max - egui::vec2(t.space_16, t.space_24 * 3.0));
     let actions = [(tr("sc3000.account.save_now"), Action::Primary), (tr("sc3000.account.not_now"), Action::Dismiss)];
     let extras = Extras { close: Some("sc3000_account_nag"), close_label: Some(tr("sc3000.account.not_now")), ..Extras::default() };
-    let shown = egui::Area::new(egui::Id::unique("sc3000_account_nag"))
+    let shown = ui_kit::Container::new(ctx, ui_kit::Surface::Popup)
+        .area(egui::Id::unique("sc3000_account_nag"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min)
         .show(ctx, |ui| ui_kit::toast::show(ui, free, Place::Centre, tr("sc3000.account.nag").to_string(), Lead::Dot(false), &actions, extras))
