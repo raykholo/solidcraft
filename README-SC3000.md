@@ -9,6 +9,8 @@ The `sc3000` Cargo feature is **off by default**; a normal build keeps SolidCraf
 
 Phone number verification gag requested by: **oursland** (cadmpeg).
 
+Cloud Account requested by: **N3MI** and **brett19**.
+
 ## Build
 
 Install the prerequisites in [docs/building.md](docs/building.md), including Trunk and the `wasm32-unknown-unknown`
