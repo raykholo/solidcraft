@@ -595,6 +595,19 @@ fn orientation_to_find(
         } else if vb2 == Some(vb_rel) {
             Ok(reverse_orientation(eu::orientation(brep, prim)?))
         } else {
+            if std::env::var_os("SC15049_DEBUG").is_some() {
+                let pt = |b: &Brep, v: Option<crate::topology::VertexId>| {
+                    v.and_then(|v| crate::topology::vertex::point(b, v).ok())
+                };
+                eprintln!(
+                    "DBG15049 orient: other edge {:?} .. {:?}; primary edge {:?} .. {:?}; related {:?}",
+                    pt(other, Some(v)),
+                    pt(other, v2),
+                    pt(brep, Some(vb)),
+                    pt(brep, vb2),
+                    pt(brep, Some(vb_rel)),
+                );
+            }
             Err(SolidError::boolean_defect(
                 OP_FACEUSE,
                 BooleanStage::Merge,

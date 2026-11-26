@@ -4901,3 +4901,72 @@ fn a_fitted_loft_insert_with_a_knife_on_the_floor_gets_through_imprint_and_relat
         }
     }
 }
+
+// ---- SCRATCH probe for #15049 (not for merge) ----
+fn l10d_probe(seeds: &[u32], debug: bool) {
+    all_fixes();
+    let block = cusp_block();
+    if debug {
+        let cusp = block.sketch_point((0.0, CUSP_C + CUSP_R0));
+        let (yc, r2, _) = block.back;
+        std::env::set_var(
+            "SC15049_PT",
+            format!(
+                "{},{},{},0.05;{},{},{},0.05",
+                cusp[0], cusp[1], cusp[2], 0.0, yc - r2, 0.0
+            ),
+        );
+        std::env::set_var("SC15049_DEBUG", "1");
+        eprintln!("PROBE cusp={cusp:?}");
+    }
+    let mut tally = std::collections::BTreeMap::new();
+    let mut good = 0;
+    for &v in seeds {
+        let noise = [0.0, 1e-10, 5e-10, 1e-9, 3e-9][(v % 5) as usize];
+        let tools = cusp_tools(&block, v, noise);
+        let mut outcome = String::new();
+        let mut all_ok = true;
+        for order in [[1usize, 0], [0, 1]] {
+            let mut acc = Some(block.body.copy().unwrap());
+            for k in order {
+                let Some(cur) = acc.take() else { break };
+                if debug {
+                    eprintln!("PROBE ---- v={v} order={order:?} tool {k}");
+                }
+                match boolean(cur, tools[k].copy().unwrap(), BooleanOp::Subtract) {
+                    Ok(Some(b)) => acc = Some(b),
+                    other => {
+                        let detail = solidcore_ops::session::take_failure_detail().unwrap_or_default();
+                        let detail: String = detail.chars().take(60).collect();
+                        outcome.push_str(&format!("{order:?}@{k}:{:?}[{detail}] ", other.map(|o| o.is_some())));
+                        *tally.entry(format!("{:?}[{detail}]", other.map(|o| o.is_some()))).or_insert(0) += 1;
+                    }
+                }
+            }
+            match acc {
+                Some(b) => {
+                    let ok = b.check(CheckLevel::All).map(|r| r.is_valid()).unwrap_or(false);
+                    let counts = b.counts().unwrap();
+                    all_ok &= ok && counts == [8, 17, 11];
+                    outcome.push_str(&format!("{order:?} {counts:?} valid={ok} "));
+                }
+                None => all_ok = false,
+            }
+        }
+        if all_ok {
+            good += 1;
+        }
+        eprintln!("PROBE v={v} noise={noise:e} ok={all_ok} {outcome}");
+    }
+    eprintln!("PROBE good={good}/{} tally={tally:?}", seeds.len());
+}
+
+#[test]
+fn probe_15049_l10d_all() {
+    l10d_probe(&(0..120).collect::<Vec<u32>>(), false);
+}
+
+#[test]
+fn probe_15049_l10d_zdbg() {
+    l10d_probe(&[2, 3], true);
+}

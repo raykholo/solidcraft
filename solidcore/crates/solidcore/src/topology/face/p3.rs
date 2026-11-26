@@ -2950,6 +2950,7 @@ pub fn face_intersect_breps_cached(
         uv_curves1 = r.surface1_uv_curves;
         uv_curves2 = r.surface2_uv_curves;
         curve_types = r.curve_types;
+        dbg15049_curves(k, "raw", &surface, other_surface, &curves_3d, &curve_types, false);
 
         // A crossing curve that bounds a cap within the tolerance is a touch at the
         // B-rep's tolerance (not upstream; WR-79, #2412): it becomes the touching point at
@@ -3050,6 +3051,11 @@ pub fn face_intersect_breps_cached(
             }
             ii += 1;
         }
+    }
+    {
+        let b: &Brep = this_brep;
+        let ob: &Brep = other_brep.as_deref().unwrap_or(b);
+        dbg15049_curves(k, "after", surface_of(b, f)?, surface_of(ob, other)?, &curves_3d, &curve_types, curves_are_edges);
     }
     for (ii, curve) in curves_3d.iter().enumerate() {
         let curve_type = curve_types
@@ -3332,5 +3338,57 @@ mod tests {
         // the face, each of its edge uses and each of its vertex uses
         assert!(heard.load(Ordering::Relaxed) > 2 * n as u64);
         assert_eq!(notify(NotifyOperation::ChangeGeometry, Some(&mut quiet)), 1);
+    }
+}
+
+/// DEBUG 15049 (scratch): a face pair's intersection curves near a point of `SC15049_PT`.
+#[allow(clippy::too_many_arguments)]
+fn dbg15049_curves(
+    k: &Kernel,
+    tag: &str,
+    s1: &Surface,
+    s2: &Surface,
+    curves: &[Curve],
+    types: &[TsectCurveType],
+    edges: bool,
+) {
+    use crate::surface::surface::p2::SurfaceKind;
+    let Some(spec) = std::env::var_os("SC15049_PT") else {
+        return;
+    };
+    let pts: Vec<(Point3, f64)> = spec
+        .to_string_lossy()
+        .split(';')
+        .filter_map(|one| {
+            let v: Vec<f64> = one.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+            match v[..] {
+                [x, y, z, r] => Some((Point3::new(x, y, z), r)),
+                _ => None,
+            }
+        })
+        .collect();
+    let sk = |s: &Surface| match s.kind() {
+        SurfaceKind::Cone(_) => "cone",
+        SurfaceKind::Plane(_) => "plane",
+        SurfaceKind::SurfOfRevolution(_) => "rev",
+        SurfaceKind::BSpline(_) => "bspline",
+        _ => "other",
+    };
+    let near = |p: Option<Point3>| p.is_some_and(|p| pts.iter().any(|&(at, r)| p.distance(at) < r));
+    let mut lines = Vec::new();
+    let mut any = false;
+    for (i, c) in curves.iter().enumerate() {
+        let ivl = c.natural_interval();
+        let a = c.evaluate_point(k, ivl.min()).ok();
+        let m = c.evaluate_point(k, 0.5 * (ivl.min() + ivl.max())).ok();
+        let e = c.evaluate_point(k, ivl.max()).ok();
+        any |= near(a) || near(m) || near(e);
+        lines.push(format!("  {i} {:?} {a:?} .. {e:?} mid {m:?}", types.get(i)));
+    }
+    if any {
+        eprintln!("DBG15049 fi {tag} edges={edges}: {} x {} n={}", sk(s1), sk(s2), curves.len());
+        for l in lines {
+            eprintln!("{l}");
+        }
     }
 }
