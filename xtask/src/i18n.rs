@@ -26,6 +26,11 @@ const DIR: &str = "assets/locales";
 /// catalog and is checked implicitly; keep this in step with `COMPLETE` in `ui-egui::i18n`.
 const COMPLETE: &[&str] = &["ar", "he", "ja", "vi", "zh"];
 
+/// SolidCraft 3000's parody strings (the `sc3000` feature, off by default) ship in English and
+/// German only, by design: the complete catalogs show them in English. They are left out of the
+/// coverage check; keep this in step with `ENGLISH_AND_GERMAN_ONLY` in `ui-egui::i18n`.
+const ENGLISH_AND_GERMAN_ONLY: &str = "sc3000.";
+
 /// What `run` found.
 #[derive(Default)]
 struct Report {
@@ -81,7 +86,8 @@ fn run_with_registry(root: &Path, args: &[&str], registry: impl FnOnce() -> Resu
         if id == "en" {
             continue;
         }
-        let missing: Vec<String> = english.keys().filter(|k| !messages.contains_key(*k)).cloned().collect();
+        let missing: Vec<String> =
+            english.keys().filter(|k| !k.starts_with(ENGLISH_AND_GERMAN_ONLY) && !messages.contains_key(*k)).cloned().collect();
         if !missing.is_empty() {
             report.missing.insert(id.clone(), missing);
         }
@@ -308,6 +314,27 @@ mod tests {
                 assert_eq!(std::fs::read(&english).unwrap(), before, "a registry failure must not rewrite the catalog");
             }
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn only_sc3000_ids_may_be_missing_from_a_complete_catalog() {
+        let root = catalog_root();
+        let dir = root.join(DIR);
+        std::fs::write(dir.join("en.json"), "{\"cmd.known\":\"Known\",\"sc3000.joke\":\"Now 100% in the cloud\"}\n").unwrap();
+        // SolidCraft 3000's own strings are English and German only: a complete catalog without them passes.
+        std::fs::write(dir.join("ar.json"), "{\"cmd.known\":\"معروف\"}\n").unwrap();
+        assert_eq!(run_with_registry(&root, &["--check", "--no-registry"], || Ok(Vec::new())), Ok(()));
+        // Any other id missing from a complete catalog still fails.
+        for complete in COMPLETE {
+            std::fs::write(dir.join(format!("{complete}.json")), "{\"sc3000.joke\":\"x\"}\n").unwrap();
+            let error = run_with_registry(&root, &["--check", "--no-registry"], || Ok(Vec::new())).unwrap_err();
+            assert!(error.starts_with("1 message(s) missing from a complete catalog"), "{complete}: {error}");
+            std::fs::write(dir.join(format!("{complete}.json")), "{\"cmd.known\":\"x\"}\n").unwrap();
+        }
+        // The prefix is exact: an id that merely mentions sc3000 is not exempt.
+        std::fs::write(dir.join("en.json"), "{\"cmd.known\":\"Known\",\"help.sc3000\":\"About\"}\n").unwrap();
+        assert!(run_with_registry(&root, &["--check", "--no-registry"], || Ok(Vec::new())).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

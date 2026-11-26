@@ -844,6 +844,10 @@ mod tests {
     /// New labels still require German and Korean under the contributor policy.
     const COMPLETE: &[&str] = &["ar", "he", "ja", "vi", "zh"];
 
+    /// SolidCraft 3000's parody strings (the `sc3000` feature) ship in English and German only,
+    /// by design; keep this in step with `ENGLISH_AND_GERMAN_ONLY` in `xtask/src/i18n.rs`.
+    const ENGLISH_AND_GERMAN_ONLY: &str = "sc3000.";
+
     /// `text()` falls back to English silently, so a message a complete locale never received is
     /// shown in English inside an otherwise translated UI, with nothing in the build to say so.
     /// This is the guard against that: adding a key to `en.json` and forgetting a complete
@@ -854,7 +858,8 @@ mod tests {
         let english: Messages = serde_json::from_str(&ENGLISH.json()).unwrap();
         for catalog in LOCALES.iter().filter(|c| COMPLETE.contains(&c.id)) {
             let messages: Messages = serde_json::from_str(&catalog.json()).unwrap();
-            let missing: Vec<&str> = english.keys().filter(|id| !messages.contains_key(*id)).map(String::as_str).collect();
+            let missing: Vec<&str> =
+                english.keys().filter(|id| !id.starts_with(ENGLISH_AND_GERMAN_ONLY) && !messages.contains_key(*id)).map(String::as_str).collect();
             assert!(missing.is_empty(), "{} is missing {} English message(s): {}", catalog.id, missing.len(), missing.join(", "));
         }
     }
