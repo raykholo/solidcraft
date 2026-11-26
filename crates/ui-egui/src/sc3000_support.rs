@@ -213,38 +213,42 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         // Tall enough for a whole first exchange (greeting, two questions, the answers and a community
         // reply) on a laptop screen, so nothing starts out cut off under the header.
         let height = (screen.bottom() - top - gap * 2.0 - t.control_height * CHROME_ROWS).clamp(t.control_height * 4.0, t.control_height * 20.0);
-        let scroll = egui::ScrollArea::vertical().max_height(height).min_scrolled_height(height).auto_shrink([false, false]).stick_to_bottom(true).show(ui, |ui| {
-            ui.add_space(t.space_4);
-            for (index, line) in chat.lines.iter().enumerate() {
-                let shown = ui.scope(|ui| {
-                    if line.who == Who::Notice {
-                        ui.add_space(t.space_4);
-                        ui.vertical_centered(|ui| ui.label(egui::RichText::new(format!("✔ {}", line.text)).strong().color(t.accent)));
-                        ui.add_space(t.space_4);
-                        return;
+        let scroll =
+            egui::ScrollArea::vertical().max_height(height).min_scrolled_height(height).auto_shrink([false, false]).stick_to_bottom(true).show(
+                ui,
+                |ui| {
+                    ui.add_space(t.space_4);
+                    for (index, line) in chat.lines.iter().enumerate() {
+                        let shown = ui.scope(|ui| {
+                            if line.who == Who::Notice {
+                                ui.add_space(t.space_4);
+                                ui.vertical_centered(|ui| ui.label(egui::RichText::new(format!("✔ {}", line.text)).strong().color(t.accent)));
+                                ui.add_space(t.space_4);
+                                return;
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                let ink = if line.who == Who::You { t.text } else { t.accent };
+                                ui.label(egui::RichText::new(name(line.who)).strong().color(ink));
+                                let role = role(line.who);
+                                if !role.is_empty() {
+                                    ui.label(egui::RichText::new(role).small().color(t.text_dim));
+                                }
+                            });
+                            ui.label(&line.text);
+                        });
+                        crate::scenario::publish_rect(&format!("sc3000_support:line:{index}"), shown.response.rect);
+                        ui.add_space(t.space_8);
                     }
-                    ui.horizontal_wrapped(|ui| {
-                        let ink = if line.who == Who::You { t.text } else { t.accent };
-                        ui.label(egui::RichText::new(name(line.who)).strong().color(ink));
-                        let role = role(line.who);
-                        if !role.is_empty() {
-                            ui.label(egui::RichText::new(role).small().color(t.text_dim));
-                        }
-                    });
-                    ui.label(&line.text);
-                });
-                crate::scenario::publish_rect(&format!("sc3000_support:line:{index}"), shown.response.rect);
-                ui.add_space(t.space_8);
-            }
-            if let Some((who, _)) = chat.typing() {
-                let text = if who == Who::Notice {
-                    tr("sc3000.support.moderating").to_string()
-                } else {
-                    solidcraft_ui_text::format("sc3000.support.typing", &[("name", name(who))])
-                };
-                ui.label(egui::RichText::new(text).italics().color(t.text_dim));
-            }
-        });
+                    if let Some((who, _)) = chat.typing() {
+                        let text = if who == Who::Notice {
+                            tr("sc3000.support.moderating").to_string()
+                        } else {
+                            solidcraft_ui_text::format("sc3000.support.typing", &[("name", name(who))])
+                        };
+                        ui.label(egui::RichText::new(text).italics().color(t.text_dim));
+                    }
+                },
+            );
         crate::scenario::publish_rect("sc3000_support:lines", scroll.inner_rect);
         ui.separator();
         ui.horizontal(|ui| {
