@@ -505,6 +505,55 @@ fn the_recovery_report_recovers_nothing_and_leaves_the_design_alone() {
 }
 
 #[test]
+fn save_and_export_work_with_every_account_page_open() {
+    let _language = solidcraft_ui_text::scope("en");
+    let (mut h, _) = harness(None);
+    let dir = h.dir.clone();
+    h.app.services.pick_save = Some(Box::new(move |name, _| Box::pin(std::future::ready(Some(dir.join(name).to_string_lossy().into_owned())))));
+    let pages: [(&str, fn(&mut Harness)); 5] = [
+        ("sign-in", |h| h.app.help.sc3000_account.open()),
+        ("session expired", |h| h.app.help.sc3000_account.expire_now()),
+        ("reset", |h| {
+            h.app.help.sc3000_account.open();
+            h.app.help.sc3000_account.start_reset();
+        }),
+        ("recovery", |h| h.app.help.sc3000_account.unsaved = RECOVERY_SECONDS),
+        ("back-up note", |h| {
+            let account = &mut h.app.help.sc3000_account;
+            account.nag_at = account.active() + 0.05;
+        }),
+    ];
+    for (index, (page, open)) in pages.into_iter().enumerate() {
+        // A new design each time, so each save asks where and writes its own file.
+        h.app.run("file.new", json!({"name": format!("Design{index}")})).unwrap();
+        h.frames(3);
+        edit(&mut h);
+        open(&mut h);
+        h.frames(6);
+        let account = &h.app.help.sc3000_account;
+        assert!(account.screen.is_some() || account.recovery || account.nag, "{page}: the page is open");
+        // Ctrl+S saves for real, page or no page.
+        h.step(&json!({"key":"S","cmd":true})).unwrap();
+        h.settle();
+        h.frames(3);
+        assert!(!crate::documents::any_dirty(&h.app), "{page}: Ctrl+S saved the design");
+        assert!(h.dir.join(format!("Design{index}.sc")).is_file(), "{page}: to a real file");
+        // File > Export > STEP writes the file too.
+        assert!(crate::toolbar::start_export(&mut h.app, "file.export_step"));
+        h.settle();
+        h.frames(3);
+        assert!(h.dir.join(format!("Design{index}.step")).is_file(), "{page}: STEP export written");
+        let account = &mut h.app.help.sc3000_account;
+        account.close();
+        account.recovery = false;
+        account.dismiss_nag();
+        account.recovered = false;
+        account.unsaved = 0.0;
+        h.frames(3);
+    }
+}
+
+#[test]
 fn the_strips_account_link_is_never_cut_off_at_the_windows_edge() {
     for language in ["en", "de"] {
         let _language = solidcraft_ui_text::scope(language);
