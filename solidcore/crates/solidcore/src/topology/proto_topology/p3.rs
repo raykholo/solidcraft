@@ -3131,6 +3131,30 @@ fn line_touch(
         None,
         None,
     )?;
+    if std::env::var_os("SC15049_DEBUG").is_some() {
+        let plain0 =
+            circle.intersect_with_line::<()>(k, circle_ivl, line, line_ivl, tol, 0.0, None, None)?;
+        let show = |v: &[crate::geom::solution_array::Solution<()>]| {
+            v.iter()
+                .map(|s| {
+                    (
+                        s.solution_type,
+                        s.start.param(0).ok().and_then(|t| circle_curve.evaluate_point(k, t).ok()),
+                        s.start.param(1).ok(),
+                        s.start.solution_value,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        eprintln!(
+            "DBG15049 line_touch tol={tol:e} civl={circle_ivl:?} livl={line_ivl:?} line={:?}+{:?}*{} contact={:?} plain={:?}",
+            line.line_point(),
+            line.line_vector(),
+            line.line_scale(),
+            show(&in_contact.solutions),
+            show(&plain0.solutions)
+        );
+    }
     let [touch] = in_contact.solutions[..] else {
         return Ok(None);
     };
