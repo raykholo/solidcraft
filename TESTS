@@ -1,0 +1,8 @@
+solidcore-ops a_cusp_swept_onto_a_coaxial_cylinder
+solidcore-ops boolean
+solidcore boolean
+solidcore contact
+solidcore tangent
+solidcore touch
+solidcore revol
+solidcore kernel_case
