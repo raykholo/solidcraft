@@ -3005,6 +3005,16 @@ fn touch_of_edges<O: ClassObject>(
     pc1: &mut PointClassification<O>,
     pc2: &mut PointClassification<O>,
 ) -> Result<()> {
+    let dbg_at = if std::env::var_os("SC15049_DEBUG").is_some() {
+        pc1.find_obj_point_3d(k, geometry)
+            .ok()
+            .filter(|p| p.y < -48.0 && p.z > 14.0 && p.x.abs() < 0.01)
+    } else {
+        None
+    };
+    if let Some(p) = dbg_at {
+        eprintln!("DBG15049 toe: {:?} {:?} at {p:?}", pc1.point_class(), pc2.point_class());
+    }
     if pc1.point_class() != PointClassType::Edge || pc2.point_class() != PointClassType::Edge {
         return Ok(());
     }
@@ -3020,6 +3030,16 @@ fn touch_of_edges<O: ClassObject>(
     let (Some((curve1, ivl1)), Some((curve2, ivl2))) = (edge_curve(pc1)?, edge_curve(pc2)?) else {
         return Ok(());
     };
+    if dbg_at.is_some() {
+        let name = |c: &Curve| match c.kind() {
+            CurveKind::Line(_) => "line",
+            CurveKind::Ellipse(e) if e.is_circle() => "circle",
+            CurveKind::Ellipse(_) => "ellipse",
+            CurveKind::BSpline(_) => "bspline",
+            _ => "other",
+        };
+        eprintln!("DBG15049 toe curves: {} {}", name(curve1), name(curve2));
+    }
     let tol = xsect_tol_3d_from_zones(
         k,
         pc1.obj_zone_tol_3d(k, geometry)?,
@@ -3067,6 +3087,9 @@ fn touch_of_edges<O: ClassObject>(
         }
         _ => return Ok(()),
     };
+    if dbg_at.is_some() {
+        eprintln!("DBG15049 toe touch {touch:?}");
+    }
     // the touching point on both edges' arcs: dropped onto each edge's interval within
     // their tolerance (a drop that fails leaves the point where it was)
     let (mut q1, mut q2) = (*pc1, *pc2);

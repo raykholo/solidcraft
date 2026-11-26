@@ -123,13 +123,16 @@ const OP_TRIM: &str = "surface::plane::p2::Plane::trim_with_domain";
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ClipPurpose {
     Trim,
+    /// Not upstream (#15049): [`ClipPurpose::Trim`] that takes a point at which the curve
+    /// is inside the domain on both sides for no crossing (`trim_curve_to_plane_domain_joined`).
+    TrimJoined,
     Section,
 }
 
 impl ClipPurpose {
     fn handle_status<T>(self, result: Result<T>) -> Result<Option<T>> {
         match self {
-            Self::Trim => ignored(result),
+            Self::Trim | Self::TrimJoined => ignored(result),
             Self::Section => result.map(Some),
         }
     }
@@ -1033,6 +1036,32 @@ impl Plane {
             .curves)
     }
 
+    /// Not upstream (#15049): [`Plane::trim_curve_to_plane_domain`] where a point at which
+    /// the curve lies inside the domain on both sides is no crossing. A curve tangent to a
+    /// side of the domain a hair outside it crosses that side twice, `2√(2rδ)` apart for its
+    /// radius of curvature `r` and overlap δ, while it stays within δ of the side between
+    /// the two (the lens of `docs/booleans.md` §6), and where the curve ends inside the lens
+    /// only one crossing is left, wherever the rounding puts it: the meridian of a cut whose
+    /// arc runs tangentially into its line, on a floor that line sweeps onto, was split
+    /// 2.5e-4 from the cusp. The pieces on both sides of such a point classify inside the
+    /// domain within `tol_3d`, as a graze does (which the trim already skips by its
+    /// tangents), and are one piece.
+    ///
+    /// # Errors
+    ///
+    /// As [`Plane::trim_curve_to_plane_domain`].
+    pub(crate) fn trim_curve_to_plane_domain_joined(
+        &self,
+        k: &Kernel,
+        uv_domain: &Extent2d,
+        curve: &Curve,
+        tol_3d: f64,
+    ) -> Result<Vec<Curve>> {
+        Ok(self
+            .clip_curve(k, uv_domain, curve, tol_3d, ClipPurpose::TrimJoined)?
+            .curves)
+    }
+
     #[allow(clippy::too_many_lines)] // one upstream function
     pub(super) fn clip_curve(
         &self,
@@ -1202,6 +1231,10 @@ impl Plane {
             proper_crossings = false;
         }
 
+        // (not upstream, #15049) the intervals that lie between two point solutions or
+        // the curve's ends, classified below; a coincident range is kept as it is
+        let free: Vec<bool> = keeps.iter().map(|&keep| keep == 2).collect();
+
         // classify every interval unclassified interval
         for ((&s_param, &e_param), keep) in starts.iter().zip(&ends).zip(keeps.iter_mut()) {
             // skip classified intervals
@@ -1241,6 +1274,28 @@ impl Plane {
 
             // classify the interval
             *keep = u8::from(!t_solutions.is_empty());
+        }
+
+        // Not upstream (#15049): two classified intervals inside the domain on both sides
+        // of a point solution are one; the curve does not leave the domain there.
+        if purpose == ClipPurpose::TrimJoined {
+            let (mut s_out, mut e_out, mut k_out) = (Vec::new(), Vec::new(), Vec::new());
+            let mut last_free = false;
+            for (((&s_param, &e_param), &keep), &is_free) in
+                starts.iter().zip(&ends).zip(&keeps).zip(&free)
+            {
+                if is_free && last_free && keep == 1 && k_out.last() == Some(&1) {
+                    if let Some(end) = e_out.last_mut() {
+                        *end = e_param;
+                    }
+                    continue;
+                }
+                s_out.push(s_param);
+                e_out.push(e_param);
+                k_out.push(keep);
+                last_free = is_free;
+            }
+            (starts, ends, keeps) = (s_out, e_out, k_out);
         }
 
         // build an output curve for every keeper interval
@@ -1810,6 +1865,10 @@ pub(crate) fn global_surface_intersect_into<O: SolutionObject + Copy + PartialEq
                 uv_domain,
                 approx_tol_3d,
                 &SurfOfRevolution::own_sweep_iso,
+                crate::surface::surf_of_revolution::p3::revolved_contact_tol(
+                    k,
+                    [Some(this), Some(other)],
+                ),
                 out,
             );
             core::mem::swap(&mut out.surface1_uv_curves, &mut out.surface2_uv_curves);
