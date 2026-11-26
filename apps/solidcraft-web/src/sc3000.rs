@@ -140,7 +140,9 @@ fn set_note_lift(px: f32) {
     use wasm_bindgen::{JsCast, JsValue};
     let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) else { return };
     let Ok(style) = js_sys::Reflect::get(&root, &"style".into()) else { return };
-    let Ok(set) = js_sys::Reflect::get(&style, &"setProperty".into()).and_then(|f| f.dyn_into::<js_sys::Function>().map_err(JsValue::from)) else { return };
+    let Ok(set) = js_sys::Reflect::get(&style, &"setProperty".into()).and_then(|f| f.dyn_into::<js_sys::Function>().map_err(JsValue::from)) else {
+        return;
+    };
     let _ = set.call2(&style, &"--sc3000-strip".into(), &format!("{px}px").into());
 }
 
