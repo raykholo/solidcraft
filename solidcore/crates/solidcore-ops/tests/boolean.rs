@@ -4938,8 +4938,9 @@ fn l10d_probe(seeds: &[u32], debug: bool) {
                     other => {
                         let detail = solidcore_ops::session::take_failure_detail().unwrap_or_default();
                         let detail: String = detail.chars().take(60).collect();
-                        outcome.push_str(&format!("{order:?}@{k}:{:?}[{detail}] ", other.map(|o| o.is_some())));
-                        *tally.entry(format!("{:?}[{detail}]", other.map(|o| o.is_some()))).or_insert(0) += 1;
+                        let what = format!("{:?}[{detail}]", other.map(|o| o.is_some()));
+                        outcome.push_str(&format!("{order:?}@{k}:{what} "));
+                        *tally.entry(what).or_insert(0) += 1;
                     }
                 }
             }
