@@ -118,11 +118,14 @@ fn the_bots_answer_with_escalating_non_answers_and_nothing_leaves_the_app() {
         wait(&mut h, REPLY_SECONDS + COMMUNITY_SECONDS);
     }
     let support = said(&h, Who::Support);
-    assert_eq!(&support[support.len() - 3..], [
-        "Is your SolidCraft 3000 up to date? (It is now. It wasn’t 3 seconds ago.)",
-        "Have you tried turning the cloud off and on again? Actually, please don’t. It’s the only one we have.",
-        "Great question! This has been forwarded to the Enterprise Plus team.",
-    ]);
+    assert_eq!(
+        &support[support.len() - 3..],
+        [
+            "Is your SolidCraft 3000 up to date? (It is now. It wasn’t 3 seconds ago.)",
+            "Have you tried turning the cloud off and on again? Actually, please don’t. It’s the only one we have.",
+            "Great question! This has been forwarded to the Enterprise Plus team.",
+        ]
+    );
     assert_eq!(said(&h, Who::Bumper), ["bump"]);
     assert_eq!(said(&h, Who::Notice), ["This thread has been marked Solved."]);
     assert_eq!(said(&h, Who::Fan).last().unwrap(), "how did you fix it??");
@@ -184,7 +187,9 @@ fn the_parody_line_sends_real_support_to_solidcrafts_discord_only_when_clicked()
         // The sentence's full stop stays on the link's row, right after it.
         let link = rect_of("sc3000_support:real_discord").expect("the link is drawn");
         assert!(
-            h.widgets(".").iter().any(|[x, y]| (link.top()..=link.bottom()).contains(&(*y as f32)) && (*x as f32) > link.right() && (*x as f32) < link.right() + 20.0),
+            h.widgets(".")
+                .iter()
+                .any(|[x, y]| (link.top()..=link.bottom()).contains(&(*y as f32)) && (*x as f32) > link.right() && (*x as f32) < link.right() + 20.0),
             "{language}: the full stop follows the link on its row"
         );
         wait(&mut h, 3.0);
@@ -202,8 +207,29 @@ fn the_parody_line_sends_real_support_to_solidcrafts_discord_only_when_clicked()
 fn every_line_is_in_english_and_german() {
     crate::i18n::install();
     let ids = [
-        "attach", "bot_name", "bot_role", "bump", "cloud", "forwarded", "greeting", "hint", "how", "member_role", "moderating",
-        "parody", "private", "real_discord", "reopen", "same", "send", "signout", "solved", "title", "typing", "update", "you",
+        "attach",
+        "bot_name",
+        "bot_role",
+        "bump",
+        "cloud",
+        "forwarded",
+        "greeting",
+        "hint",
+        "how",
+        "member_role",
+        "moderating",
+        "parody",
+        "private",
+        "real_discord",
+        "reopen",
+        "same",
+        "send",
+        "signout",
+        "solved",
+        "title",
+        "typing",
+        "update",
+        "you",
     ];
     for (_, id, community) in SCRIPT {
         let short = id.trim_start_matches("sc3000.support.");
@@ -307,7 +333,10 @@ fn the_pages_parody_note_speaks_every_shipped_language() {
         let _language = solidcraft_ui_text::scope("en");
         (tr("sc3000.web.note_before").to_string(), tr("sc3000.web.note_after").to_string())
     };
-    assert!(english.0.starts_with("SolidCraft 3000 is a parody") && script.contains(&english.0) && script.contains(&english.1), "English matches the page's own text");
+    assert!(
+        english.0.starts_with("SolidCraft 3000 is a parody") && script.contains(&english.0) && script.contains(&english.1),
+        "English matches the page's own text"
+    );
     let folder = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/locales");
     let mut checked = 0;
     for entry in std::fs::read_dir(folder).unwrap() {

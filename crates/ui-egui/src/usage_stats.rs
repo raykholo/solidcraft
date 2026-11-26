@@ -694,14 +694,11 @@ pub fn notice_toast(app: &mut SolveApp, ui: &egui::Ui, free: egui::Rect) -> Opti
         Some(app.tr("sc3000.usage.remind").to_string()),
     );
     #[cfg(not(feature = "sc3000"))]
-    let (labels, text, close_label) = ([app.tr("usage.settings").to_string(), app.tr("usage.ok").to_string()], app.tr("usage.notice").to_string(), None::<String>);
+    let (labels, text, close_label) =
+        ([app.tr("usage.settings").to_string(), app.tr("usage.ok").to_string()], app.tr("usage.notice").to_string(), None::<String>);
     let actions = [(labels[0].as_str(), Action::Secondary), (labels[1].as_str(), Action::Primary)];
     // No countdown: it stays until OK, or until sharing is turned off.
-    let extras = crate::ui_kit::toast::Extras {
-        close: Some("toast:usage_stats:close"),
-        close_label: close_label.as_deref(),
-        ..Default::default()
-    };
+    let extras = crate::ui_kit::toast::Extras { close: Some("toast:usage_stats:close"), close_label: close_label.as_deref(), ..Default::default() };
     let toast = crate::viewport::paint_toast_ext(ui, free, text, crate::ui_kit::toast::Lead::Dot(false), &actions, extras)?;
     crate::scenario::publish_rect("toast:usage_stats", toast.rect);
     for (index, button) in toast.buttons.iter().enumerate() {
