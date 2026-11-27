@@ -553,7 +553,9 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
             #[cfg(feature = "sc3000")]
             if crate::sc3000_credits::in_pack(&l.name) {
                 crate::sc3000_credits::badge(ui, response.rect);
-                crate::scenario::publish_rect(&format!("sc3000_credits:pack:{}", l.name), response.rect);
+                let handle = format!("sc3000_credits:pack:{}", l.name);
+                crate::scenario::publish_rect(&handle, response.rect);
+                crate::scenario::publish_handle(&handle, response.rect.center());
             }
             if let Some(preset) = &l.preset {
                 crate::scenario::publish_handle(&format!("appearance:preset:{}", preset.id), response.rect.center());

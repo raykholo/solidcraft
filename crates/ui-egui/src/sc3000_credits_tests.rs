@@ -2,7 +2,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::scenario::{Harness, rect_of};
+use crate::scenario::{Harness, handle_at, rect_of};
 
 fn harness() -> Harness {
     let mut h = Harness::new();
@@ -117,9 +117,26 @@ fn the_account_page_shows_the_balance() {
     account.open();
     h.frames(4);
     assert!(h.widget("SolidCredits: 0.00").is_some());
+    assert!(handle_at("sc3000_credits:balance").is_some(), "the browser check finds the balance");
     assert!(h.widget("Charged to your free trial so far: 0.50 SolidCredits").is_some());
     click(&mut h, "sc3000_credits:account:top_up");
     assert!(h.app.help.sc3000_credits.top_up);
+}
+
+#[test]
+fn the_appearance_pack_swatches_carry_their_pro_tag() {
+    let _language = solidcraft_ui_text::scope("en");
+    let mut h = harness();
+    plate(&mut h);
+    h.call("ui.start", json!({"command": "appearance.assign"}));
+    h.frames(3);
+    assert!(handle_at("appearance:search").is_some(), "the appearance dialog is open");
+    h.step(&json!({"click": {"handle": "appearance:search"}})).unwrap();
+    h.frames(2);
+    h.call("ui.text", json!({"text": "Brass"}));
+    h.frames(4);
+    assert!(handle_at("sc3000_credits:pack:Brass - Polished").is_some(), "the browser check finds the PRO tag");
+    assert!(rect_of("sc3000_credits:pack:Steel - Satin").is_none(), "only the pack is tagged");
 }
 
 #[test]
