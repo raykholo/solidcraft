@@ -280,8 +280,11 @@ pub(super) fn coincident_opposites(
     b: &mut Brep,
     notifications: &mut OffsetNotifications<'_>,
 ) -> Result<()> {
+    let dbg0 = bp1::faces(b, None)?.len();
     super::spurs::repair(exec, k, b, notifications)?;
+    let dbg1 = bp1::faces(b, None)?.len();
     super::empty::remove(k, b, notifications)?;
+    eprintln!("DBG16395 faces {dbg0} after_spurs {dbg1} after_empty {}", bp1::faces(b, None)?.len());
     let mut planes = Vec::new();
     for f in bp1::faces(b, None)? {
         if let Some(p) = planar_face(b, f)? {
@@ -299,6 +302,7 @@ pub(super) fn coincident_opposites(
             selected.push(p);
         }
     }
+    eprintln!("DBG16395 planes {} selected {}", planes.len(), selected.len());
     if selected.is_empty() {
         return Ok(());
     }
