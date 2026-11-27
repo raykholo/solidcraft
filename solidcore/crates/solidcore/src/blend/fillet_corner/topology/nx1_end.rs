@@ -1787,7 +1787,7 @@ impl FilletCorner {
                     pseudo
                         .fillet_edge_mut(edge2)?
                         .set_fillet_edge_type(FilletEdgeType::OnEdge);
-                    if total <= 3 {
+                    if total <= 3 && seam.is_none() {
                         // Register this edge and process it later
                         // when removing topological vertices
                         topo_edges.push(Some(pseudo_edge(edge2)));
@@ -1838,7 +1838,7 @@ impl FilletCorner {
                     pseudo
                         .fillet_edge_mut(edge1)?
                         .set_fillet_edge_type(FilletEdgeType::OnEdge);
-                    if total <= 3 {
+                    if total <= 3 && seam.is_none() {
                         topo_edges.push(Some(pseudo_edge(edge1)));
                     }
                     let original = eu1::edge(target, sides[0])?;

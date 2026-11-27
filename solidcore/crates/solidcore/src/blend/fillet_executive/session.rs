@@ -3898,6 +3898,19 @@ impl EdgeMapAccess<FilletObject> for SessionObjects<'_> {
             .ok_or_else(|| invalid("mapping corner is not live"))?
             .set_back_dist())
     }
+    fn mapping_cut_at_seam(&self, corner: FilletObject, edge: FilletObject) -> Result<bool> {
+        let FilletObject::Corner(id) = corner else {
+            return Err(invalid("mapping corner is not retained"));
+        };
+        let corner = self
+            .corners
+            .get(id.0 as usize)
+            .ok_or_else(|| invalid("mapping corner is not live"))?;
+        // the cap's side edges (not the rib's two pieces) may be the one cut along the seam
+        Ok(corner.seam_cap.is_some()
+            && self.mapping_edge(edge)?.fillet_edge_type()
+                != crate::blend::fillet_geom::p1::FilletEdgeType::FilletXSideFace)
+    }
     fn mapping_note(
         &self,
         edge: FilletObject,

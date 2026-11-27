@@ -135,6 +135,14 @@ pub trait EdgeMapAccess<O: ClassObject + SolutionObject + Ord> {
     /// # Errors
     /// Invalid or missing object.
     fn mapping_setback(&self, corner: O) -> Result<f64>;
+    /// Not upstream (#16230): whether the corner edge `edge` was cut in two in the fillet
+    /// B-rep, as a cap across a tangent seam cuts its side edge at the seam
+    /// (`FilletCorner::seam_cap`): it maps to both halves, as a setback's split edge does.
+    /// # Errors
+    /// Invalid or missing object.
+    fn mapping_cut_at_seam(&self, _corner: O, _edge: O) -> Result<bool> {
+        Ok(false)
+    }
     /// The edge name, type and status used in error reports.
     /// # Errors
     /// Invalid or missing object.
@@ -1322,7 +1330,8 @@ impl<O: ClassObject + SolutionObject + Ord> FilletExecutive<O> {
                 if access.mapping_original_face(fe)?.is_some()
                     || access.mapping_original_edge(fe)?.is_some()
                 {
-                    access.mapping_find(k, fe, &edges, find_multiple_edges)?;
+                    let multiple = find_multiple_edges || access.mapping_cut_at_seam(corner, fe)?;
+                    access.mapping_find(k, fe, &edges, multiple)?;
                 }
             }
         }
