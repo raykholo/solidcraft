@@ -3753,14 +3753,14 @@ impl<O: ClassObject> ProtoTopologyManager<O> {
                 tol,
             )?;
             let dbg_ball = self.midpoint_in_end_ball(k, geometry, d, start, end)?;
-            eprintln!(
+            if gap.is_some_and(|g| g > reach) { eprintln!(
                 "L18494b-DBG gap={gap:?} reach={reach:e} dtol={:e} mtol={:e} cap={tol:e} ball={dbg_ball} same_pv={} ivd={:?} ivt={:?}",
                 d.tolerance(k),
                 self.tolerance(k),
                 start == end,
                 (d.xsect_interval.min(), d.xsect_interval.max()),
                 (tgt_domain.min(), tgt_domain.max()),
-            );
+            ); }
             if gap.is_some_and(|g| g > reach)
                 && !self.midpoint_in_end_ball(k, geometry, d, start, end)?
             {
