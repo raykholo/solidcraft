@@ -111,6 +111,7 @@ pub fn account_rows(credits: &mut Credits, ui: &mut egui::Ui) {
     let t = solidcraft_theme::Tokens::get();
     let balance = ui.label(egui::RichText::new(format("sc3000.credits.balance", &[("balance", &amount(0.0))])).strong());
     crate::scenario::publish_rect("sc3000_credits:balance", balance.rect);
+    crate::scenario::publish_handle("sc3000_credits:balance", balance.rect.center());
     ui.label(egui::RichText::new(format("sc3000.credits.owed", &[("total", &amount(credits.charged))])).small().color(t.text_dim));
     let response = ui_kit::button(ui, tr("sc3000.credits.top_up"), ui_kit::Button::Normal);
     crate::scenario::publish_target("sc3000_credits:account:top_up", response.rect);
@@ -161,6 +162,7 @@ fn top_up(credits: &mut Credits, ctx: &egui::Context) {
         ui.separator();
         let parody = ui.label(egui::RichText::new(tr("sc3000.account.parody")).strong().color(t.warning));
         crate::scenario::publish_rect("sc3000_credits:top_up:parody", parody.rect);
+        crate::scenario::publish_handle("sc3000_credits:top_up:parody", parody.rect.center());
     });
     if close || closed {
         credits.top_up = false;
@@ -184,6 +186,7 @@ fn note(ctx: &egui::Context, charge: &Charge) -> Option<bool> {
         .show(ctx, |ui| ui_kit::toast::show(ui, free, Place::Centre, text, Lead::Dot(false), &actions, extras))
         .inner?;
     crate::scenario::publish_rect("sc3000_credits:note", shown.rect);
+    crate::scenario::publish_handle("sc3000_credits:note", shown.rect.center());
     for (handle, rect) in ["sc3000_credits:note:top_up", "sc3000_credits:note:ok"].into_iter().zip(&shown.buttons) {
         crate::scenario::publish_target(handle, *rect);
     }
