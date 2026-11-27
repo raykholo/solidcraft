@@ -1,0 +1,88 @@
+name: clippycheck
+on:
+  push:
+    branches: ["clippycheck/**"]
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: src/solidcore
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_TERM_COLOR: never
+      SOLIDCORE_REQUIRE_UPSTREAM: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        working-directory: .
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - name: Toolchain (solidcore/rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      # The steps below are copied from upstream .github/workflows/ci.yml, job "SolidCore checks"
+      # (matrix check "fmt and clippy"), in upstream's order: Format, "No new entries in frozen
+      # archives", "CI script tests", Clippy, "Panic-site inventory". Differences: every step records
+      # its status instead of stopping the job (a final step prints them and fails), clippy gets
+      # --keep-going, and BASE is today's upstream main (upstream's merge-main action puts a PR on
+      # that tip, and its BASE is the PR's base sha), fetched shallow because only its solidcore/ tree
+      # is read.
+      - name: Format
+        run: |
+          status=0
+          cargo fmt --all --check || status=1
+          echo "FMT_STATUS=$status" >> "$GITHUB_ENV"
+      - name: No new entries in frozen archives (one file per finding / upstream issue)
+        run: |
+          fail=0
+          for f in plan/findings.md plan/upstream-issues.md crates/goldens/known_mismatches.toml; do
+            if git cat-file -e "HEAD:solidcore/$f" 2>/dev/null; then
+              echo "::error file=solidcore/$f::solidcore/$f is retired and must not come back (see scripts/ci/check-frozen-archives.sh)."
+              fail=1
+            fi
+          done
+          echo "FROZEN_STATUS=$fail" >> "$GITHUB_ENV"
+      - name: CI script tests
+        run: |
+          status=0
+          python3 -m unittest discover -s scripts/ci -p 'test_*.py' -v || status=1
+          scripts/ci/test-wasm-digest.sh || status=1
+          python3 -I scripts/ci/check_record_ids.py || status=1
+          echo "SCRIPTS_STATUS=$status" >> "$GITHUB_ENV"
+      - name: Clippy
+        run: |
+          set +e
+          cargo clippy --keep-going --workspace --all-targets -- -D warnings > ../../clippy.log 2>&1
+          rc=$?
+          grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" ../../clippy.log
+          echo "CLIPPY_EXIT=$rc" >> "$GITHUB_ENV"
+      - name: Panic-site inventory
+        run: |
+          set +e
+          git fetch -q --no-tags --depth=1 https://github.com/tangency-labs/solidcraft.git main
+          BASE=$(git rev-parse FETCH_HEAD)
+          echo "BASE=$BASE (upstream main)"
+          if tree=$(git rev-parse -q --verify "$BASE:solidcore"); then
+            base=$(GIT_AUTHOR_NAME=ci GIT_AUTHOR_EMAIL=ci@invalid GIT_COMMITTER_NAME=ci GIT_COMMITTER_EMAIL=ci@invalid \
+              git commit-tree "$tree" -m "solidcore/ at $BASE")
+            python3 -I scripts/ci/check_panic_sites.py --base "$base"
+          else
+            python3 -I scripts/ci/check_panic_sites.py
+          fi
+          echo "PANIC_EXIT=$?" >> "$GITHUB_ENV"
+      - name: Result
+        run: |
+          echo "CLIPPY_EXIT=$CLIPPY_EXIT FMT_STATUS=$FMT_STATUS PANIC_EXIT=$PANIC_EXIT"
+          echo "FROZEN_STATUS=$FROZEN_STATUS SCRIPTS_STATUS=$SCRIPTS_STATUS"
+          [ "$CLIPPY_EXIT" = 0 ] && [ "$FMT_STATUS" = 0 ] && [ "$PANIC_EXIT" = 0 ] \
+            && [ "$FROZEN_STATUS" = 0 ] && [ "$SCRIPTS_STATUS" = 0 ]
