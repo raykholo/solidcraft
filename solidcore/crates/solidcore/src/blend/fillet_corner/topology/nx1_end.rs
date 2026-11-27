@@ -1156,6 +1156,199 @@ impl FilletCorner {
         )
     }
 
+    /// Not upstream (#16230): the End whose rib runs across its end face's tangent seam, outside
+    /// the Roll-over. At a mixed corner with one tangent side (the end face G, the face across
+    /// that side's tangent seam), the other side's edge E runs between the rail's face F and G
+    /// to its far vertex W, where G runs on tangentially as the wall H across the straight
+    /// seam E3 and F ends at its edge E2 with H
+    /// ([`crate::blend::blend_corner::end::end_face_continuation`]). A round wider than G's
+    /// span there leaves F across E2, not across E: its rib runs on G's extension from the
+    /// tangent end to the seam's line at S, then on H's extension to the rail's end on E2, and
+    /// its cap is two faces split along the seam's line from S to W, as the Roll-over's End
+    /// across the cliff's seam ([`crate::blend::blend_corner::rollover::SeamEnd`]).
+    ///
+    /// S is in closed form, so the decision is narrowed to that geometry: a constant round
+    /// between two planes along a straight edge ([`planar_section`]: the same section all
+    /// along it) and H a plane. S is where the seam's line, continued past W away from the
+    /// seam, meets the round's section circle strictly between its two contacts (by more than
+    /// the corner's tolerance). Exactly one such crossing, else `None` (the corner is as
+    /// before); where the rail reaches E, the section meets the seam's line nowhere past W.
+    ///
+    /// # Errors
+    /// Those of the topology walks, the tangency test, the closed form and the seam's tangent.
+    #[allow(clippy::too_many_arguments)] // the end's topology, as `finish_nx1_end` holds it
+    fn tangent_continuation_seam_end(
+        &self,
+        k: &Kernel,
+        target: &mut Brep,
+        solver: &SolverObject,
+        vertex: VertexId,
+        mixed: bool,
+        tangent_side: [bool; 2],
+        sides: [EdgeuseId; 2],
+        end_face: Option<FaceId>,
+        extend_edge: Option<EdgeId>,
+        turned_back: [Option<TurnedBack>; 2],
+    ) -> Result<Option<crate::blend::blend_corner::rollover::SeamEnd>> {
+        let one_tangent = tangent_side[0] != tangent_side[1];
+        if self.roll_over
+            || !(mixed
+                && one_tangent
+                && extend_edge.is_some()
+                && turned_back.iter().all(Option::is_none))
+        {
+            return Ok(None);
+        }
+        let radius = match solver {
+            SolverObject::ConstantRadius(cr) => {
+                let (a, b) = (cr.fillet_radius(0)?, cr.fillet_radius(1)?);
+                if a.to_bits() != b.to_bits() {
+                    return Ok(None);
+                }
+                a
+            }
+            _ => return Ok(None),
+        };
+        let tol = self.approx_tol_3d;
+        let sized = radius > 0.0 && radius.is_finite() && tol > 0.0 && tol.is_finite();
+        if !sized {
+            return Ok(None);
+        }
+        // E: the side edge that is not tangent, between F and G
+        let other = usize::from(tangent_side[0]);
+        let side = *need(sides.get(other), "side index")?;
+        let Some(side_edge) = eu1::edge(target, side)? else {
+            return Ok(None);
+        };
+        let end_face = match end_face {
+            Some(face) => face,
+            None => {
+                let [first, second] = sides;
+                match face_by_two_edgeuses(target, Some(first), Some(second), None)? {
+                    Some(face) => face,
+                    None => return Ok(None),
+                }
+            }
+        };
+        let side_faces = edge::faces(target, side_edge, None)?;
+        let [f0, f1] = side_faces.as_slice() else {
+            return Ok(None);
+        };
+        let rail_face = match (*f0 == end_face, *f1 == end_face) {
+            (true, false) => *f1,
+            (false, true) => *f0,
+            _ => return Ok(None),
+        };
+        let Some(junction) = crate::blend::blend_corner::end::end_face_continuation(
+            k,
+            target,
+            side,
+            Some(vertex),
+            rail_face,
+            self.tangency_tol_radians,
+        )?
+        else {
+            return Ok(None);
+        };
+        if junction.end_face != end_face || junction.far == vertex {
+            return Ok(None);
+        }
+        // the seam a line, the wall a plane: both hold the seam's line continued past W
+        let Some(seam_curve) = edge::curve(target, junction.seam)?.cloned() else {
+            return Ok(None);
+        };
+        if seam_curve.is_line(k, 3, CURVE_TOL)?.is_none() {
+            return Ok(None);
+        }
+        let wall_planar = match target.face(junction.wall)?.surface.as_ref() {
+            Some(surface) => surface.is_planar(k, target.tolerance())?.is_planar,
+            None => false,
+        };
+        if !wall_planar {
+            return Ok(None);
+        }
+        // the round's section in closed form
+        let fs = solver.base();
+        let [Some(u0), Some(u1)] = fs.edgeuses else {
+            return Ok(None);
+        };
+        let Some(filleted) = eu1::edge(target, u0)? else {
+            return Ok(None);
+        };
+        let (Some(g0), Some(g1)) = (eu1::face(target, u0)?, eu1::face(target, u1)?) else {
+            return Ok(None);
+        };
+        let mut offsets = [0.0; 2];
+        for (offset, i) in offsets.iter_mut().zip(0..2) {
+            let Some(slot) = fs.surface(i)? else {
+                return Ok(None);
+            };
+            *offset = slot.surface.offset_distance();
+        }
+        let Some(section) = planar_section(k, target, filleted, [g0, g1], offsets)? else {
+            return Ok(None);
+        };
+        // the seam's line through W, W + s u, in the section's frame about the ball's centre
+        let w = crate::topology::vertex::point(target, junction.far)?;
+        let u =
+            crate::blend::blend_corner::mixed::leaving(k, target, junction.seam, junction.far, OP)?;
+        let in_section = |v: Vec3| (v.dot(section.x), v.dot(section.y));
+        let (qx, qy) = in_section(w - section.m);
+        let (cx, cy) = section.centre;
+        let (px, py) = (qx - cx, qy - cy);
+        let (ux, uy) = in_section(u);
+        // |p + s u|^2 = radius^2
+        let qa = ux * ux + uy * uy;
+        if qa.is_nan() || qa <= DIR_TOL {
+            return Ok(None);
+        }
+        let qb = px * ux + py * uy;
+        let qc = px * px + py * py - radius * radius;
+        let disc = qb * qb - qa * qc;
+        if disc.is_nan() || disc <= 0.0 {
+            return Ok(None);
+        }
+        let root = disc.sqrt();
+        // the contacts from the centre: the section's arc lies between them
+        let [(n0x, n0y), (n1x, n1y)] = section.n2;
+        let [o0, o1] = offsets;
+        let (e0x, e0y) = (-n0x * o0, -n0y * o0);
+        let (e1x, e1y) = (-n1x * o1, -n1y * o1);
+        let det = e0x * e1y - e0y * e1x;
+        if det.is_nan() || det.abs() <= DIR_TOL * radius * radius {
+            return Ok(None);
+        }
+        let margin = tol / radius;
+        let mut split = None;
+        for s in [(-qb - root) / qa, (-qb + root) / qa] {
+            // past W, away from the seam (which leaves W along u)
+            if s.is_nan() || s >= -tol {
+                continue;
+            }
+            let (vx, vy) = (px + s * ux, py + s * uy);
+            let alpha = (vx * e1y - vy * e1x) / det;
+            let beta = (e0x * vy - e0y * vx) / det;
+            if alpha > margin && beta > margin {
+                if split.is_some() {
+                    return Ok(None);
+                }
+                split = Some(w + u * s);
+            }
+        }
+        let Some(split) = split else {
+            return Ok(None);
+        };
+        if !(split.x.is_finite() && split.y.is_finite() && split.z.is_finite()) {
+            return Ok(None);
+        }
+        Ok(Some(crate::blend::blend_corner::rollover::SeamEnd {
+            vertex: junction.far,
+            at: w,
+            wall: junction.wall,
+            split,
+        }))
+    }
+
     /// From the extension distance on: the end rib, its end face, the extended end
     /// surface and, at a mixed-convexity corner, the vertex on the original vertex and
     /// the two side edges joining it to the rail vertices; the gap checks of a
@@ -1195,7 +1388,7 @@ impl FilletCorner {
         // Not upstream (#10876): the Roll-over's second pass's End whose rib runs across the
         // cliff's tangent seam, from the tangent end on the end face to the rail's end on the
         // wall's rim (`rollover::seam_end`)
-        let seam = self.roll_over_seam_end(
+        let mut seam = self.roll_over_seam_end(
             k,
             target,
             &*solver,
@@ -1207,6 +1400,23 @@ impl FilletCorner {
             extend_edge,
             turned_back,
         )?;
+        // Not upstream (#16230): the same End across the end face's own tangent seam
+        let continued_seam = seam.is_none();
+        if continued_seam {
+            seam = self.tangent_continuation_seam_end(
+                k,
+                target,
+                &*solver,
+                vertex,
+                mixed,
+                tangent_side,
+                sides,
+                end_face,
+                extend_edge,
+                turned_back,
+            )?;
+        }
+        let continued_seam = continued_seam && seam.is_some();
 
         let start = self.vertices.first().copied();
         let end = self.vertices.get(1).copied();
@@ -1466,6 +1676,18 @@ impl FilletCorner {
                 }
                 Err(error) => return Err(error),
             };
+            // (#16230) the End across the end face's tangent seam needs S on the extension
+            if let Some(se) = seam.filter(|_| continued_seam) {
+                let dropped = new_surface.drop_point::<crate::surface::surface::p4::NoObject>(
+                    k,
+                    se.split,
+                    &new_surface.natural_uv_domain_with_nurb(k)?,
+                    &crate::surface::surface::p5::DropPointOptions::default(),
+                )?;
+                if !dropped.success || dropped.gap.is_nan() || dropped.gap > self.approx_tol_3d {
+                    return Err(shape_not_built(OP, CornerShape::SeamCapEndFaceNotExtended));
+                }
+            }
             // Copy pNewSurface, when possible as an analytic surface
             let new_extend_surface = new_surface.copy_and_add_analytics(k)?;
             // If AddExtendedOriginalSurface() deleted pNewExtendSurface, then

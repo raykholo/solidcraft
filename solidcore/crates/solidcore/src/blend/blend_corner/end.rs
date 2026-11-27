@@ -908,6 +908,22 @@ fn end_face_runs_on_past_side_edge(
     .map(|edge| edge.is_some())
 }
 
+/// Where the end face G beyond a side edge F/G runs on tangentially as a face H at the side
+/// edge's far vertex ([`end_face_continuation_edge`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EndFaceContinuation {
+    /// The end face G: the side edge's face that is not the rail's face F.
+    pub end_face: FaceId,
+    /// The side edge's far vertex W, where exactly the three edges meet.
+    pub far: VertexId,
+    /// E2: the edge between F and H, which bounds F beyond the side edge.
+    pub rim: EdgeId,
+    /// E3: the edge between G and H, tangent at W (the end face's tangent seam).
+    pub seam: EdgeId,
+    /// H: the face G continues as across E3.
+    pub wall: FaceId,
+}
+
 /// The edge E2 bounding the rail's face F beyond a side edge F/G, where G
 /// continues tangentially as H at its far vertex. Exactly three edges must meet
 /// there: F/G, E2 (F/H), and E3 (G/H), with G/H tangent at that vertex. This is
@@ -923,6 +939,24 @@ pub(crate) fn end_face_continuation_edge(
     rail_face: FaceId,
     tol_radians: f64,
 ) -> Result<Option<EdgeId>> {
+    Ok(
+        end_face_continuation(k, target, side_eu, near_vertex, rail_face, tol_radians)?
+            .map(|c| c.rim),
+    )
+}
+
+/// [`end_face_continuation_edge`] with the whole junction: G, W, E2, E3 and H.
+///
+/// # Errors
+/// As [`end_face_continuation_edge`].
+pub(crate) fn end_face_continuation(
+    k: &Kernel,
+    target: &mut Brep,
+    side_eu: EdgeuseId,
+    near_vertex: Option<VertexId>,
+    rail_face: FaceId,
+    tol_radians: f64,
+) -> Result<Option<EndFaceContinuation>> {
     let side_edge = edge_of(target, side_eu)?;
     let side_faces = [face_of(target, side_eu)?, radial_face(target, side_eu)?];
     if !side_faces.contains(&rail_face) {
@@ -972,8 +1006,15 @@ pub(crate) fn end_face_continuation_edge(
     let eu = eu1::primary_edgeuse(target, e3)?
         .ok_or_else(|| SolidError::topology(OP, TopologyFailure::EdgeWithoutEdgeuses))?;
     Ok(
-        check_tangential_edgeuse_at_vertex(k, target, eu, far, rad_to_deg(tol_radians))?
-            .then_some(e2),
+        check_tangential_edgeuse_at_vertex(k, target, eu, far, rad_to_deg(tol_radians))?.then_some(
+            EndFaceContinuation {
+                end_face,
+                far,
+                rim: e2,
+                seam: e3,
+                wall: h,
+            },
+        ),
     )
 }
 

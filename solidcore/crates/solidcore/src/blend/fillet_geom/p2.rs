@@ -3490,8 +3490,14 @@ impl FilletBrep {
                 // far end; the rail that runs past that end ends on the next edge, between
                 // the face beyond the seam and the same face of the rail (the edge the
                 // rolled-over rail's search takes, `side_edgeuse_across_rolled_edge`), its
-                // use on the face that corresponds to the side edge use's
-                if next.is_none() && corners.corner(corner)?.roll_over {
+                // use on the face that corresponds to the side edge use's. Not upstream
+                // (#16230): so does a rail past the far end of an End's side edge whose end
+                // face runs on tangentially there as the wall (`FilletCorner::seam_cap`)
+                let rolls_on = {
+                    let c = corners.corner(corner)?;
+                    c.roll_over || c.seam_cap.is_some()
+                };
+                if next.is_none() && rolls_on {
                     let tol_rad = corners.corner(corner)?.tangency_tol_radians;
                     let beyond = match far {
                         Some(far) => {
