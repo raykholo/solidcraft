@@ -4846,6 +4846,11 @@ fn own_values(sk: &solidcraft_sketch::Sketch) -> std::collections::BTreeMap<Stri
             Some((c.id.clone(), v))
         })
         .collect();
+    // Points placed by expressions over the parameters (a rectangle corner typed as `[10, E]`):
+    // a value edit moves them like a dimension, so a solve they break is the edit's to refuse.
+    for p in sk.points.iter().filter(|p| p.exprs.is_some()) {
+        values.extend([(format!("{}.x", p.id), p.pos.x), (format!("{}.y", p.id), p.pos.y)]);
+    }
     // 3D dimensions, and 3D points placed by expressions (#10608).
     for c in &sk.wire_constraints {
         match &c.kind {

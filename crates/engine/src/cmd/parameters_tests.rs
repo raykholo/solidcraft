@@ -1685,3 +1685,51 @@ fn exports_round_reported_numbers() {
     let vals: Vec<f64> = rows.iter().filter_map(|r| r["value"].as_f64()).collect();
     assert_eq!(vals, vec![30.0, 30.48, 0.3], "{json_text}");
 }
+
+/// A 10 x `E` rectangle (its top-right corner placed by the expression `E`) with both right-hand
+/// corners rounded by 1 mm, extruded 5 mm. At `E = 2` the two fillets exactly consume the
+/// right edge.
+fn rounded_plate(e: &str) -> Session {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name": "E", "expression": e, "unit": "mm"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "S"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [0, 0], "p1": [10, "E"]}));
+    run(&mut s, "sketch.fillet", json!({"points": ["p2", "p3"], "radius": 1}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 5, "name": "Plate", "body_name": "Plate"}));
+    s
+}
+
+/// The plate's volume in closed form: the rectangle less two quarter-round corners, times 5.
+fn rounded_plate_volume(e: f64) -> f64 {
+    5.0 * (10.0 * e - 2.0 * (1.0 - std::f64::consts::FRAC_PI_4))
+}
+
+#[test]
+fn a_value_edit_into_degenerate_fillets_is_refused_and_keeps_the_design() {
+    // E = 2 is where the two fillets exactly consume the right edge: the sketch cannot be solved
+    // there from the E = 3 one without flipping. Both `parameters.change` and `config.activate`
+    // fail, name the sketch and change nothing, rather than succeed with the E = 3 body.
+    let mut s = rounded_plate("3 mm");
+    assert!(rel(volume(&mut s), rounded_plate_volume(3.0)) < 1e-9);
+    let why = err(&mut s, "parameters.change", json!({"changes": {"E": "2 mm"}}));
+    assert!(why.contains("`S`") && why.contains("the values were not changed"), "{why}");
+    let why = err(&mut s, "parameters.change", json!({"name": "E", "expression": "2 mm"}));
+    assert!(why.contains("`S`") && why.contains("the values were not changed"), "{why}");
+    assert_eq!(expr_of(&mut s, "E"), "3 mm");
+    assert!(rel(volume(&mut s), rounded_plate_volume(3.0)) < 1e-9);
+    assert!(s.model.results.iter().all(|r| r.error.is_none() && r.warning.is_none()), "no failed sketch is left behind");
+
+    run(&mut s, "config.row", json!({"name": "R3", "values": {"param:E": "3 mm"}}));
+    run(&mut s, "config.row", json!({"name": "R2", "values": {"param:E": "2 mm"}}));
+    run(&mut s, "config.activate", json!({"row": "R3"}));
+    let why = err(&mut s, "config.activate", json!({"row": "R2"}));
+    assert!(why.contains("`S`") && why.contains("the values were not changed"), "{why}");
+    assert_eq!(expr_of(&mut s, "E"), "3 mm");
+    assert!(rel(volume(&mut s), rounded_plate_volume(3.0)) < 1e-9);
+
+    // The degenerate shape itself is valid when built fresh, and an edit that solves still applies.
+    assert!(rel(volume(&mut rounded_plate("2 mm")), rounded_plate_volume(2.0)) < 1e-9);
+    run(&mut s, "parameters.change", json!({"changes": {"E": "4 mm"}}));
+    assert!(rel(volume(&mut s), rounded_plate_volume(4.0)) < 1e-9);
+}
