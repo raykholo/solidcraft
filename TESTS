@@ -1,0 +1,2 @@
+goldens certify::trim_tolerance::brep_local_operation
+goldens operand_trim_rows::local_operation::local_operation_bodies_are_certified
