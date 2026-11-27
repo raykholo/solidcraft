@@ -1,0 +1,5 @@
+solidcraft-ui-egui plugin_workspace
+solidcraft-ui-egui a_failing_active_workspace_hook
+solidcraft-ui-egui workspace_hook
+solidcraft-ui-egui plugin_ribbon
+solidcraft-engine workspace_hook
