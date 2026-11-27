@@ -881,6 +881,10 @@ fn refuse_unsound(k: &mut Kernel, b: &Brep, input: &validation::Standing) -> Res
     let mut copy = b.clone_standing_for_self()?;
     let found = validation::standing(k, &mut copy)?;
     let added = found.check.failures_beyond(&input.check);
+    eprintln!("DIAG15715 added {added:?}\nDIAG15715 body lines:");
+    for l in found.check.lines() { eprintln!("DIAG15715   {l}"); }
+    eprintln!("DIAG15715 input lines:");
+    for l in input.check.lines() { eprintln!("DIAG15715   {l}"); }
     let what = if let Some(&(class, _)) = added.first() {
         Unsoundness::Check {
             failures: added.iter().fold(0, |n, &(_, more)| n.saturating_add(more)),

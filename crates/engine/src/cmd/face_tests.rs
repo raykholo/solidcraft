@@ -857,3 +857,14 @@ fn extruding_a_curved_face_points_to_offset_face() {
     assert!(error.to_string().contains("use Offset Face"), "{error}");
     assert_eq!(s.doc.features.len(), features);
 }
+
+#[test]
+fn diag15715_thread_offset_small() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":6,"height":20,"base":[0,0,0],"axis":"Z","body_name":"Bolt"}));
+    run(&mut s, "solid.thread", json!({"face":[6,0,10],"designation":"M12","modeled":true}));
+    let names: Vec<String> = solidcraft_doc::naming::face_names(s.model.state().body("Bolt").unwrap()).iter().filter(|n| !n.starts_with("F1:")).cloned().collect();
+    eprintln!("DIAG15715 {} thread faces", names.len());
+    let e = s.execute("solid.offset_face", &json!({"body":"Bolt","faces":names,"distance":-0.05}));
+    eprintln!("DIAG15715 result {e:?}");
+}
