@@ -291,6 +291,17 @@ pub(super) fn coincident_opposites(
             planes.push(p);
         }
     }
+    for f in bp1::faces(b, None)? {
+        let isplane = b.face(f)?.surface.as_ref().is_some_and(|s| matches!(s.kind(), SurfaceKind::Plane(_)));
+        let lam = signed_sheet_faceuse(b, f)?;
+        let fu = face2::upward_faceuse(b, f)?;
+        let first = match lam { Some(fu) => Some(b.faceuse(fu)?.orientation), None => None };
+        let pn = match b.face(f)?.surface.as_ref().map(|s| s.kind()) { Some(SurfaceKind::Plane(p)) => Some((p.position().origin(), p.evaluate_normal())), _ => None };
+        eprintln!("DBG16395 face {f:?} plane {isplane} lamina {} upward {} first {first:?} pn {pn:?}", lam.is_some(), fu.is_some());
+    }
+    for p in &planes {
+        eprintln!("DBG16395 sel {:?} o={:?} n={:?}", p.id, p.origin, p.normal);
+    }
     let tolerance = b.tolerance();
     let mut selected = Vec::new();
     for &p in &planes {
