@@ -883,6 +883,13 @@ fn local_operation_on(
     // outside along a line (a notch's wall tangent to it) into a region of its own, made
     // material: its void flag is read from the faces again (`p5::set_alternating_void_flags`)
     p5::set_alternating_void_flags(b)?;
+    // (not upstream, #15715) the copied faces meet along edges and vertices that carry the
+    // tolerances the offset left them, and where an edge's end lies a hair further from its
+    // vertex than that (a thread flank's moved edge: 1.02e-5 against 1.0155e-5) the final
+    // check reports a gap no tolerance covers. Each vertex and edge grows to cover the gaps
+    // it bounds, as an API offset's result does (`update_result_tolerances`); a vertex grown
+    // too wide to excuse is still the check's (test #82)
+    validation::validate_and_update_tolerances(k, b, false, None, 0)?;
     refuse_unsound(k, b, &input)
 }
 
