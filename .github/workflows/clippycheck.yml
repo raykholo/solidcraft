@@ -1,0 +1,48 @@
+name: clippycheck
+on:
+  push:
+    branches: ["clippycheck/**"]
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_TERM_COLOR: never
+      SOLIDCORE_REQUIRE_UPSTREAM: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - name: Toolchain (solidcore/rust-toolchain.toml)
+        working-directory: src/solidcore
+        run: rustup show active-toolchain || rustup toolchain install
+      # The two commands below are copied from upstream .github/workflows/ci.yml, job "SolidCore checks"
+      # (matrix check "fmt and clippy"): `cargo fmt --all --check` and
+      # `cargo clippy --workspace --all-targets -- -D warnings`. Only --keep-going is added so every
+      # crate's errors print, not just the first failing crate's.
+      - name: Format
+        working-directory: src/solidcore
+        run: |
+          status=0
+          cargo fmt --all --check || status=1
+          echo "FMT_STATUS=$status" >> "$GITHUB_ENV"
+      - name: Clippy
+        working-directory: src/solidcore
+        run: |
+          set +e
+          cargo clippy --keep-going --workspace --all-targets -- -D warnings > ../../clippy.log 2>&1
+          rc=$?
+          grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" ../../clippy.log
+          echo "CLIPPY_EXIT=$rc FMT_STATUS=$FMT_STATUS"
+          [ "$rc" = 0 ] && [ "$FMT_STATUS" = 0 ]
