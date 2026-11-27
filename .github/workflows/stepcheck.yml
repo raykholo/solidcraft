@@ -1,0 +1,44 @@
+name: stepcheck
+on:
+  push:
+    branches: ["stepcheck/**"]
+jobs:
+  eval:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the CLI
+        working-directory: src
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "line-tables-only"
+        run: cargo build --release -p solidcraft-cli --locked
+      - name: Replay the reported fillet
+        run: |
+          mkdir -p design && cd design
+          curl -sSL -o d.zip "https://github.com/user-attachments/files/34831401/SolidCraft_Issue_16230_Etikettendrucker_Profil_sauber.zip"
+          unzip -o -q d.zip
+          f=$(ls *.sc | head -1)
+          for r in 0.1 0.2 0.4; do
+            printf '{"commands":[{"command":"solid.fillet","params":{"body":"Body2","edges":[[0.20128810153614274,22.626527101657583,42.5]],"radius":"%s mm"}}]}\n' "$r" > s.json
+            echo "== radius $r"; rm -f out.json err.txt
+            start=$(date +%s)
+            timeout 900 ../src/target/release/solidcraft-cli eval s.json --in "$f" --json-out out.json --validation each_feature 2> err.txt || echo "exit $?"
+            echo "TIME $(( $(date +%s) - start )) s"
+            python3 -c "import json;d=json.load(open('out.json'));[print('RESULT', 'r=$r', b.get('name'), 'volume', b.get('volume_mm3'), 'faces', b.get('faces'), 'valid', b.get('valid')) for b in d.get('bodies',[])];print('ERROR', d.get('error'))" || head -c 3000 out.json
+            head -c 2500 out.json; echo
+            grep -aiE "error|refus" err.txt | head -5
+          done
