@@ -3277,7 +3277,6 @@ fn run_shell_offset(
     } else {
         None
     };
-    eprintln!("DBG16395 regularized {}", regularized.is_some());
     let Some((mut source, open)) = regularized else {
         let mut executive = configured_shell_executive(original, options, faces);
         executive.use_creator_tangency_tol(kernel);

@@ -126,6 +126,18 @@ fn opposite(a: PlanarFace, b: PlanarFace, tolerance: f64) -> bool {
         && gap < 2.0 * tolerance
 }
 
+/// Whether offset faces `a` and `b` stand for a common original face. Such faces are
+/// pieces of one source face (a face rebuilt where its loops crossed, with an island
+/// of its own), not opposing walls: their opposite construction sides are bookkeeping,
+/// and cancelling them would delete the island.
+fn share_an_original(exec: &OffsetExecutive, a: FaceId, b: FaceId) -> bool {
+    let of_a = exec.faceuse_to_faces.firsts(a);
+    exec.faceuse_to_faces
+        .firsts(b)
+        .iter()
+        .any(|original| of_a.contains(original))
+}
+
 struct Sheet {
     source: PlanarFace,
     brep: Brep,
@@ -280,27 +292,13 @@ pub(super) fn coincident_opposites(
     b: &mut Brep,
     notifications: &mut OffsetNotifications<'_>,
 ) -> Result<()> {
-    let dbg0 = bp1::faces(b, None)?.len();
     super::spurs::repair(exec, k, b, notifications)?;
-    let dbg1 = bp1::faces(b, None)?.len();
     super::empty::remove(k, b, notifications)?;
-    eprintln!("DBG16395 faces {dbg0} after_spurs {dbg1} after_empty {}", bp1::faces(b, None)?.len());
     let mut planes = Vec::new();
     for f in bp1::faces(b, None)? {
         if let Some(p) = planar_face(b, f)? {
             planes.push(p);
         }
-    }
-    for f in bp1::faces(b, None)? {
-        let isplane = b.face(f)?.surface.as_ref().is_some_and(|s| matches!(s.kind(), SurfaceKind::Plane(_)));
-        let lam = signed_sheet_faceuse(b, f)?;
-        let fu = face2::upward_faceuse(b, f)?;
-        let first = match lam { Some(fu) => Some(b.faceuse(fu)?.orientation), None => None };
-        let pn = match b.face(f)?.surface.as_ref().map(|s| s.kind()) { Some(SurfaceKind::Plane(p)) => Some((p.position().origin(), p.evaluate_normal())), _ => None };
-        eprintln!("DBG16395 face {f:?} plane {isplane} lamina {} upward {} first {first:?} pn {pn:?}", lam.is_some(), fu.is_some());
-    }
-    for p in &planes {
-        eprintln!("DBG16395 sel {:?} o={:?} n={:?}", p.id, p.origin, p.normal);
     }
     let tolerance = b.tolerance();
     let mut selected = Vec::new();
@@ -308,12 +306,15 @@ pub(super) fn coincident_opposites(
         k.check_cancelled(OP)?;
         if planes
             .iter()
-            .any(|&q| p.id != q.id && opposite(p, q, tolerance))
+            .any(|&q| {
+                p.id != q.id
+                    && opposite(p, q, tolerance)
+                    && !share_an_original(exec, p.id, q.id)
+            })
         {
             selected.push(p);
         }
     }
-    eprintln!("DBG16395 planes {} selected {}", planes.len(), selected.len());
     if selected.is_empty() {
         return Ok(());
     }
@@ -331,7 +332,9 @@ pub(super) fn coincident_opposites(
         for j in i.saturating_add(1)..count {
             k.check_cancelled(OP)?;
             let mut other = take_sheet(&mut sheets, j)?;
-            cancel_pair(k, &mut a, &mut other)?;
+            if !share_an_original(exec, a.source.id, other.source.id) {
+                cancel_pair(k, &mut a, &mut other)?;
+            }
             put_sheet(&mut sheets, j, other)?;
         }
         put_sheet(&mut sheets, i, a)?;
