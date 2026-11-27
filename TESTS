@@ -1,0 +1,6 @@
+goldens certify::trim_tolerance
+goldens operand_trim_rows
+solidcore local_operation
+solidcore wr_530
+solidcore offset_executive
+solidcore-ops offset::
