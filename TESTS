@@ -1,0 +1,6 @@
+goldens local_operation_rows_are_certified
+solidcore a_refusal_leaves_the_input_its_caches
+solidcore wr_530_turned_and_raised
+goldens the_rows_are_the_whole_golden_diff_from_main
+goldens trim_tolerance::brep_local_operation
+solidcore-ops offset::
