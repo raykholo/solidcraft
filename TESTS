@@ -1,0 +1,6 @@
+solidcraft-engine workshop
+solidcraft-engine hostile_params_never_panic
+solidcraft-engine every_command_has
+solidcraft-engine schema_defaults
+solidcraft-ui-egui workshop::
+solidcraft-ui-egui plugin_menu
