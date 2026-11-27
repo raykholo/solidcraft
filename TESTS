@@ -1,0 +1,6 @@
+craft-plugin plugin
+craft-plugin-wasm export
+solidcraft-io zip
+solidcraft-io files
+solidcraft-engine plugin
+solidcraft-ui-egui plugin
