@@ -1119,14 +1119,45 @@ mod imp {
     /// `normal`, holding every point on that side within `near` of `at` (a `2 near` square in the
     /// plane, `near` deep along `normal`), and nothing farther. A cut only near the corner keeps
     /// a run that turns back behind the mitre's plane farther along (#13543).
-    fn mitre_cutter(at: Vec3, normal: Vec3, near: f64) -> Result<Brep> {
+    fn mitre_cutter(at: Vec3, normal: Vec3, near: f64, depth: Option<f64>) -> Result<Brep> {
         let u = if normal.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
         let u = normal.cross(u).normalized().ok_or_else(|| KernelError::Invalid("mitre plane".into()))?;
         let v = normal.cross(u);
         let h = near;
         let c = [at + (u + v) * h, at + (v - u) * h, at - (u + v) * h, at + (u - v) * h];
         let square: Vec<Curve> = (0..4).map(|i| Curve::Line { start: p(c[i]), end: p(c[(i + 1) % 4]) }).collect();
-        Brep::extrude(&square, p(normal), near, 0.0, DraftCorner::default(), true).map_err(|e| failed("mitre", e))
+        Brep::extrude(&square, p(normal), depth.map_or(near, |d| d.min(near)), 0.0, DraftCorner::default(), true).map_err(|e| failed("mitre", e))
+    }
+
+    /// The points of the profile `pieces` on `plane` the sweep's walls are read from: the ends and
+    /// eighths of each piece, as [`section_offsets`] samples them.
+    fn section_points(plane: &Plane, pieces: &[Piece]) -> Vec<Vec3> {
+        pieces.iter().flat_map(|x| (0..=8).map(move |i| plane.to_world(x.seg.point_at(f64::from(i) / 8.0)))).collect()
+    }
+
+    /// [`mitre_lead`] read off the section's own `points` at the corner `at`, where the mitre's
+    /// plane has the unit normal `m` (pointing the way the run goes on): how far each point is
+    /// carried straight along the unit `t` (on past the corner when `ahead`, else back before
+    /// it) to reach the plane, `(q - at) . m` over `t . m`. A section standing off the path
+    /// out of the plane of the turn (a profile drawn 488 mm beside it along the axis of the turn)
+    /// reaches the plane as its in-plane distance says, not its whole distance from the path.
+    /// `None` where `t` runs along the plane.
+    fn mitre_lead_at(points: &[Vec3], at: Vec3, t: Vec3, m: Vec3, ahead: bool, reach: f64) -> Option<f64> {
+        let c = t.dot(m);
+        if !(c > 1e-6) {
+            return None;
+        }
+        let need = points.iter().map(|q| (*q - at).dot(m) / c * if ahead { -1.0 } else { 1.0 }).fold(0.0f64, f64::max);
+        Some(need * 1.1 + reach * 1e-3 + 1e-6)
+    }
+
+    /// How deep past the mitre's plane (through `at`, the cutter's unit `normal` pointing away
+    /// from the run) the section's `points`, carried on `lead` along the unit `toward`, reach: what
+    /// a cutter must take, and no more, so that it takes nothing of a run that comes back near the
+    /// corner farther along (#13543, #23185). A little more than the farthest point.
+    fn mitre_depth(points: &[Vec3], at: Vec3, toward: Vec3, lead: f64, normal: Vec3) -> f64 {
+        let far = points.iter().map(|q| (*q - at).dot(normal).max((*q + toward * lead - at).dot(normal))).fold(0.0f64, f64::max);
+        1.05 * far + 1e-3
     }
 
     /// How near a corner its mitre cuts: every point a straight lead of length `lead` past the
@@ -1443,8 +1474,15 @@ mod imp {
             } else {
                 // On past each mitre, far enough to take every point of the section to the
                 // mitre's plane ([`mitre_lead`]).
-                let pre = entry.map_or(0.0, |(_, _, turn)| mitre_lead(&offsets, reach, turn, false));
-                let post = exit.map(|(_, turn)| mitre_lead(&offsets, reach, turn, true)).unwrap_or(0.0);
+                // The section where the run starts, and where it ends (as SMLib carries it along
+                // a line or an arc), says how far each point is from the mitre's plane.
+                let run_length: f64 = segs.iter().map(seg_len).sum();
+                let here = section_points(&pose, pieces);
+                let there = carried_along(segs, run_length).map(|m| here.iter().map(|q| apply(&m, *q)).collect::<Vec<_>>());
+                let pre_known = entry.and_then(|(at, toward, _)| mitre_lead_at(&here, at, t0, toward, false, reach));
+                let pre = entry.map_or(0.0, |(_, _, turn)| pre_known.unwrap_or_else(|| mitre_lead(&offsets, reach, turn, false)));
+                let post_known = exit.and_then(|(m, _)| mitre_lead_at(there.as_deref()?, b1, t1, m, true, reach));
+                let post = exit.map_or(0.0, |(_, turn)| post_known.unwrap_or_else(|| mitre_lead(&offsets, reach, turn, true)));
                 let mut route = Vec::with_capacity(segs.len() + 2);
                 if pre > 0.0 {
                     route.push(crate::PathSeg::Line { a: a0 - t0 * pre, b: a0 });
@@ -1459,7 +1497,6 @@ mod imp {
                 // that point keeps between the mitres: a point standing `s` ahead of the path
                 // keeps the stretch `s` back from the run's (a profile at a slant to a run shorter
                 // than its slant reaches past the mitres from the run's middle section).
-                let run_length: f64 = segs.iter().map(seg_len).sum();
                 let origin = a0 - t0 * pre;
                 inside.extend(pieces.iter().enumerate().map(|(piece, x)| {
                     let q = from.to_world(x.seg.point_at(0.5));
@@ -1470,11 +1507,14 @@ mod imp {
                 let lead = usize::from(pre > 0.0);
                 inside.extend(segment_seeds(&from, pieces, &route, lead..lead + segs.len(), false));
                 if let Some((at, toward, _)) = entry {
-                    let cut = mitre_cutter(at, -toward, mitre_near(pre, reach))?;
+                    let depth = pre_known.map(|_| mitre_depth(&here, at, -t0, pre, -toward));
+                    let cut = mitre_cutter(at, -toward, mitre_near(pre, reach), depth)?;
                     piece = combined(&piece, &cut, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
                 }
                 if let Some((m, _)) = exit {
-                    piece = combined(&piece, &mitre_cutter(b1, m, mitre_near(post, reach))?, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
+                    let depth = there.as_deref().filter(|_| post_known.is_some()).map(|pts| mitre_depth(pts, b1, t1, post, m));
+                    let cut = mitre_cutter(b1, m, mitre_near(post, reach), depth)?;
+                    piece = combined(&piece, &cut, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
                 }
                 (piece, moved_plane(&placed(&from, &last), t1 * -post))
             };
@@ -2128,19 +2168,29 @@ mod imp {
                 let prism = |map: Affine, toward: Vec3, by: f64| -> Result<Brep> {
                     Brep::sweep_stations(&c, &[map, affine_moved(&map, toward * by)], Ends::Capped).map_err(|e| failed("sweep corner", e))
                 };
+                // The section where the run starts and where it ends (its stations' own maps) says
+                // how far each point is from the mitre's plane.
+                let drawn = section_points(plane, &pieces);
+                let moved = |map: &Affine| drawn.iter().map(|q| affine_apply(map, *q)).collect::<Vec<_>>();
                 if let Some((at, m, turn)) = entry {
-                    let pre = mitre_lead(&offsets, reach, turn, false);
+                    let here = moved(&first_map);
+                    let known = mitre_lead_at(&here, at, t0, m, false, reach);
+                    let pre = known.unwrap_or_else(|| mitre_lead(&offsets, reach, turn, false));
                     let lead = prism(affine_moved(&first_map, t0 * -pre), t0, pre)?;
                     let near = mitre_near_prism(&lead, at, pre, reach)?;
+                    let depth = known.map(|_| mitre_depth(&here, at, -t0, pre, -m));
                     piece = combined(&piece, &lead, solidcraft_smlib::BooleanOp::Union, "sweep corner")?;
-                    piece = combined(&piece, &mitre_cutter(at, -m, near)?, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
+                    piece = combined(&piece, &mitre_cutter(at, -m, near, depth)?, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
                 }
                 if let Some((m, turn)) = exit {
-                    let post = mitre_lead(&offsets, reach, turn, true);
+                    let there = moved(&end_map);
+                    let known = mitre_lead_at(&there, b1, t1, m, true, reach);
+                    let post = known.unwrap_or_else(|| mitre_lead(&offsets, reach, turn, true));
                     let tail = prism(end_map, t1, post)?;
                     let near = mitre_near_prism(&tail, b1, post, reach)?;
+                    let depth = known.map(|_| mitre_depth(&there, b1, t1, post, m));
                     piece = combined(&piece, &tail, solidcraft_smlib::BooleanOp::Union, "sweep corner")?;
-                    piece = combined(&piece, &mitre_cutter(b1, m, near)?, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
+                    piece = combined(&piece, &mitre_cutter(b1, m, near, depth)?, solidcraft_smlib::BooleanOp::Subtract, "sweep mitre")?;
                 }
             }
             parts.push(piece);

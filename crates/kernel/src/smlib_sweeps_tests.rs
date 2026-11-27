@@ -504,12 +504,7 @@ fn a_sweep_round_a_closed_path_of_arcs_and_corners_keeps_all_its_material() {
     // radius, so every moment is a polynomial of degree 3 in u at most and Simpson's rule on
     // [0, 6.5] is exact for it.
     let plane = Plane { origin: Vec3::ZERO, x: Vec3::X, y: Vec3::Z };
-    let section = region(Loop2::polygon(&[
-        Vec2::new(169.5, -488.5),
-        Vec2::new(169.5, -489.0),
-        Vec2::new(176.0, -489.0),
-        Vec2::new(176.0, -482.0),
-    ]));
+    let section = region(Loop2::polygon(&[Vec2::new(169.5, -488.5), Vec2::new(169.5, -489.0), Vec2::new(176.0, -489.0), Vec2::new(176.0, -482.0)]));
     let at = |x: f64, y: f64| Vec3::new(x, y, 0.0);
     let arc = |a: Vec3, centre: Vec3| crate::PathSeg::Arc { a, center: centre, axis: Vec3::Z, angle: PI / 2.0 };
     let path = [
