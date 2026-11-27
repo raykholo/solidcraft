@@ -2407,6 +2407,27 @@ mod tests {
         }
     }
 
+    /// The net point nearest a point among the stations (the knots and span middles) is looked
+    /// for on every piece of an edge ([`Net::foot`]'s fallback), where a thread's flank has
+    /// thousands of stations: they are enclosed once, on the first look, and held, so a
+    /// reach over a many-turn thread does not enclose the whole grid again on each piece of
+    /// each edge (#15715: a one-face Offset Faces of a thread's root ran for hours).
+    #[test]
+    fn the_stations_nearest_a_point_are_enclosed_once_and_held() {
+        let k = Kernel::default();
+        let n = net(&k, &quarter_cylinder());
+        assert!(n.stations.get().is_none());
+        // the middle of the arc at the top, then its start at the bottom
+        let top = core::f64::consts::SQRT_2;
+        let first = n.nearest_on_knots(Vec3::new(top, top, 3.0)).unwrap().unwrap();
+        assert!((first.0 - 0.5).abs() < 1e-9 && (first.1 - 1.0).abs() < 1e-9, "{first:?}");
+        let held = n.stations.get().map(|s| (s.len(), s.as_ptr()));
+        assert_eq!(held.map(|h| h.0), Some(9), "3 stations along the arc, 3 up the axis");
+        let second = n.nearest_on_knots(Vec3::new(2.0, 0.0, 0.0)).unwrap().unwrap();
+        assert!(second.0.abs() < 1e-9 && second.1.abs() < 1e-9, "{second:?}");
+        assert_eq!(n.stations.get().map(|s| (s.len(), s.as_ptr())), held);
+    }
+
     /// A line along the normal through the bump's corner (u, v) = (1, 0), from 0.5 below it,
     /// meets it at the corner, 0.5 along: Krawczyk's box about the corner runs past both sides
     /// there, whose rows end in different weight ratios, and is enclosed all the same.
