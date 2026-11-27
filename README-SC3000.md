@@ -11,6 +11,8 @@ Phone number verification gag requested by: **oursland** (cadmpeg).
 
 Cloud Account requested by: **N3MI** and **brett19**.
 
+SolidCredits requested by: **MisterMaker**.
+
 ## Build
 
 Install the prerequisites in [docs/building.md](docs/building.md), including Trunk and the `wasm32-unknown-unknown`
@@ -147,6 +149,25 @@ guarded; where the browser blocks storage, the account lasts until the tab close
 modal, each closes in one click, and saving and exporting work throughout. The code is
 `crates/ui-egui/src/sc3000_account.rs` (the browser store is in `apps/solidcraft-web/src/sc3000.rs`); the tests are in
 `crates/ui-egui/src/sc3000_account_tests.rs`.
+
+## SolidCredits
+
+Some features now carry a price in SolidCredits, a made-up unit with no money behind it:
+
+- an extrude costs 0.10 per millimetre of its length ("This extrude cost 12.40 SolidCredits (124.00 mm at 0.10 per
+  mm).");
+- a pattern costs 2.00 per instance (a 3 x 2 pattern: 12.00);
+- fillets (5.00) and shells (8.00) are "SolidCraft 3000 Pro" features;
+- Brass, Copper and Titanium appearances are in the "Appearance Pack" (3.00), and their library swatches carry a
+  small PRO tag.
+
+The price note comes **after** the command has run: “Your balance is 0.00, so it went on your free trial (0 days
+left). It worked anyway.” Nothing is ever refused, delayed or undone. OK closes the note; Top up opens a page that
+says top-ups are paused while the credit vault moves to the cloud, and that there is nothing to buy. It has no
+fields, no prices in any currency and no payment of any kind. The Cloud Account's page shows the balance (always
+0.00) and what has gone on the trial this run. Saving and exporting are never priced and work with the note or the
+Top up page open. Nothing is kept or sent. The code is `crates/ui-egui/src/sc3000_credits.rs`; the tests are in
+`crates/ui-egui/src/sc3000_credits_tests.rs`.
 
 ## The cloud is fictional
 

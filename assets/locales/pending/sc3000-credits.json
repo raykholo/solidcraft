@@ -1,0 +1,34 @@
+{
+  "en": {
+    "sc3000.credits.appearance": "{name} is in the Appearance Pack: {cost} SolidCredits.",
+    "sc3000.credits.balance": "SolidCredits: {balance}",
+    "sc3000.credits.extrude": "This extrude cost {cost} SolidCredits ({length} mm at {rate} per mm).",
+    "sc3000.credits.fillet": "Fillets are a SolidCraft 3000 Pro feature: {cost} SolidCredits.",
+    "sc3000.credits.ok": "OK",
+    "sc3000.credits.owed": "Charged to your free trial so far: {total} SolidCredits",
+    "sc3000.credits.pattern": "This pattern cost {cost} SolidCredits ({count} instances at {rate} each).",
+    "sc3000.credits.pro": "PRO",
+    "sc3000.credits.shell": "Shell is a SolidCraft 3000 Pro feature: {cost} SolidCredits.",
+    "sc3000.credits.top_up": "Top up",
+    "sc3000.credits.top_up_body": "Top-ups are paused while we move the credit vault to the cloud. Your balance is safe.",
+    "sc3000.credits.top_up_note": "There is nothing to buy. Every feature works, free, as it always has.",
+    "sc3000.credits.top_up_title": "Top up SolidCredits",
+    "sc3000.credits.trial": "Your balance is {balance}, so it went on your free trial (0 days left). It worked anyway."
+  },
+  "de": {
+    "sc3000.credits.appearance": "{name} gehört zum Erscheinungsbild-Paket: {cost} SolidCredits.",
+    "sc3000.credits.balance": "SolidCredits: {balance}",
+    "sc3000.credits.extrude": "Diese Extrusion hat {cost} SolidCredits gekostet ({length} mm zu {rate} pro mm).",
+    "sc3000.credits.fillet": "Vollrundungen sind eine Funktion von SolidCraft 3000 Pro: {cost} SolidCredits.",
+    "sc3000.credits.ok": "OK",
+    "sc3000.credits.owed": "Bisher Ihrer kostenlosen Testphase belastet: {total} SolidCredits",
+    "sc3000.credits.pattern": "Dieses Muster hat {cost} SolidCredits gekostet ({count} Exemplare zu je {rate}).",
+    "sc3000.credits.pro": "PRO",
+    "sc3000.credits.shell": "Hülle ist eine Funktion von SolidCraft 3000 Pro: {cost} SolidCredits.",
+    "sc3000.credits.top_up": "Aufladen",
+    "sc3000.credits.top_up_body": "Das Aufladen ist pausiert, solange wir den Credit-Tresor in die Cloud umziehen. Ihr Guthaben ist sicher.",
+    "sc3000.credits.top_up_note": "Es gibt nichts zu kaufen. Jede Funktion arbeitet kostenlos, wie immer.",
+    "sc3000.credits.top_up_title": "SolidCredits aufladen",
+    "sc3000.credits.trial": "Ihr Guthaben beträgt {balance}, darum ging es auf Ihre kostenlose Testphase (noch 0 Tage). Es hat trotzdem funktioniert."
+  }
+}

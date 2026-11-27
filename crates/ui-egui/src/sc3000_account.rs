@@ -470,7 +470,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // The timers count while the window is focused, even with nothing else moving.
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
     if account.screen.is_some() {
-        window(account, ctx);
+        window(account, &mut app.help.sc3000_credits, ctx);
     }
     if account.recovery {
         recovery(account, ctx);
@@ -485,7 +485,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     }
 }
 
-fn window(account: &mut Account, ctx: &egui::Context) {
+fn window(account: &mut Account, credits: &mut crate::sc3000_credits::Credits, ctx: &egui::Context) {
     let Some(screen) = account.screen else { return };
     let t = solidcraft_theme::Tokens::get();
     let title = match screen {
@@ -565,6 +565,7 @@ fn window(account: &mut Account, ctx: &egui::Context) {
                     "sc3000.account.password_facts",
                     &[("length", &account.saved.password_length.to_string()), ("date", &date(account.saved.password_set_at))],
                 ));
+                crate::sc3000_credits::account_rows(credits, ui);
                 ui.horizontal_wrapped(|ui| {
                     if button(ui, "sc3000.account.sign_out", ui_kit::Button::Normal, "sc3000_account:sign_out") {
                         account.sign_out();
