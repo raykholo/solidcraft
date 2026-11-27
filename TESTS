@@ -1,0 +1,5 @@
+solidcore a_stretch_leaving_the_tolerance
+solidcore a_cusp_swept_onto_a_coaxial_cylinder_cuts_whatever_the_sketch_rounding
+solidcore proto_topology
+solidcore surf_of_revolution
+solidcore surface::plane
