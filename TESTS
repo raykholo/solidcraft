@@ -1,0 +1,5 @@
+solidcraft-io safe_write::
+solidcraft-engine a_files_export_
+solidcraft-engine hostile_export_archives_return_typed_errors_and_write_nothing
+solidcraft-engine an_export_that_errors_traps_or_runs_away_leaves_the_folder_as_it_was
+solidcraft-engine schema::file::tests::
