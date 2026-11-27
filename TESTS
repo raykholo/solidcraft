@@ -1,0 +1,8 @@
+solidcraft-engine variable_fillet
+solidcraft-engine spline_fillet
+solidcraft-engine fillet_fit
+solidcraft-doc chain_tests
+solidcraft-doc older_variable_and_spline_fillets
+solidcraft-smlib variable
+solidcraft-smlib every_entry_point
+solidcraft-kernel variable
