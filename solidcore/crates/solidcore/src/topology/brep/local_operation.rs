@@ -889,8 +889,12 @@ fn local_operation_on(
     // check reports a gap no tolerance covers. Each vertex and edge grows to cover the gaps
     // it bounds, as an API offset's result does (`update_result_tolerances`); a vertex grown
     // too wide to excuse is still the check's (test #82)
-    validation::validate_and_update_tolerances(k, b, false, None, 0)?;
-    refuse_unsound(k, b, &input)
+    let upd = validation::validate_and_update_tolerances(k, b, false, None, 0);
+    eprintln!("DIAG15715 update {:?}", upd.as_ref().err());
+    upd?;
+    let gate = refuse_unsound(k, b, &input);
+    eprintln!("DIAG15715 gate {:?}", gate.as_ref().err());
+    gate
 }
 
 /// (not upstream) The local operation's final gate: the body it built is refused when it
