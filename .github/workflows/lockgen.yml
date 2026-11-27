@@ -1,0 +1,32 @@
+name: lockgen
+on:
+  push:
+    branches: ["lockgen/**"]
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Update Cargo.lock for the new dependencies
+        working-directory: src
+        run: |
+          cargo metadata --format-version 1 > /dev/null
+          git diff --stat Cargo.lock
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: src/Cargo.lock
