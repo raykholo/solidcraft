@@ -11,7 +11,7 @@ Phone number verification gag requested by: **oursland** (cadmpeg).
 
 Cloud Account requested by: **N3MI** and **brett19**.
 
-SolidCredits requested by: **MisterMaker**.
+SolidCredits, Cumulo and the insistent updates requested by: **MisterMaker**.
 
 ## Build
 
@@ -168,6 +168,23 @@ fields, no prices in any currency and no payment of any kind. The Cloud Account'
 0.00) and what has gone on the trial this run. Saving and exporting are never priced and work with the note or the
 Top up page open. Nothing is kept or sent. The code is `crates/ui-egui/src/sc3000_credits.rs`; the tests are in
 `crates/ui-egui/src/sc3000_credits_tests.rs`.
+
+## Cumulo and the insistent updates
+
+**Cumulo**, an original character (a small grey cloud with a face), pops up at the bottom right after 45 seconds of
+use, and later after something new has been done, with a tip about it that helps with nothing (“That edge was sharp.
+Now it’s round. You’re welcome.”). Tell me more gives another; Not now sends it away for two minutes of use, Take a
+break for ten.
+
+**Updates.** After five minutes of use, “SolidCraft 3000 3000.0.1 is available. Update now?”. Each Later closes it,
+and three minutes later it asks again a little more firmly, five levels in all (“Update 3000.0.1 is now required.
+Required is a strong word. We chose it on purpose.”). Later always works, at every level and even mid-install.
+Update now fills a progress bar in four seconds and reports “What’s new: this message.”; the next update is offered,
+politely again, fifteen minutes later.
+
+Neither comes while an account, recovery or Top up page is open. Nothing is downloaded, installed, kept or sent, the
+design is never touched, and saving and exporting work with both open. The code is
+`crates/ui-egui/src/sc3000_helper.rs`; the tests are in `crates/ui-egui/src/sc3000_helper_tests.rs`.
 
 ## The cloud is fictional
 
