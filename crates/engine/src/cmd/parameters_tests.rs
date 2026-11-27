@@ -1720,6 +1720,7 @@ fn a_value_edit_into_degenerate_fillets_is_refused_and_keeps_the_design() {
     assert!(rel(volume(&mut s), rounded_plate_volume(3.0)) < 1e-9);
     assert!(s.model.results.iter().all(|r| r.error.is_none() && r.warning.is_none()), "no failed sketch is left behind");
 
+    run(&mut s, "config.configure", json!({"params": ["E"]}));
     run(&mut s, "config.row", json!({"name": "R3", "values": {"param:E": "3 mm"}}));
     run(&mut s, "config.row", json!({"name": "R2", "values": {"param:E": "2 mm"}}));
     run(&mut s, "config.activate", json!({"row": "R3"}));
