@@ -549,6 +549,12 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Ap, inputs: &mut [Sel
         );
         ui.add_enabled_ui(available, |ui| {
             let response = ui_kit::color_swatch(ui, egui::Id::unique(("ap_lib", *i)), c32(l.color, l.opacity), picked_look, &tip, (*l).clone());
+            // SolidCraft 3000: a parody "PRO" tag on the Appearance Pack's swatches (they apply as usual).
+            #[cfg(feature = "sc3000")]
+            if crate::sc3000_credits::in_pack(&l.name) {
+                crate::sc3000_credits::badge(ui, response.rect);
+                crate::scenario::publish_rect(&format!("sc3000_credits:pack:{}", l.name), response.rect);
+            }
             if let Some(preset) = &l.preset {
                 crate::scenario::publish_handle(&format!("appearance:preset:{}", preset.id), response.rect.center());
             }

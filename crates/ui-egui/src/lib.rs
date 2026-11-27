@@ -332,6 +332,8 @@ pub mod save_job;
 #[cfg(feature = "sc3000")]
 pub mod sc3000_account;
 #[cfg(feature = "sc3000")]
+pub mod sc3000_credits;
+#[cfg(feature = "sc3000")]
 pub mod sc3000_support;
 mod scale_bar;
 pub mod scenario;
@@ -1943,6 +1945,11 @@ impl SolveApp {
             self.cam_anim = self.cam_anim.map(Self::screen_up_turn);
         }
         issue_report::ticket::step_params(self, id, params);
+        // SolidCraft 3000: a priced command's note, after it has run (it never stops one).
+        #[cfg(feature = "sc3000")]
+        if done.is_ok() {
+            crate::sc3000_credits::after_command(self, id, params);
+        }
         if self.session.revision != revision {
             timeline::stop_playback(self);
         }
