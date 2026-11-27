@@ -1,0 +1,137 @@
+{
+ "id": "jobs",
+ "name": "Jobs",
+ "version": "0.1.0",
+ "capabilities": [
+  "commands@0.2",
+  "ui@0.1"
+ ],
+ "runtime": {
+  "module": "plugin.wasm",
+  "commands": [
+   "inspect.measure"
+  ],
+  "entries": [
+   {
+    "name": "make",
+    "effect": "read"
+   },
+   {
+    "name": "add",
+    "effect": "read",
+    "slots": [
+     {
+      "kind": "menu",
+      "name": "Add job"
+     }
+    ]
+   },
+   {
+    "name": "clear",
+    "effect": "read",
+    "slots": [
+     {
+      "kind": "menu",
+      "name": "Clear jobs"
+     }
+    ]
+   },
+   {
+    "name": "refresh",
+    "effect": "read",
+    "slots": [
+     {
+      "kind": "menu",
+      "name": "Refresh jobs"
+     }
+    ],
+    "input_schema": {
+     "type": "object",
+     "properties": {
+      "workspace": {
+       "type": "string"
+      }
+     }
+    }
+   }
+  ],
+  "limits": {
+   "fuel": 1000000,
+   "memory_mib": 2,
+   "deadline_ms": 5000
+  },
+  "ui": {
+   "ui_version": 1,
+   "panels": [
+    {
+     "id": "jobs",
+     "title": "Jobs",
+     "zones": [
+      "bottom"
+     ],
+     "layout": {
+      "root": 0,
+      "nodes": [
+       {
+        "widget": {
+         "table": {
+          "bind": "/jobs",
+          "row_id": "id",
+          "columns": [
+           {
+            "key": "state",
+            "label": "state",
+            "unit": null
+           }
+          ],
+          "select": "single",
+          "on_select": "make",
+          "on_edit": "make"
+         }
+        }
+       }
+      ]
+     }
+    }
+   ],
+   "workspaces": [
+    {
+     "id": "jobs",
+     "name": "Jobs",
+     "icon": "ws_design",
+     "applies_to": [
+      "part"
+     ],
+     "ribbon": [
+      {
+       "name": "Jobs",
+       "groups": [
+        {
+         "name": "Operations",
+         "entries": [
+          "add",
+          "clear",
+          "refresh"
+         ]
+        }
+       ]
+      }
+     ],
+     "panels": [
+      [
+       "bottom",
+       [
+        "jobs"
+       ]
+      ]
+     ],
+     "builtin_panels": [
+      "browser"
+     ],
+     "on_enter": "refresh",
+     "on_exit": "refresh"
+    }
+   ]
+  }
+ }
+}

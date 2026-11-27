@@ -1,0 +1,49 @@
+name: L19996b-build-before
+on:
+  push:
+    branches: ["L19996b-build-before"]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: 250629fe62d1e6e4e0b4ee8ee7b8a5d0b4b3e5c0
+          fetch-depth: 1
+          path: src
+      - name: Linux GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config cmake build-essential libasound2-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-dev libx11-xcb-dev libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers libvulkan1
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Build the plugin component
+        run: |
+          mkdir -p out/jobs
+          python3 fx/patch.py src/crates/craft-plugin-wasm/src/ui_fixture.wat plugin.wat
+          cargo new --bin w2w && cd w2w && cargo add wat@1 && cat > src/main.rs <<'RS'
+          fn main() {
+              let a: Vec<String> = std::env::args().collect();
+              let bytes = wat::parse_file(&a[1]).expect("wat");
+              std::fs::write(&a[2], bytes).expect("write");
+          }
+          RS
+          cargo run --release -- ../plugin.wat ../out/jobs/plugin.wasm
+          cp ../fx/plugin.json ../out/jobs/plugin.json
+      - name: Build the desktop app
+        working-directory: src
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+          CARGO_PROFILE_RELEASE_DEBUG: "false"
+        run: cargo build --release -p solidcraft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-app
+          path: src/target/release/solidcraft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jobs-plugin
+          path: out/jobs
