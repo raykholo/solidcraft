@@ -1,0 +1,58 @@
+name: testcheck
+on:
+  push:
+    branches: ["testcheck/**"]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      SOLIDCRAFT_GPU: software
+      VIEWPORT_TEST_GPU: software
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "2"
+      SOLIDCORE_REQUIRE_UPSTREAM: "1"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Graphics for the window tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends mesa-vulkan-drivers libvulkan1 > /dev/null
+      - name: Upstream sources (TestFiles)
+        working-directory: src/solidcore
+        run: |
+          while IFS='=' read -r k v; do
+            case "$k" in
+              UPSTREAM_REPO|UPSTREAM_VERSION|UPSTREAM_COMMIT) export "$k=$v" ;;
+            esac
+          done < scripts/upstream-pin.env
+          git init upstream
+          git -C upstream remote add origin "$UPSTREAM_REPO"
+          git -C upstream fetch --depth 1 origin "$UPSTREAM_COMMIT" || git -C upstream fetch origin
+          git -C upstream checkout --detach "$UPSTREAM_COMMIT"
+      - name: Run the named tests
+        working-directory: src
+        run: |
+          # ctl/TESTS: one line per run, "<package> <test name filter>"; output is printed in full.
+          status=0
+          while read -r pkg filter; do
+            [ -z "$pkg" ] && continue
+            echo "=== TEST $pkg $filter"
+            set -o pipefail
+            (cd solidcore && cargo test -p "$pkg" --lib --tests -- "$filter" --nocapture --test-threads=1 2>&1) | { grep -v "^\s*Compiling\|^\s*Downloaded\|^\s*Downloading" || true; } || status=1
+            set +o pipefail
+          done < ../ctl/TESTS
+          exit $status
