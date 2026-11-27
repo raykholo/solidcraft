@@ -1,0 +1,40 @@
+name: casecheck
+on:
+  push:
+    branches: ["casecheck/**"]
+jobs:
+  goldens:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_BUILD_JOBS: "4"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - name: Upstream sources (TestFiles)
+        working-directory: src/solidcore
+        run: |
+          while IFS='=' read -r k v; do
+            case "$k" in
+              UPSTREAM_REPO|UPSTREAM_VERSION|UPSTREAM_COMMIT) export "$k=$v" ;;
+            esac
+          done < scripts/upstream-pin.env
+          git init upstream
+          git -C upstream remote add origin "$UPSTREAM_REPO"
+          git -C upstream fetch --depth 1 origin "$UPSTREAM_COMMIT" || git -C upstream fetch origin
+          git -C upstream checkout --detach "$UPSTREAM_COMMIT"
+      - name: Goldens boolean.api_brep
+        working-directory: src/solidcore
+        run: cargo run --profile goldens -p goldens -- --unit boolean.api_brep --goldens --no-report 2>&1 | grep -v "^\s*Compiling" | tail -80
