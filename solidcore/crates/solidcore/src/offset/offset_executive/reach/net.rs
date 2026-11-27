@@ -194,6 +194,11 @@ pub(super) struct Net {
     /// (`surface/extend.rs`, `offset_extended`), so past a side `O` is the offset of the
     /// extension above ([`Net::offset_jet`]).
     offset: Option<f64>,
+    /// The points of the stations ([`Net::nearest_on_knots`]) the first time they are asked
+    /// for: the same for every point looked for, so enclosed once, not once per piece of an
+    /// edge (a thread's flank winds many turns: its stations are thousands, and on every
+    /// piece of every edge they were enclosed again).
+    stations: std::sync::OnceLock<Vec<((f64, f64), Vec3)>>,
 }
 
 /// The homogeneous lines `H + s (H_u + μ H)` the executive continues the rows by past a u
@@ -347,6 +352,7 @@ impl Net {
             },
             lines,
             offset: None,
+            stations: std::sync::OnceLock::new(),
         }))
     }
 
@@ -1140,18 +1146,28 @@ impl Net {
             out.dedup();
             out
         };
-        let [ru, rv] = self.range;
-        let (us, vs) = (stations(&self.cn.u, ru), stations(&self.cn.v, rv));
-        let mut best: Option<(f64, (f64, f64))> = None;
-        for &u in &us {
-            for &v in &vs {
-                let Some((p, _, _)) = self.at(u, v)? else {
-                    continue;
-                };
-                let d = (p - x).length();
-                if d.is_finite() && best.is_none_or(|(b, _)| d < b) {
-                    best = Some((d, (u, v)));
+        if self.stations.get().is_none() {
+            let [ru, rv] = self.range;
+            let (us, vs) = (stations(&self.cn.u, ru), stations(&self.cn.v, rv));
+            let mut points = Vec::with_capacity(us.len().saturating_mul(vs.len()));
+            for &u in &us {
+                for &v in &vs {
+                    if let Some((p, _, _)) = self.at(u, v)? {
+                        points.push(((u, v), p));
+                    }
                 }
+            }
+            // (a thread that got here first stored the same points)
+            let _ = self.stations.set(points);
+        }
+        let Some(points) = self.stations.get() else {
+            return Ok(None);
+        };
+        let mut best: Option<(f64, (f64, f64))> = None;
+        for &(uv, p) in points {
+            let d = (p - x).length();
+            if d.is_finite() && best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, uv));
             }
         }
         Ok(best.map(|(_, uv)| uv))
