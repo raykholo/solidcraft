@@ -1,0 +1,59 @@
+name: casecheck
+on:
+  push:
+    branches: ["casecheck/**"]
+jobs:
+  rig:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ctl
+      - name: Target commit
+        run: echo "SHA=$(cat ctl/SHA)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          repository: raykholo/solidcraft
+          ref: ${{ env.SHA }}
+          fetch-depth: 1
+          path: src
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the CLI
+        working-directory: src
+        run: cargo build --release --locked -p solidcraft-cli
+      - name: Case 1390
+        working-directory: src
+        run: |
+          mkdir -p /tmp/out
+          target/release/solidcraft-cli kernel-cases --json --dumps=/tmp/out tests/kernel-cases/fillets/1390-chamfer-hole-rim-touching-bottom || true
+          echo ---- expected; cat tests/kernel-cases/fillets/1390-chamfer-hole-rim-touching-bottom/expected.json
+      - name: Fillets area against known-failing
+        working-directory: src
+        continue-on-error: true
+        run: >-
+          cargo run -q --locked -p xtask -- kernel-cases --area fillets
+          --cli target/release/solidcraft-cli --out /tmp/fillet-rig
+          --known-failing tests/kernel-cases/fillets/KNOWN_FAILING
+      - name: The PR's kernel test
+        working-directory: src
+        continue-on-error: true
+        run: cargo test --locked -p solidcraft-kernel --lib a_round_beside -- --nocapture
+      - name: The PR's solidcore tests
+        working-directory: src/solidcore
+        continue-on-error: true
+        run: cargo test --locked -p solidcore --test blend actual_box_solver -- --nocapture
+      - name: The PR's solidcore unit test
+        working-directory: src/solidcore
+        continue-on-error: true
+        run: cargo test --locked -p solidcore --lib face_closing -- --nocapture
+      - name: Ops tests that assert a BlendFailed refusal
+        working-directory: src/solidcore
+        continue-on-error: true
+        run: |
+          for f in the_kernel_s_refusals beads_meeting a_lone_round_between slot_roots_rolling post_foot_blends a_ledge_rounded_concave_first a_session_failure_says; do
+            echo "=== FILTER $f"; cargo test --locked -p solidcore-ops --tests -- "$f" --test-threads=2 2>&1 | grep -E "^test |test result:|panicked" || true
+          done
