@@ -1,0 +1,3 @@
+solidcraft-engine plugin::tests::
+solidcraft-ui-egui plugin_
+solidcraft --bin solidcraft tickets_http_tests::
