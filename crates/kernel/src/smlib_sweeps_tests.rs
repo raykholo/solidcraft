@@ -488,6 +488,69 @@ fn a_sweep_run_that_curls_back_behind_its_mitre_keeps_its_end() {
 }
 
 #[test]
+fn a_sweep_round_a_closed_path_of_arcs_and_corners_keeps_all_its_material() {
+    // #23185: a rectangle of 339 x 311 whose two top corners are rounded (radius 4.5) and whose
+    // two bottom corners are sharp, closed on the middle of its right side, swept with a
+    // quadrilateral drawn 488 mm from the path's plane (beside it, along z), its corner 169.5 on
+    // x and the rest up to 6.5 further out. The sweep returned a closed body 15% short: the
+    // first run (a line, an arc, a line, an arc and a line) reaches back across the mitre of the
+    // far bottom corner, and the cutter of that mitre, sized by how far the section stands from
+    // the path (488, mostly along z, which no mitre plane cares for), took the run's own start.
+    //
+    // The section at distance u outward of the path (0 <= u <= 6.5) spans v = -489 to
+    // -488.5 + u, a width of 0.5 + u, and the body is the sum over u of the section's slice
+    // swept along the offset path at that u (a mitred leg is A times its centre line): of length
+    // L(u) = 2 (306.5 + u) + 330 + 339 + 2 u + pi r, with r = 4.5 + u the rounded corners'
+    // radius, so every moment is a polynomial of degree 3 in u at most and Simpson's rule on
+    // [0, 6.5] is exact for it.
+    let plane = Plane { origin: Vec3::ZERO, x: Vec3::X, y: Vec3::Z };
+    let section = region(Loop2::polygon(&[
+        Vec2::new(169.5, -488.5),
+        Vec2::new(169.5, -489.0),
+        Vec2::new(176.0, -489.0),
+        Vec2::new(176.0, -482.0),
+    ]));
+    let at = |x: f64, y: f64| Vec3::new(x, y, 0.0);
+    let arc = |a: Vec3, centre: Vec3| crate::PathSeg::Arc { a, center: centre, axis: Vec3::Z, angle: PI / 2.0 };
+    let path = [
+        crate::PathSeg::Line { a: at(169.5, 0.0), b: at(169.5, 165.0) },
+        arc(at(169.5, 165.0), at(165.0, 165.0)),
+        crate::PathSeg::Line { a: at(165.0, 169.5), b: at(-165.0, 169.5) },
+        arc(at(-165.0, 169.5), at(-165.0, 165.0)),
+        crate::PathSeg::Line { a: at(-169.5, 165.0), b: at(-169.5, -141.5) },
+        crate::PathSeg::Line { a: at(-169.5, -141.5), b: at(169.5, -141.5) },
+        crate::PathSeg::Line { a: at(169.5, -141.5), b: at(169.5, 0.0) },
+    ];
+    // At u: the offset path's length and its moment about y = 0.
+    let ring = |u: f64| {
+        let r = 4.5 + u;
+        let side = 306.5 + u;
+        let corner = r * (165.0 * PI / 2.0 + r);
+        let length = 2.0 * side + r * PI + 330.0 + 339.0 + 2.0 * u;
+        let moment = side * (23.5 - u) + 2.0 * corner + 330.0 * (169.5 + u) + (339.0 + 2.0 * u) * (-141.5 - u);
+        (length, moment)
+    };
+    let simpson = |g: &dyn Fn(f64) -> f64| 6.5 / 6.0 * (g(0.0) + 4.0 * g(3.25) + g(6.5));
+    let width = |u: f64| 0.5 + u;
+    let volume_want = simpson(&|u| width(u) * ring(u).0);
+    let y_want = simpson(&|u| width(u) * ring(u).1) / volume_want;
+    let z_want = simpson(&|u| width(u) * (-489.0 + width(u) / 2.0) * ring(u).0) / volume_want;
+    close(volume_want, 32322.5298, 1e-8, "the closed form");
+    let ctl = crate::SweepControl::default();
+    let plain = smlib_sweeps::sweep(&plane, &pieces_of(&section), &path, false).unwrap();
+    let controlled = smlib_sweeps::sweep_controlled(&plane, &numbered(&section), &path, &ctl).unwrap();
+    // The controlled sweep runs through stations along the path: within 1e-3, as elsewhere.
+    for (what, b, rel, tol) in [("plain", &plain, 1e-6, 1e-3), ("controlled", &controlled, 1e-3, 0.5)] {
+        let m = crate::measure(b).unwrap();
+        close(m.volume, volume_want, rel, what);
+        // The body is the path's offset outward all round, which mirrors in x: its centre is at 0.
+        assert!(m.centroid.x.abs() <= tol, "{what}: centre x {} vs 0", m.centroid.x);
+        assert!((m.centroid.y - y_want).abs() <= tol, "{what}: centre y {} vs {y_want}", m.centroid.y);
+        assert!((m.centroid.z - z_want).abs() <= tol, "{what}: centre z {} vs {z_want}", m.centroid.z);
+    }
+}
+
+#[test]
 fn an_extrusion_of_a_cubic_whose_control_points_fold_back_passes_the_check() {
     // #13243, #12107: a smooth cubic whose control polygon runs 6 left, steps 0.02 back to the
     // right and runs 4 left again (the handles of an imported outline pulled past each other).
