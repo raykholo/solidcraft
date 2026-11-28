@@ -618,3 +618,45 @@ fn dates_are_calendar_days() {
     assert_eq!(date(NOW), "2026-11-24");
     assert_eq!(date(951_782_400), "2000-02-29");
 }
+
+#[test]
+fn sc3000_account_pages_accept_clicks_while_the_back_up_note_is_visible() {
+    let _language = solidcraft_ui_text::scope("en");
+    let (mut h, _) = harness(None);
+    sign_in(&mut h, "drafter", "abcdef");
+    edit(&mut h);
+    h.app.help.sc3000_account.nag_at = 0.0;
+    h.app.help.sc3000_account.expire_now();
+    h.frames(6);
+    for _ in 0..30 {
+        h.call("ui.key", json!({"key":"Escape"}));
+    }
+    assert!(h.app.help.sc3000_account.nag);
+    assert!(!h.ctx.input(|i| i.pointer.any_down() || i.key_down(egui::Key::Escape)));
+    click(&mut h, "sc3000_account:expired:sign_in");
+    assert_eq!(h.app.help.sc3000_account.screen, Some(Screen::SignIn));
+    click(&mut h, "sc3000_account:reset");
+    assert_eq!(h.app.help.sc3000_account.screen, Some(Screen::Reset));
+}
+
+#[test]
+fn sc3000_account_clicks_survive_one_second_frames() {
+    let _language = solidcraft_ui_text::scope("en");
+    let (mut h, _) = harness(None);
+    h.app.help.sc3000_account.expire_now();
+    h.frames(6);
+    for (target, expected) in [("sc3000_account:expired:sign_in", Screen::SignIn), ("sc3000_account:reset", Screen::Reset)] {
+        let at = rect_of(target).unwrap().center();
+        h.call("ui.move", json!({"x":at.x,"y":at.y}));
+        let (request, _) = crate::control::ControlRequest::new("ui.click", json!({"x":at.x,"y":at.y}));
+        crate::control::handle(&mut h.app, &h.ctx, &request);
+        for _ in 0..4 {
+            // Like the browser check's fastForward(1000): one rendered frame per second.
+            // Harness follows the context's clock when it builds the next RawInput.
+            h.ctx.input_mut(|i| i.time += 1.0);
+            h.frame();
+        }
+        assert!(!h.ctx.input(|i| i.pointer.any_down()));
+        assert_eq!(h.app.help.sc3000_account.screen, Some(expected), "{target}");
+    }
+}

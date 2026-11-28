@@ -4796,7 +4796,7 @@ impl SolveApp {
         // Over a quiet view, pointer motion asks egui for no frame after this one: the window
         // asked for this one only if the motion lit up something new
         // (`viewport::follow_pointer_without_frame`). Queued control-channel input keeps the frames
-        // coming as before, one pointer event a frame.
+        // coming as before, one pointer step a frame (a click's press/release stay together).
         raw.repaint_on_pointer_move = self.viewport.quiet_motion.is_none() || !self.synthetic.is_empty() || !self.held_click.is_empty();
     }
 
@@ -4819,13 +4819,13 @@ impl SolveApp {
         }
     }
 
-    /// Inject synthetic events (one pointer event per frame).
+    /// Inject synthetic events (one pointer step per frame, keeping a click together).
     fn synthetic_input(&mut self, raw: &mut egui::RawInput) {
         if self.synthetic.is_empty() {
             return;
         }
-        // Text and modifier prefixes may precede a pointer event. Never drain past that event.
-        let n = self
+        // Text and modifier prefixes may precede a pointer event.
+        let mut n = self
             .synthetic
             .iter()
             .position(|e| {
@@ -4839,6 +4839,20 @@ impl SolveApp {
                 )
             })
             .map_or(self.synthetic.len(), |i| i + 1);
+        // ui.click queues an adjacent press/release at the same point. Deliver that pair in
+        // one frame: splitting it makes a slow frame exceed egui's max_click_duration and
+        // turns the requested click into a long press. Drags have intervening motion and
+        // still advance one step per frame.
+        if let (
+            Some(egui::Event::PointerButton { pos: a, button: ab, pressed: true, modifiers: am }),
+            Some(egui::Event::PointerButton { pos: b, button: bb, pressed: false, modifiers: bm }),
+        ) = (n.checked_sub(1).and_then(|i| self.synthetic.get(i)), self.synthetic.get(n))
+            && a == b
+            && ab == bb
+            && am == bm
+        {
+            n += 1;
+        }
         let follow = self.ui.agent_cursor.show;
         for event in self.synthetic.drain(..n) {
             // The agent cursor shows the agent's own pointer input too, not only its commands.

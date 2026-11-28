@@ -477,7 +477,9 @@ the one found; use `--connect` for another.
 Requests are one line `{"id": …, "method": "…", "params": {…}}`; replies are described below. Each request is one line `{"id": …, "method": "…", "params": {…}}`; each reply is one
 line `{"id": …, "ok": true, "result": …}` or `{"id": …, "ok": false, "error": "…"}`. Requests are
 handled on the UI thread between frames; pointer and keyboard input is injected as real egui
-events, one pointer event per frame. A connection that sent `control.subscribe` is also sent
+events, one pointer step per frame. A click's matching press and release are delivered together
+so slow frames do not turn it into a long press; drag steps remain separate.
+A connection that sent `control.subscribe` is also sent
 event lines `{"event": "…", "params": {…}}`, which have no `id`
 ([Following the design](#following-the-design)).
 
