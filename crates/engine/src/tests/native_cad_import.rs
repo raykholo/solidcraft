@@ -223,6 +223,7 @@ fn a_rebuilt_history_that_cannot_be_inserted_falls_back_to_solids() {
         name: format!("Dummy{id}"),
         suppressed: true,
         body_names: Vec::new(),
+        requested_body_names: Vec::new(),
         param_names: Vec::new(),
         component: 0,
         edge_refs: Vec::new(),

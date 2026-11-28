@@ -2023,12 +2023,18 @@ pub(super) fn rename_one(s: &mut Session, cmd: &str, given: &str, name: &str) ->
     } else if let Some((names, slots)) = f.pattern_pins(&siblings, &own_left_out) {
         // A body Pattern keeps the names of the copies of the sources it left out, in their places.
         f.body_names = names;
+        if let Some(slot) = slots.get(k) {
+            f.clear_requested_body_name(*slot);
+        }
         if let Some(stored) = slots.get(k).and_then(|slot| f.body_names.get_mut(*slot)) {
             *stored = name.to_string();
         }
     } else {
         // An Import keeps its names by the file's body index, its skipped bodies' too (#2175).
         let slots = f.body_name_slots(siblings.len().max(k + 1));
+        if let Some(slot) = slots.get(k) {
+            f.clear_requested_body_name(*slot);
+        }
         if let Some(end) = slots.last().map(|s| s + 1).filter(|end| f.body_names.len() < *end) {
             f.body_names.resize(end, String::new());
         }

@@ -2886,17 +2886,17 @@ impl Session {
         })
     }
 
-    /// Restore fallbacks pinned before configuration authoring proved mutual exclusion.
+    /// Restore recorded requests pinned before configuration authoring proved mutual exclusion.
     /// Include suppressed features: their next activation must request the shared name too.
     fn restore_configuration_body_names(&mut self) {
         let mut restored = Vec::new();
         for feature in &self.doc.features {
-            if matches!(feature.kind, solidcraft_doc::FeatureKind::Import { .. }) {
+            if feature.requested_body_names.is_empty() || matches!(feature.kind, solidcraft_doc::FeatureKind::Import { .. }) {
                 continue;
             }
             let mut names = feature.body_names.clone();
-            for slot in &mut names {
-                let Some(base) = solidcraft_doc::disambiguated_body_name_base(slot) else { continue };
+            for (index, slot) in names.iter_mut().enumerate() {
+                let Some(base) = feature.requested_body_names.get(index).filter(|name| !name.is_empty()) else { continue };
                 if self.doc.features.iter().any(|other| {
                     other.id != feature.id
                         && other.body_names.iter().any(|name| name == base)
@@ -2914,6 +2914,11 @@ impl Session {
         }
         for (id, names) in restored {
             if let Some(feature) = self.doc_mut().feature_mut(id) {
+                for (index, name) in names.iter().enumerate() {
+                    if feature.requested_body_names.get(index) == Some(name) {
+                        feature.clear_requested_body_name(index);
+                    }
+                }
                 feature.body_names = names;
             }
         }
@@ -2936,6 +2941,7 @@ impl Session {
         }
         let mut pins: Vec<(u64, Vec<String>)> = Vec::new();
         let mut reserve: Vec<String> = Vec::new();
+        let mut requests = Vec::new();
         // The names of the bodies each feature made, kept with the state they were read from:
         // every command pins, and reading them again searched every result's bodies (features ×
         // bodies per command). A state is the same while it is the same allocation (the weak
@@ -2987,18 +2993,34 @@ impl Session {
                 if names.len() < made.len() {
                     names.resize(made.len(), String::new());
                 }
-                for (slot, &name) in names.iter_mut().zip(&made) {
+                let mut requested = f.requested_body_names.clone();
+                for (index, (slot, &name)) in names.iter_mut().zip(&made).enumerate() {
                     // Retain the request only for mutually exclusive configuration alternatives.
                     // Features that can coexist must pin their fallback for downstream targets.
                     let requested_is_taken = !matches!(f.kind, solidcraft_doc::FeatureKind::Import { .. })
                         && !slot.trim().is_empty()
                         && r.state.body(slot).is_some_and(|holder| self.configuration_alternatives(f.id, holder.feature));
                     if *slot != name && !requested_is_taken {
+                        // Record only a request actually replaced by this pin pass. The
+                        // spelling of a stored name alone says nothing about who chose it.
+                        if !matches!(f.kind, solidcraft_doc::FeatureKind::Import { .. })
+                            && solidcraft_doc::disambiguated_body_name_base(name) == Some(slot.as_str())
+                        {
+                            if requested.len() <= index {
+                                requested.resize(index + 1, String::new());
+                            }
+                            if let Some(request) = requested.get_mut(index).filter(|request| request.is_empty()) {
+                                *request = slot.clone();
+                            }
+                        }
                         *slot = name.to_string();
                     }
                 }
                 if names != f.body_names {
                     pins.push((f.id, names));
+                    if requested != f.requested_body_names {
+                        requests.push((f.id, requested));
+                    }
                 }
                 continue;
             }
@@ -3036,6 +3058,11 @@ impl Session {
                 f.body_names = names;
                 // Stored as the copies have them now: read source by source from here on (#12114).
                 f.pattern_names_in_order = false;
+            }
+        }
+        for (id, requested) in requests {
+            if let Some(feature) = doc.feature_mut(id) {
+                feature.requested_body_names = requested;
             }
         }
         doc.reserved_body_names.extend(reserve);

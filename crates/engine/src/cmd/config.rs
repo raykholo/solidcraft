@@ -898,6 +898,92 @@ mod tests {
         assert!(s.model.results.iter().all(|r| r.error.is_none()));
     }
 
+    #[test]
+    fn explicitly_numbered_configuration_alternative_keeps_its_cut_target() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"name": "First", "body_name": "Nut", "length": 10, "width": 10, "height": 10, "operation": "new"}));
+        run(
+            &mut s,
+            "solid.box",
+            json!({"name": "Second", "body_name": "Nut (2)", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}),
+        );
+        run(
+            &mut s,
+            "solid.cylinder",
+            json!({"name": "Bore", "diameter": 2, "height": 12, "base": [25, 5, -1], "axis": "Z", "operation": "cut", "targets": ["Nut (2)"]}),
+        );
+        run(&mut s, "timeline.suppress", json!({"feature": "First", "suppressed": true}));
+        run(&mut s, "config.configure", json!({"params": [], "features": ["First", "Second"]}));
+        run(&mut s, "config.row", json!({"name": "First only", "values": {"suppress:First": false, "suppress:Second": true}}));
+        run(&mut s, "config.row", json!({"name": "Second only", "values": {"suppress:First": true, "suppress:Second": false}}));
+        run(&mut s, "config.activate", json!({"row": "Second only"}));
+        let second = s.doc.features.iter().find(|f| f.name == "Second").unwrap();
+        assert_eq!(second.body_names, vec!["Nut (2)"]);
+        assert!(second.requested_body_names.is_empty());
+        assert!(s.model.state().body("Nut (2)").is_some());
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+        let bore = s.doc.features.iter().find(|f| f.name == "Bore").unwrap();
+        let result = s.model.result(bore.id).unwrap();
+        assert!(!result.skipped && result.error.is_none());
+    }
+
+    #[test]
+    fn recorded_body_name_request_survives_save_before_configuration_authoring() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"name": "First", "body_name": "Nut", "length": 10, "width": 10, "height": 10, "operation": "new"}));
+        run(
+            &mut s,
+            "solid.box",
+            json!({"name": "Second", "body_name": "Nut", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}),
+        );
+        let second = s.doc.features.iter().find(|f| f.name == "Second").unwrap();
+        assert_eq!(second.body_names, vec!["Nut (2)"]);
+        assert_eq!(second.requested_body_names, vec!["Nut"]);
+        let saved = s.doc.to_json();
+        let mut s = Session::new(solidcraft_doc::format::read(&saved).unwrap());
+        assert_eq!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().requested_body_names, vec!["Nut"]);
+        run(&mut s, "timeline.suppress", json!({"feature": "First", "suppressed": true}));
+        run(&mut s, "config.configure", json!({"params": [], "features": ["First", "Second"]}));
+        run(&mut s, "config.row", json!({"name": "First only", "values": {"suppress:First": false, "suppress:Second": true}}));
+        run(&mut s, "config.row", json!({"name": "Second only", "values": {"suppress:First": true, "suppress:Second": false}}));
+        run(&mut s, "config.activate", json!({"row": "Second only"}));
+        let second = s.doc.features.iter().find(|f| f.name == "Second").unwrap();
+        assert_eq!(second.body_names, vec!["Nut"]);
+        assert!(second.requested_body_names.is_empty());
+        assert!(s.model.state().body("Nut").is_some());
+        assert!(s.model.state().body("Nut (2)").is_none());
+        assert!(s.model.results.iter().all(|r| r.error.is_none()));
+    }
+
+    #[test]
+    fn explicit_body_name_changes_clear_a_recorded_pin_request() {
+        for (command, params) in [
+            ("body.rename", json!({"body": "Nut (2)", "name": "Chosen"})),
+            ("timeline.edit", json!({"feature": "Second", "set": {"body_names": ["Nut (2)"]}})),
+            (
+                "timeline.redefine",
+                json!({"feature": "Second", "params": {"body_name": "Nut (2)", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}}),
+            ),
+        ] {
+            let mut s = Session::default();
+            run(&mut s, "solid.box", json!({"name": "First", "body_name": "Nut", "length": 10, "width": 10, "height": 10, "operation": "new"}));
+            run(
+                &mut s,
+                "solid.box",
+                json!({"name": "Second", "body_name": "Nut", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}),
+            );
+            assert_eq!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().requested_body_names, vec!["Nut"]);
+            run(&mut s, command, params);
+            assert!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().requested_body_names.is_empty(), "{command}");
+            run(&mut s, "timeline.suppress", json!({"feature": "First", "suppressed": true}));
+            run(&mut s, "config.configure", json!({"params": [], "features": ["First", "Second"]}));
+            run(&mut s, "config.row", json!({"name": "Second only", "values": {"suppress:First": true, "suppress:Second": false}}));
+            let name = if command == "body.rename" { "Chosen" } else { "Nut (2)" };
+            assert!(s.model.state().body(name).is_some(), "{command}");
+            assert!(s.model.results.iter().all(|r| r.error.is_none()));
+        }
+    }
+
     /// A placed copy's body name (`KB (K:2)`, as inspect.measure lists it) means the body it
     /// shows: the column is keyed by that body's own name, for every placement.
     #[test]
