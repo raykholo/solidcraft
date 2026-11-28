@@ -1,0 +1,5 @@
+solidcraft-engine spline_fillet
+solidcraft-engine variable_fillet
+solidcraft-smlib variable
+solidcraft-kernel variable
+solidcraft-doc chain_tests
