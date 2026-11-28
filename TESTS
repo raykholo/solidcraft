@@ -1,0 +1,14 @@
+solidcraft-doc appearance
+solidcraft-doc material
+solidcraft-doc sheet_library
+solidcraft-engine cmd::render::library_tests
+solidcraft-engine physical
+solidcraft-engine licences
+solidcraft-io evaluation_source
+solidcraft-io library_tests
+solidcraft-render job::textures
+solidcraft-ui-egui fonts
+solidcraft-ui-egui home
+solidcraft-mcp skill_reference
+xtask package_includes
+xtask licences::tests
