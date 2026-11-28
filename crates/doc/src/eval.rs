@@ -11271,17 +11271,33 @@ pub(crate) fn blend_edges_on(
     Ok(ResolvedBlendEdges { points: out, warning, suppressed_makers, suppressed_count, unnamed_lost })
 }
 
-/// Whether a feature of `doc` before `f` (or `f` not found in it) places bodies whole: a Move
-/// or an Align, or a pattern or mirror of bodies. Such a step can move a body and keep its box
-/// (half a turn about an axis through the box's centre), so the box saved with a pick does not
-/// show that the body has not moved since (#22230).
-pub(crate) fn bodies_placed_before(doc: &Document, f: &Feature) -> bool {
+/// Whether an earlier step places this body's definition or one of its source bodies whole.
+/// A half turn can preserve the saved box while moving the picked edge (#22230).
+/// Follow recorded output names back to their participants, never unrelated timeline bodies.
+pub(crate) fn bodies_placed_before(doc: &Document, f: &Feature, mb: &ModelBody) -> bool {
     let Some(end) = doc.feature_index(f.id) else { return true };
-    doc.features.iter().take(end).filter(|g| !g.suppressed).any(|g| match &g.kind {
-        FeatureKind::Move { .. } | FeatureKind::Align { .. } => true,
-        FeatureKind::Pattern { bodies, .. } | FeatureKind::Mirror { bodies, .. } => !bodies.is_empty(),
-        _ => false,
-    })
+    let mut names = std::collections::BTreeSet::from([mb.definition_name().to_string()]);
+    for g in doc.features.iter().take(end).rev().filter(|g| !g.suppressed) {
+        let output = g.body_names.iter().any(|n| names.contains(n));
+        let bodies = match &g.kind {
+            FeatureKind::Move { bodies, .. }
+            | FeatureKind::Align { bodies, .. }
+            | FeatureKind::BodyTransfer { bodies, .. }
+            | FeatureKind::Pattern { bodies, .. }
+            | FeatureKind::Mirror { bodies, .. } => Some(bodies),
+            _ => None,
+        };
+        if let Some(bodies) = bodies
+            && !bodies.is_empty()
+            && (output || bodies.iter().any(|n| names.contains(n.as_str())))
+        {
+            return true;
+        }
+        if output {
+            names.extend(g.participants.iter().cloned());
+        }
+    }
+    false
 }
 
 /// A point on edge `edge` of a body for the kernel to find it by: `p`, unless it lies at an end
@@ -21068,11 +21084,11 @@ fn eval_feature_kind(
             let mut radius_of: BTreeMap<(usize, [u64; 3]), (usize, f64)> = BTreeMap::new();
             // (pick, the blended edge's middle, its radius), for pattern and mirror copies.
             let mut by_pick: Vec<(usize, Vec3, f64)> = Vec::new();
-            let placed = bodies_placed_before(doc, f);
             let single_solid = st.bodies.iter().filter(|b| !b.body.is_mesh()).count() == 1;
             let mut unnamed_lost = lost_at_body;
             for (ti, idx) in &groups {
                 let Some(mb) = st.bodies.get(*ti) else { return Err(DocError::Invalid("body".into())) };
+                let placed = bodies_placed_before(doc, f, mb);
                 let res = blend_edges_on(doc, mb, f, edges, idx, placed, single_solid && !mb.body.is_mesh())?;
                 suppressed_count += res.suppressed_count;
                 unnamed_lost += res.unnamed_lost;

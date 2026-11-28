@@ -1034,6 +1034,55 @@ fn a_round_saved_on_a_start_offset_caps_edge_stays_on_the_edge_it_was_picked_on(
     assert!(at_z(&cylinders, 18.59), "{cylinders:?}");
 }
 
+/// #23819: a placement of another body cannot change which saved lid edge is rounded.
+#[test]
+fn an_unrelated_body_mirror_does_not_disable_a_saved_rounds_repick() {
+    let base: Value = serde_json::from_str(include_str!("../../../examples/regressions/fillet_saved_on_start_offset_lid_top_edge.json")).unwrap();
+    let (expected, _) = lid_rounds(&base, &[]);
+    for before in [44, 45] {
+        let mut script = base.clone();
+        let commands = script["commands"].as_array_mut().unwrap();
+        let at = commands.iter().position(|c| c["params"]["feature"]["id"] == before).unwrap();
+        commands.insert(
+            at,
+            json!({"command": "timeline.add", "params": {"feature": {
+            "centred": true, "corner": [200.0, 0.0, 5.0], "height": "10", "id": 90,
+            "length": "10", "name": "Dummy", "operation": "new_body", "body_names": ["Dummy"],
+            "suppressed": false, "type": "box", "width": "10"}}}),
+        );
+        commands.insert(
+            at + 1,
+            json!({"command": "timeline.add", "params": {"feature": {
+            "bodies": ["Dummy"], "body_names": ["Dummy (2)"], "features": [], "id": 91,
+            "name": "DummyMirror", "plane": {"name": "YZ", "type": "origin"}, "suppressed": false, "type": "mirror"}}}),
+        );
+        let (actual, _) = lid_rounds(&script, &[]);
+        // The disjoint dummy and its copy contribute no material to Lid: its exact mass
+        // moment and volume, hence their ratio, must equal the run without those bodies.
+        assert!((actual - expected).abs() < 1e-9, "before {before}: {actual} != {expected}");
+    }
+}
+
+/// A placement of the picked body still overrides a saved box that happens not to change.
+#[test]
+fn the_lids_own_move_still_disables_a_saved_rounds_repick() {
+    let base: Value = serde_json::from_str(include_str!("../../../examples/regressions/fillet_saved_on_start_offset_lid_top_edge.json")).unwrap();
+    let (expected, _) = lid_rounds(&base, &[]);
+    let mut turned = lid_round_at(&base, "F44:side:l1|F44:top#2", [0.0, -37.1, 23.4]);
+    let commands = turned["commands"].as_array_mut().unwrap();
+    let at = commands.iter().position(|c| c["params"]["feature"]["id"] == 45).unwrap();
+    commands.insert(
+        at,
+        json!({"command": "timeline.add", "params": {"feature": {
+        "bodies": ["Lid"], "id": 50, "name": "TurnLid", "translate": ["0", "0", "0"], "rotate_axis": [0.0, 1.0, 0.0],
+        "origin": ["0", "0", "20.4 mm"], "angle": "180 deg", "suppressed": false, "type": "move"}}}),
+    );
+    let (actual, _) = lid_rounds(&turned, &[]);
+    // Rotation about z=20.4 maps each mass element's z to 40.8-z, so its centroid
+    // is the reflection of the base run's top round when the stored name follows the body.
+    assert!((actual - (40.8 - expected)).abs() < 1e-9, "{actual} != {}", 40.8 - expected);
+}
+
 /// A rod (radius 3 about y 15, z 10, from x 10 to 30) through a plate joined over it, from z 8 to
 /// 12: the plate's extrude has a start offset, so both its caps are `top`, and they border faces of
 /// the same features, so they are told apart only by where they lie (`#1` at z 8, `#2` at z 12),

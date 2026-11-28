@@ -183,7 +183,7 @@ pub(crate) fn evaluate(doc: &Document, vals: &BTreeMap<String, Value>, f: &Featu
         Vec::new()
     } else {
         let all: Vec<usize> = (0..edges.len()).collect();
-        let placed = crate::eval::bodies_placed_before(doc, f);
+        let placed = crate::eval::bodies_placed_before(doc, f, &mb);
         let sole_solid = st.bodies.iter().filter(|b| !b.body.is_mesh()).count() == 1;
         let res = crate::eval::blend_edges_on(doc, &mb, f, edges, &all, placed, sole_solid)?;
         notes.extend(res.warning);

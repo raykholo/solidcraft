@@ -219,7 +219,7 @@ numbered them differently (0.47.0 and 0.49.1 swap the caps of some outlines). A 
 whose stored edge name finds an edge its saved pick does not lie on takes the edge the pick lies on
 instead (exact curve, clear of its ends), when that edge's name differs from the stored one only in
 such numbers, and only while the body's box is still the one the edge was picked on and no Move,
-Align, or pattern or mirror of bodies comes before the fillet in the timeline: a pick is not updated
+Align, or pattern or mirror of that body comes before the fillet in the timeline: a pick is not updated
 when an edit moves the body, and could then lie on the other cap's edge (half a turn about the
 box's centre keeps the box). A pick on the
 named edge, or on an edge named otherwise, keeps the edge the name finds. Where only one of the
