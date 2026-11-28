@@ -11289,12 +11289,17 @@ pub(crate) fn bodies_placed_before(doc: &Document, f: &Feature, mb: &ModelBody) 
         };
         if let Some(bodies) = bodies
             && !bodies.is_empty()
-            && (output || bodies.iter().any(|n| names.contains(n.as_str())))
+            && (output || bodies.iter().any(|n| names.contains(&n.0)))
         {
             return true;
         }
         if output {
             names.extend(g.participants.iter().cloned());
+            // A split names its source body in `body`, and lists it in `participants` only when
+            // the command was given them, so follow it here as well.
+            if let FeatureKind::Split { body, .. } = &g.kind {
+                names.insert(body.0.clone());
+            }
         }
     }
     false
