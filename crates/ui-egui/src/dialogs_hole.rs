@@ -211,7 +211,12 @@ pub(crate) fn dims(kind: usize, opts: &HoleOpts, to_object: bool) -> Vec<Dim> {
 
 /// Tapped bores use the engine's catalogued cut-tap drill, including Unified and parallel pipe sizes.
 /// A custom draft with an error must not illustrate its stale, last valid designation.
-pub(crate) fn bore_diameter(diameter: &str, opts: &HoleOpts, eval: &dyn Fn(&str, ValueKind) -> Option<f64>) -> Option<f64> {
+pub(crate) fn bore_diameter(
+    doc: &solidcraft_engine::doc::Document,
+    diameter: &str,
+    opts: &HoleOpts,
+    eval: &dyn Fn(&str, ValueKind) -> Option<f64>,
+) -> Option<f64> {
     if opts.clearance {
         match opts.clearance_diameter.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
             Some(d) => eval(d, ValueKind::Length).filter(|v| v.is_finite() && *v > 0.0),
@@ -223,7 +228,7 @@ pub(crate) fn bore_diameter(diameter: &str, opts: &HoleOpts, eval: &dyn Fn(&str,
         }
         match opts.drill.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
             Some(drill) => eval(drill, ValueKind::Length).filter(|v| v.is_finite() && *v > 0.0),
-            None => solidcraft_engine::doc::parse_tapped_thread(&opts.thread).map(|size| size.tap_drill),
+            None => crate::dialogs_thread::tapped_size(doc, &opts.thread).ok().map(|size| size.tap_drill),
         }
     } else {
         eval(diameter, ValueKind::Length).filter(|v| v.is_finite() && *v > 0.0)
@@ -263,7 +268,14 @@ pub(crate) enum Choice {
 
 /// A small section of the hole the form would make with `choice` picked, without its sizes:
 /// what a dropdown option shows while hovered, so its name need not be known to pick it.
-pub(crate) fn preview(ui: &mut egui::Ui, form: &Kind, to_object: bool, choice: Choice, eval: &dyn Fn(&str, ValueKind) -> Option<f64>) {
+pub(crate) fn preview(
+    doc: &solidcraft_engine::doc::Document,
+    ui: &mut egui::Ui,
+    form: &Kind,
+    to_object: bool,
+    choice: Choice,
+    eval: &dyn Fn(&str, ValueKind) -> Option<f64>,
+) {
     let mut k = form.clone();
     let mut to_object = to_object;
     let Kind::Hole { kind, opts, .. } = &mut k else { return };
@@ -279,7 +291,7 @@ pub(crate) fn preview(ui: &mut egui::Ui, form: &Kind, to_object: bool, choice: C
         }
         Choice::Angled(on) => opts.angled = on,
     }
-    let Some(s) = section(&k, to_object, eval) else { return };
+    let Some(s) = section(doc, &k, to_object, eval) else { return };
     let t = Tokens::get();
     let (r, _) = ui.allocate_exact_size(vec2(t.form_label_width, t.control_height * 3.5), egui::Sense::hover());
     // `paint` keeps the right of its picture for dimensions; with none, the material fills `r`.
@@ -289,13 +301,13 @@ pub(crate) fn preview(ui: &mut egui::Ui, form: &Kind, to_object: bool, choice: C
 }
 
 /// What the form's hole looks like, for its picture.
-fn section(k: &Kind, to_object: bool, eval: &dyn Fn(&str, ValueKind) -> Option<f64>) -> Option<Section> {
+fn section(doc: &solidcraft_engine::doc::Document, k: &Kind, to_object: bool, eval: &dyn Fn(&str, ValueKind) -> Option<f64>) -> Option<Section> {
     let Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = k else { return None };
     let kind = *kind;
     let len = |e: &str| eval(e, ValueKind::Length).filter(|v| v.is_finite() && *v > 0.0);
     let angle = |e: &str, lo: f64, hi: f64, or: f64| eval(e, ValueKind::Angle).filter(|v| v.is_finite()).map_or(or, |v| (v / 2.0).clamp(lo, hi));
     let top = if kind == 2 { cs_diameter.as_str() } else { cb_diameter.as_str() };
-    let bore = bore_diameter(diameter, opts, eval);
+    let bore = bore_diameter(doc, diameter, opts, eval);
     let ratio = match (bore, len(top)) {
         (Some(d), Some(t)) if kind != 0 => (d / t).clamp(0.3, 0.8) as f32,
         _ if kind != 0 => 0.55,
@@ -335,8 +347,14 @@ fn section(k: &Kind, to_object: bool, eval: &dyn Fn(&str, ValueKind) -> Option<f
 
 /// The section and its sizes (`ui_kit::figure_rows`): the picture in the label column, the
 /// fields beside it. Returns whether Enter was accepted in a field.
-pub(crate) fn rows(ui: &mut egui::Ui, k: &mut Kind, to_object: bool, eval: &dyn Fn(&str, ValueKind) -> Option<f64>) -> bool {
-    let Some(section) = section(k, to_object, eval) else { return false };
+pub(crate) fn rows(
+    doc: &solidcraft_engine::doc::Document,
+    ui: &mut egui::Ui,
+    k: &mut Kind,
+    to_object: bool,
+    eval: &dyn Fn(&str, ValueKind) -> Option<f64>,
+) -> bool {
+    let Some(section) = section(doc, k, to_object, eval) else { return false };
     let Kind::Hole { diameter, depth, kind, cb_diameter, cb_depth, cs_diameter, cs_angle, opts } = k else { return false };
     let kind = *kind;
     let dims = dims(kind, opts, to_object);
@@ -662,17 +680,21 @@ mod tests {
     fn tapped_section_uses_the_current_nominal_size_and_pitch() {
         let mut opts = HoleOpts { tapped: true, thread: "M8".into(), ..HoleOpts::default() };
         let stale_diameter = |_: &str, _: ValueKind| Some(4.0);
-        assert_eq!(bore_diameter("4 mm", &opts, &stale_diameter), Some(6.8));
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "4 mm", &opts, &stale_diameter), Some(6.8));
         opts.thread = "M8x1.2".into();
-        assert_eq!(bore_diameter("4 mm", &opts, &stale_diameter), Some(6.8));
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "4 mm", &opts, &stale_diameter), Some(6.8));
         for (designation, drill) in [("G 1/4", 11.75), ("Rp 1/4", 11.4), ("1/4-20 UNC", 5.1054)] {
             opts.thread = designation.into();
-            assert_eq!(bore_diameter("4 mm", &opts, &stale_diameter), Some(drill), "{designation}");
+            assert_eq!(
+                bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "4 mm", &opts, &stale_diameter),
+                Some(drill),
+                "{designation}"
+            );
         }
         opts.thread = "invalid".into();
-        assert_eq!(bore_diameter("4 mm", &opts, &stale_diameter), None);
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "4 mm", &opts, &stale_diameter), None);
         opts.tapped = false;
-        assert_eq!(bore_diameter("4 mm", &opts, &stale_diameter), Some(4.0));
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "4 mm", &opts, &stale_diameter), Some(4.0));
     }
 
     /// A clearance counterbore's head fills the counterbore with the command's own numbers, and
@@ -733,21 +755,21 @@ mod tests {
     fn clearance_section_uses_the_table_or_the_typed_diameter() {
         let mut opts = HoleOpts { clearance: true, clearance_size: "M4".into(), ..HoleOpts::default() };
         let stale_diameter = |_: &str, _: ValueKind| Some(9.0);
-        assert_eq!(bore_diameter("9 mm", &opts, &stale_diameter), Some(4.5), "M4 normal fit");
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &stale_diameter), Some(4.5), "M4 normal fit");
         opts.clearance_fit = 0;
-        assert_eq!(bore_diameter("9 mm", &opts, &stale_diameter), Some(4.3), "M4 close fit");
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &stale_diameter), Some(4.3), "M4 close fit");
         opts.clearance_fit = 2;
-        assert_eq!(bore_diameter("9 mm", &opts, &stale_diameter), Some(4.8), "M4 loose fit");
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &stale_diameter), Some(4.8), "M4 loose fit");
         opts.clearance_size = "M64".into();
-        assert_eq!(bore_diameter("9 mm", &opts, &stale_diameter), Some(74.0));
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &stale_diameter), Some(74.0));
         opts.clearance_size = "M7".into();
-        assert_eq!(bore_diameter("9 mm", &opts, &stale_diameter), None, "no M7 in ISO 273");
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &stale_diameter), None, "no M7 in ISO 273");
         opts.clearance_size = "M4".into();
         opts.clearance_diameter = Some("4.6 mm".into());
         let typed = |e: &str, _: ValueKind| if e == "4.6 mm" { Some(4.6) } else { None };
-        assert_eq!(bore_diameter("9 mm", &opts, &typed), Some(4.6), "a typed diameter wins");
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &typed), Some(4.6), "a typed diameter wins");
         opts.clearance = false;
-        assert_eq!(bore_diameter("9 mm", &opts, &stale_diameter), Some(9.0));
+        assert_eq!(bore_diameter(&solidcraft_engine::doc::Document::new("preview"), "9 mm", &opts, &stale_diameter), Some(9.0));
     }
 
     #[test]

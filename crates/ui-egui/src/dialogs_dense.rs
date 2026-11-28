@@ -993,7 +993,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
             // Each option shows the hole it makes while hovered (dialogs_hole::preview).
             let preview = |ui: &mut egui::Ui, choice| {
                 if let Some((form, to_object)) = &hole_form {
-                    crate::dialogs_hole::preview(ui, form, *to_object, choice, &eval);
+                    crate::dialogs_hole::preview(doc, ui, form, *to_object, choice, &eval);
                 }
             };
             use crate::dialogs_hole::Choice;
@@ -1060,7 +1060,7 @@ pub(super) fn rows(app: &mut SolveApp, ctx: &egui::Context, d: &mut Dialog, ui: 
             }
             // The section through the hole, each size beside its dimension (#2171).
             let to_object = to_object_on(&d.inputs);
-            enter |= crate::dialogs_hole::rows(ui, &mut d.kind, to_object, &eval);
+            enter |= crate::dialogs_hole::rows(doc, ui, &mut d.kind, to_object, &eval);
         }
         _ => enter |= additional_rows(app, d, ui),
     }

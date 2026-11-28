@@ -3255,7 +3255,7 @@ fn literal_thread_size_ignores_an_errored_parameter_with_the_same_name() {
     let mut s = Session::default();
     run(&mut s, "solid.cylinder", json!({"radius":4,"height":10}));
     // Insert an invalid expression directly: parameter commands reject it at entry.
-    s.doc.params.push(solidcraft_doc::Param {
+    s.doc_mut().params.push(solidcraft_doc::Param {
         name: "M8".into(),
         expr: "missing_parameter".into(),
         unit: String::new(),

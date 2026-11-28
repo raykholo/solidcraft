@@ -8457,6 +8457,17 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                 common["designation"] = json!(designation.trim());
             }
             crate::dialogs_thread::put_params(&mut common, length, options, &d.inputs);
+            if let Some(source) = common.get("designation").and_then(Value::as_str) {
+                use solidcraft_engine::doc::thread_forms::ThreadForm;
+                let evaluated = crate::dialogs_thread::evaluated_designation(&s.doc, source);
+                let form = common
+                    .get("form")
+                    .and_then(Value::as_str)
+                    .and_then(ThreadForm::from_name)
+                    .or_else(|| ThreadForm::of_designation(&evaluated))
+                    .unwrap_or_default();
+                form.parse(&evaluated, options.starts)?;
+            }
             if options.tip != crate::dialogs_thread::sent_tip(options, &app.session.doc) {
                 common["tip"] = json!(crate::dialogs_thread::sent_tip(options, &app.session.doc));
             }
@@ -8627,8 +8638,7 @@ fn dialog_commands(app: &SolveApp, d: &Dialog) -> Result<Vec<(String, Value)>, S
                     if let Some(error) = opts.custom_thread.as_ref().and_then(|draft| draft.error.as_ref()) {
                         return Err(error.clone());
                     }
-                    solidcraft_engine::doc::parse_tapped_thread(&opts.thread)
-                        .ok_or("select a valid metric or catalogued UNC/UNF, G, Rp, Rc or NPT thread size")?;
+                    crate::dialogs_thread::tapped_size(&s.doc, &opts.thread)?;
                     params["thread"] = json!(opts.thread.trim());
                     if !opts.thread_full_depth {
                         params["thread_depth"] = json!(opts.thread_depth.trim());

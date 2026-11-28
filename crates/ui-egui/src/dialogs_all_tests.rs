@@ -4572,3 +4572,37 @@ fn editing_parameter_tapped_holes_keeps_automatic_and_explicit_drills() {
         }
     }
 }
+
+#[test]
+fn an_applied_parameter_hole_edit_keeps_following_the_automatic_drill() {
+    for source in ["size_name", "size_name + ''"] {
+        let mut h = Harness::new();
+        h.app.run("parameters.add", json!({"name":"size_name","expression":"M5","unit":"text"})).unwrap();
+        h.app.run("solid.box", json!({"length":20,"width":20,"height":10})).unwrap();
+        h.app.run("solid.hole", json!({"position":[10,10,10],"thread":source,"depth":8})).unwrap();
+        let id = h.app.session.doc.features.last().unwrap().id;
+        let mut d = for_feature(&h.app, id, None).unwrap();
+        let Kind::Hole { depth, .. } = &mut d.kind else { panic!("expected Hole") };
+        *depth = "7 mm".into();
+        for (cmd, p) in apply_commands(&h.app, &d).unwrap() {
+            assert_eq!(p["params"]["thread"], source);
+            assert!(p["params"].get("diameter").is_none());
+            h.app.run(&cmd, p).unwrap();
+        }
+        h.app.run("parameters.change", json!({"name":"size_name","expression":"M6"})).unwrap();
+        let saved = &h.app.session.doc.feature(id).unwrap().kind;
+        assert!(matches!(saved, solidcraft_engine::doc::FeatureKind::Hole { auto_thread_diameter: true, thread: Some(t), .. } if t == source));
+        let state = crate::open_meshing::session_world(&h.app.session);
+        let drill = solidcraft_engine::doc::parse_tapped_thread("M6").unwrap().tap_drill;
+        let wall =
+            solidcraft_engine::kernel::cylinder_face_at(&state.bodies[0].body, solidcore_record::Vec3::new(10.0 + drill / 2.0, 10.0, 6.0)).unwrap();
+        assert!(wall.internal && (2.0 * wall.radius - drill).abs() < 1e-8);
+        // The diagram derives the same drill, while the command retains the expression.
+        let d = for_feature(&h.app, id, None).unwrap();
+        let Kind::Hole { diameter, opts, .. } = &d.kind else { panic!("expected Hole") };
+        assert_eq!(crate::dialogs_hole::bore_diameter(&h.app.session.doc, diameter, opts, &|_, _| None), Some(drill));
+        h.app.session.doc_mut().set_text_param("size_name", "unknown_size", None).unwrap();
+        let error = preview_commands(&h.app, &d).unwrap_err();
+        assert!(error.contains("unknown tapped thread `unknown_size`"), "{error}");
+    }
+}
