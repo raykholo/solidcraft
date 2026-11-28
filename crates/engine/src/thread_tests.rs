@@ -3249,3 +3249,20 @@ fn placed_thread_up_to_an_unmappable_plane_name_is_refused() {
     let e = s.execute("solid.thread", &json!({"face": [4, 0, 102], "up_to": "o:9999/origin/XY"})).expect_err("refused").to_string();
     assert!(e.contains("cannot be mapped") && e.contains("explicit"), "{e}");
 }
+
+#[test]
+fn literal_thread_size_ignores_an_errored_parameter_with_the_same_name() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":4,"height":10}));
+    // Insert an invalid expression directly: parameter commands reject it at entry.
+    s.doc.params.push(solidcraft_doc::Param {
+        name: "M8".into(),
+        expr: "missing_parameter".into(),
+        unit: String::new(),
+        comment: String::new(),
+        model: false,
+    });
+    run(&mut s, "solid.thread", json!({"face":[4,0,5],"designation":"M8"}));
+    assert!(s.model.param_errors.contains_key("M8"));
+    assert_eq!(s.model.state().threads[0].designation, "M8");
+}

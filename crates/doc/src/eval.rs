@@ -2266,7 +2266,7 @@ fn param_names(f: &Feature) -> Vec<String> {
     }
     match &f.kind {
         FeatureKind::Thread { designation: Some(e), .. } | FeatureKind::Hole { thread: Some(e), .. } => {
-            names.extend(crate::text_params::references(e));
+            names.extend(crate::params::thread_size_references(e));
         }
         _ => {}
     }

@@ -86,8 +86,9 @@ such as `"M8x1"` keeps its existing meaning. An unknown evaluated size is refuse
 the evaluated text in the existing error message. The cylindrical face must still fit
 the selected size.
 
-Tapped holes accept the same text expressions in their `thread` field. Their bore and
-thread follow the evaluated size when parameters or configurations change.
+Tapped holes accept the same text expressions in their `thread` field. Their thread
+designation always follows the evaluated size when parameters or configurations change.
+The bore follows it only when neither `diameter` nor `clearance` was given.
 
 **Unified inch (ASME B1.1).** Designations are `<size>-<TPI> UNC|UNF|UNEF|UN`,
 optionally followed by `-<class>`, for example `1/4-20 UNC-2A`, `#10-32 UNF`,

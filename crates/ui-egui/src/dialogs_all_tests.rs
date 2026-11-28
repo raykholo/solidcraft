@@ -4540,3 +4540,35 @@ fn editing_a_coil_plane_then_clearing_profile_keeps_the_explicit_axis() {
     }
     assert_eq!(h.app.session.doc.to_json(), authored);
 }
+
+#[test]
+fn editing_parameter_tapped_holes_keeps_automatic_and_explicit_drills() {
+    for explicit in [false, true] {
+        let mut h = Harness::new();
+        h.app.run("parameters.add", json!({"name":"size_name","expression":"M5","unit":"text"})).unwrap();
+        h.app.run("solid.box", json!({"length":20,"width":20,"height":10})).unwrap();
+        let mut p = json!({"position":[10,10,10],"thread":"size_name","depth":8});
+        if explicit {
+            p["diameter"] = json!("4.2 mm");
+        }
+        h.app.run("solid.hole", p).unwrap();
+        let id = h.app.session.doc.features.last().unwrap().id;
+        h.app.run("parameters.change", json!({"name":"size_name","expression":"M6"})).unwrap();
+        let mut d = for_feature(&h.app, id, None).unwrap();
+        if let Kind::Hole { depth, opts, .. } = &mut d.kind {
+            assert_eq!(opts.drill.is_some(), explicit);
+            *depth = "7 mm".into();
+        } else {
+            panic!("expected Hole dialog");
+        }
+        for commands in [preview_commands(&h.app, &d).unwrap(), apply_commands(&h.app, &d).unwrap()] {
+            assert_eq!(commands[0].0, "timeline.redefine");
+            let p = &commands[0].1["params"];
+            assert_eq!(p["thread"], "size_name");
+            assert_eq!(p.get("diameter").is_some(), explicit);
+            if explicit {
+                assert_eq!(p["diameter"], "4.2 mm");
+            }
+        }
+    }
+}

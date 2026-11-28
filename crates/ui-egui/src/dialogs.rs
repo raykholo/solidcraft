@@ -10338,7 +10338,7 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
             // Not in the Hole window yet: an edit keeps it (`timeline.redefine`).
             thread_class: _,
             old_surface_start: _,
-            auto_thread_diameter: _,
+            auto_thread_diameter,
             // A hole with hardware is edited in the Hardware window (above).
             hardware: _,
         } => {
@@ -10355,11 +10355,9 @@ pub fn for_feature(app: &SolveApp, id: u64, marker: Option<usize>) -> Option<Dia
                     opts.hand = *hand;
                     opts.modeled = *modeled;
                     opts.ease_out = crate::dialogs_thread::Ease::of(ease_out);
-                    // A saved drill other than the tap maker's for the size stays the hole's
-                    // (an older design's d - P metric drill among them).
-                    let saved = s.doc.eval(diameter, ValueKind::Length).ok();
-                    let tabulated = solidcraft_engine::doc::parse_tapped_thread(th).map(|t| t.tap_drill);
-                    if saved.zip(tabulated).is_none_or(|(a, b)| (a - b).abs() > 1e-9) {
+                    // Automatic drills follow the evaluated size on rebuild. Explicit drills
+                    // stay explicit, even when they equal the table's current value.
+                    if !auto_thread_diameter {
                         opts.drill = Some(diameter.to_string());
                     }
                 }

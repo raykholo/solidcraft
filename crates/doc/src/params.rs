@@ -26,14 +26,13 @@ pub(crate) enum ExprRole {
 }
 
 /// References in a thread size, using the same literal precedence as evaluation.
-fn thread_size_references(source: &str) -> Vec<String> {
-    if crate::parse_tapped_thread(source).is_some()
+pub(crate) fn thread_size_references(source: &str) -> Vec<String> {
+    if is_literal_thread_size(source) { Vec::new() } else { crate::text_params::references(source) }
+}
+
+fn is_literal_thread_size(source: &str) -> bool {
+    crate::parse_tapped_thread(source).is_some()
         || crate::thread_forms::ThreadForm::of_designation(source).is_some_and(|form| form.parse(source, 1).is_ok())
-    {
-        Vec::new()
-    } else {
-        crate::text_params::references(source)
-    }
 }
 
 impl FeatureKind {
@@ -1493,6 +1492,20 @@ impl Document {
                 )));
             }
         }
+        // Check before mutating any parameter, expression or feature.
+        for f in &self.features {
+            if let Some(source) = f.kind.thread_size()
+                && thread_size_references(source).iter().any(|r| r == old)
+            {
+                let rewritten = crate::text_params::rename_reference(source, old, new);
+                if is_literal_thread_size(&rewritten) {
+                    return Err(DocError::Invalid(format!(
+                        "renaming `{old}` to `{new}` would make {}'s size the literal {rewritten}; pick another name",
+                        f.name
+                    )));
+                }
+            }
+        }
         let mut n = 0;
         let text = self.text_param(old).is_some();
         for p in &mut self.text_params {
@@ -2366,6 +2379,36 @@ pub(crate) mod param_rows_tests {
         doc.features =
             (0..sketches).map(|i| feature(&template, i as u64 + 1, &format!("S{i}"), sketch(vec![text_link(0, "t0", "5")]), Vec::new())).collect();
         doc
+    }
+
+    #[test]
+    fn thread_size_rename_refuses_literal_collisions_without_changing_document() {
+        for (kind, field) in [
+            (json!({"type": "thread", "face": [0, 0, 0], "designation": "size_name"}), "designation"),
+            (json!({"type": "hole", "position": [0, 0, 0], "direction": [0, 0, -1], "diameter": "5", "thread": "size_name"}), "thread"),
+        ] {
+            for new in ["M8", "M6x1"] {
+                let mut doc = Document::new("rename collision");
+                doc.set_text_param("size_name", "M6x1", None).unwrap();
+                doc.add_feature(serde_json::from_value(kind.clone()).unwrap(), Some("Thread1")).unwrap();
+                let before = doc.to_json();
+                let error = doc.rename_param("size_name", new).unwrap_err().to_string();
+                assert!(
+                    error.contains("Thread1") && error.contains(new) && error.contains("literal") && error.contains("pick another name"),
+                    "{error}"
+                );
+                assert_eq!(doc.to_json(), before);
+            }
+            // Renaming a parameter sharing a literal's name must leave the literal alone.
+            let mut doc = Document::new("literal rename");
+            doc.set_text_param("M8", "M6x1", None).unwrap();
+            let mut literal = kind;
+            literal[field] = json!("M8");
+            let id = doc.add_feature(serde_json::from_value(literal).unwrap(), Some("Thread1")).unwrap();
+            doc.rename_param("M8", "other_size").unwrap();
+            let saved = serde_json::to_value(&doc.feature(id).unwrap().kind).unwrap();
+            assert_eq!(saved[field], "M8");
+        }
     }
 
     #[test]
