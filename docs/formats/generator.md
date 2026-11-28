@@ -105,7 +105,7 @@ A template is a string of **literals**, **fields** `{name}` / `{name: spec}`, **
 | Option set | `{opts: set(-LTP, -RTP, -SC:int 0..99)}` | options in any order, each at most once, some with an argument. The value is an object (`{"LTP": true, "SC": 12}`); printing uses the declared order |
 | Free tail | `[+{tail: rest}]` | everything left of the code as typed (1..64 characters); put it last |
 | Required separator | `E-SFJ{d: int 1..99}\-{l: int 1..99}` | `\-` must be present as written, so `E-SFJ12-5` reads and `E-SFJ125` does not |
-| Separators and case | `-`, space, `_`, `/`, `.` | ignored when parsing (except a required one); case ignored; printing uses the template's own spelling |
+| Separators and case | `-`, space, `_`, `/`, `.` | optional between fields; whitespace around the code is trimmed; a separator at the start or end, or two in a row, means the code does not match that template unless the template requires it there; case ignored; printing uses the template's own spelling |
 
 Several `[[template]]` entries are tried in order; the first complete match wins (ambiguity
 between templates that both match is a check-time error in `generator.check`). A free-text

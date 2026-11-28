@@ -54,7 +54,7 @@ fn syntax<T>(msg: impl Into<String>) -> Result<T, TemplateError> {
     Err(TemplateError::Syntax(msg.into()))
 }
 
-/// Characters a code may separate its parts with; they are ignored when reading.
+/// Characters a code may optionally separate its parts with when reading.
 pub fn is_separator(c: char) -> bool {
     matches!(c, '-' | '_' | ' ' | '/' | '.')
 }
@@ -149,7 +149,7 @@ pub type Declared = BTreeMap<String, Decl>;
 
 #[derive(Clone, Debug)]
 enum Node {
-    /// Fixed text, case ignored; its separators match any run of separators, except one written
+    /// Fixed text, case ignored; its separators match one optional separator, except one written
     /// `\-` (the `true` here), which must be present as it is.
     Lit(Vec<(char, bool)>),
     Field {
@@ -524,6 +524,8 @@ impl Template {
     }
 
     fn match_with(&self, code: &str, budget: &mut u32) -> Result<Option<Params>, TemplateError> {
+        // Whitespace around a pasted code is not part of it; other separators at an edge are
+        // (they make the code miss this template).
         let input: Vec<char> = code.trim().chars().collect();
         if input.len() > MAX_CODE_CHARS {
             return Err(TemplateError::Limit { what: "ordering code characters", limit: MAX_CODE_CHARS });
@@ -607,11 +609,16 @@ struct Matcher<'a> {
 }
 
 impl Matcher<'_> {
-    fn skip(&self, mut pos: usize) -> usize {
-        while self.input.get(pos).is_some_and(|c| is_separator(*c)) {
-            pos += 1;
+    /// Skip one optional separator between parts, never an edge or a run. Required
+    /// separators are consumed explicitly by literal(), and raw fields keep their text.
+    fn skip(&self, pos: usize) -> Option<usize> {
+        if !self.input.get(pos).is_some_and(|c| is_separator(*c)) {
+            return Some(pos);
         }
-        pos
+        if pos == 0 || self.input.get(pos - 1).is_some_and(|c| is_separator(*c)) || self.input.get(pos + 1).is_none_or(|c| is_separator(*c)) {
+            return None;
+        }
+        Some(pos + 1)
     }
 
     fn starts(&self, pos: usize, text: &[char]) -> bool {
@@ -620,10 +627,10 @@ impl Matcher<'_> {
 
     /// Where fixed text `text` ends when it is read at `pos`, if it is there.
     fn literal(&self, pos: usize, text: &[(char, bool)]) -> Option<usize> {
-        let mut p = if text.first().is_some_and(|(_, required)| *required) { pos } else { self.skip(pos) };
+        let mut p = if text.first().is_some_and(|(_, required)| *required) { pos } else { self.skip(pos)? };
         for (c, required) in text {
             if is_separator(*c) && !required {
-                p = self.skip(p);
+                p = self.skip(p)?;
             } else if self.input.get(p).is_some_and(|i| i.eq_ignore_ascii_case(c)) {
                 p += 1;
             } else {
@@ -641,7 +648,7 @@ impl Matcher<'_> {
         let Some((first, tail)) = nodes.split_first() else {
             return match rest.split_first() {
                 Some((next, more)) => self.run(next, more, pos, fields),
-                None => Ok((self.skip(pos) == self.input.len()).then_some(fields)),
+                None => Ok((pos == self.input.len()).then_some(fields)),
             };
         };
         match first {
@@ -651,7 +658,12 @@ impl Matcher<'_> {
             },
             Node::Field { name, kind } => {
                 // A minus can be either a numeric sign or an optional separator.
-                let skipped = self.skip(pos);
+                let skipped = if matches!(kind, FieldKind::Rest) {
+                    pos
+                } else {
+                    let Some(skipped) = self.skip(pos) else { return Ok(None) };
+                    skipped
+                };
                 let sign_at = skipped
                     .checked_sub(1)
                     .filter(|at| matches!(kind, FieldKind::Int { .. } | FieldKind::Decimal { .. }) && self.input.get(*at) == Some(&'-'));

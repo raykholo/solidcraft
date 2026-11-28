@@ -348,3 +348,24 @@ pattern = "X{size: 1.50}"
     std::fs::write(dir.path().join("tables/rows.csv"), "key,source,status\n1.50,Fixture,not_modelled\n").unwrap();
     assert_eq!(load(&dir).parse("X1.50").unwrap_err().kind, RefusalKind::NotModelled);
 }
+
+#[test]
+fn dangling_separators_use_the_default_package_no_match_message() {
+    let dir = nut_package(None);
+    let g = load(&dir);
+    let refusal = g.parse("TN-M4-40-").unwrap_err();
+    assert_eq!(refusal.kind, RefusalKind::Invalid);
+    assert_eq!(refusal.message, "`TN-M4-40-` is not a Metric T-nut ordering code");
+}
+
+#[test]
+fn a_raw_fallback_preserves_the_scripts_own_refusal_message() {
+    let manifest = format!("{MANIFEST}\n[[template]]\npattern = \"{{raw: rest}}\"\n");
+    let dir = nut_package(Some(&manifest));
+    std::fs::write(dir.path().join("generator.rhai"), r#"fn resolve(f) { refuse("invalid", "Please check the catalog code."); }"#).unwrap();
+    let g = load(&dir);
+    assert_eq!(g.read_code("TN-M4-40-").unwrap().0, 1);
+    let refusal = g.parse("TN-M4-40-").unwrap_err();
+    assert_eq!(refusal.kind, RefusalKind::Invalid);
+    assert_eq!(refusal.message, "Please check the catalog code.");
+}

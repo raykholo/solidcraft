@@ -175,7 +175,7 @@ fn signed_numeric_fields_round_trip_and_keep_separator_fallback() {
         let p = params(json!({"n": value}));
         assert_eq!(t.print(&p).unwrap(), code);
         assert_eq!(t.match_code(code).unwrap().unwrap()["n"], p["n"]);
-        assert_eq!(t.match_code(&code.replacen('N', "N _ ", 1)).unwrap().unwrap()["n"], p["n"]);
+        assert_eq!(t.match_code(&code.replacen('N', "N _ ", 1)).unwrap(), None);
     }
     let t = Template::parse("N{n: int 1..5}", &Declared::new()).unwrap();
     assert_eq!(t.match_code("N-3").unwrap().unwrap()["n"], 3);
@@ -225,4 +225,114 @@ fn adjacent_fields_cannot_print_a_different_split() {
 fn match_count_detects_case_insensitive_overlap() {
     let templates = ["ABC", "abc"].map(|s| Template::parse(s, &Declared::new()).unwrap());
     assert_eq!(super::code_template::match_count(&templates, "ABC").unwrap(), 2);
+}
+
+#[test]
+fn catalogue_codes_require_separators_to_be_single_and_between_parts() {
+    let sources = [
+        "HBLTS{n: int 1..99}[-{m: int 1..99}][-{suffix: C}]",
+        "HNTT{n: int 1..99}[-{m: int 1..99}]",
+        "HNTTSN{n: int 1..99}-{m: int 1..99}",
+        r"C\-SCSAW{n: int 1..99}-{m: int 1..99}",
+        r"E\-SCD{n: int 1..99}",
+        r"E\-SCSPD{n: int 1..99}",
+        r"E\-SCDJ{n: int 1..99}-{m: int 1..99}",
+        r"E\-SHSTM{n: int 1..99}-{m: int 1..99}",
+        r"E\-SHSTB{n: int 1..99}-{m: int 1..99}",
+        r"E\-STHWRBK{n: int 1..99}",
+        r"E\-STHRB{n: int 1..99}",
+        r"E\-STHWIRB{n: int 1..99}",
+        r"E\-LBF{n: int 1..99}UU",
+        r"E\-LB{n: int 1..99}{suffix: TUU|DUU}",
+        r"E\-PSFJ{n: int 1..99}-{m: int 1..999}",
+        r"E\-PSFJT{n: int 1..99}-{m: int 1..999}[-M{k: int 1..9}]",
+        r"E\-PSFG{n: int 1..99}-{m: int 1..999}[-FC{f: int 1..99}][-A{a: int 1..99}]",
+        r"E\-PSSFJ{n: int 1..99}-{m: int 1..999}[-WFC{f: int 1..99}][-A{a: int 1..99}][-E{e: int 1..99}][-{end: LKC}]",
+    ];
+    let templates: Vec<_> = sources.iter().map(|s| Template::parse(s, &Declared::new()).unwrap()).collect();
+    for code in [
+        "HBLTS5-",
+        "HNTT5-",
+        "HNTT5-4-",
+        "E-SCD12-",
+        "E-SCSPD6-",
+        "E-SCDJ12-10-",
+        "E-SHSTM8-25-",
+        "E-STHWRBK12-",
+        "E-STHRB8-",
+        "E-STHWIRB8-",
+        "E-LBF20UU-",
+        "E-LB10TUU_",
+        "HBLTS5--C",
+        "HNTT5--4",
+        "E-SHSTM8--25",
+        "-HNTT5-4",
+        "_E-STHRB8",
+        "-HBLTS5",
+        "HBLTS5 - C",
+        "HBLTS5-_C",
+        "HNTT5-_4",
+        "E-SHSTM8-_25",
+        "HBLTS5_",
+        "HBLTS5/",
+        "HBLTS5.",
+        "ELB20TUU",
+    ] {
+        assert_eq!(match_any(&templates, code).unwrap(), None, "{code:?}");
+    }
+    for code in [
+        "HBLTS5-4",
+        // Whitespace around a pasted code is trimmed, so these still read.
+        " HBLTS5-C",
+        "HBLTS5-C \n",
+        "HBLTS5-C",
+        "HBLTS5-4-C",
+        "HBLTS5C",
+        "HBLTS5 C",
+        "hblts5-c",
+        "HNTT5-4",
+        "HNTTSN5-3",
+        "hntt5-4",
+        "C-SCSAW12-10",
+        "E-SCDJ12-10",
+        "E-SHSTM8-25",
+        "E-SHSTB12-15",
+        "E-STHWRBK12",
+        "E-STHRB12",
+        "E-STHWIRB8",
+        "E-LB20TUU",
+        "E-LB12DUU",
+        "E-PSFJ6-20",
+        "E-PSFJT6-30-M3",
+        "E-PSFG16-250-FC20-A10",
+        "E-PSSFJ30-500-WFC40-A10-E20-LKC",
+    ] {
+        assert!(match_any(&templates, code).unwrap().is_some(), "{code}");
+    }
+}
+
+#[test]
+fn separator_no_match_allows_a_raw_fallback_including_the_script_reader() {
+    let first = Template::parse("HBLTS{n: int 1..9}", &Declared::new()).unwrap();
+    let raw = Template::parse("{raw: rest}", &Declared::new()).unwrap();
+    let templates = [first.clone(), raw];
+    for code in ["HBLTS5-", "-HBLTS5", "HBLTS5--"] {
+        assert_eq!(first.match_code(code).unwrap(), None);
+        let expected = Some((1, params(json!({"raw": code}))));
+        assert_eq!(match_any(&templates, code).unwrap(), expected);
+        assert_eq!(super::script::read_code(&templates, code).unwrap(), expected);
+    }
+}
+
+#[test]
+fn required_edge_separators_are_consumed_only_as_written() {
+    for (source, code) in [(r"\-X{n: int 1..9}", "-X5"), (r"X{n: int 1..9}\-", "X5-"), (r"X{n: int 1..9}\-\-", "X5--")] {
+        let t = Template::parse(source, &Declared::new()).unwrap();
+        let p = t.match_code(code).unwrap().unwrap();
+        assert_eq!(t.print(&p).unwrap(), code);
+        assert_eq!(t.match_code(&format!("{code}-")).unwrap(), None);
+    }
+    let t = Template::parse(r"X{n: int 1..9}\-{m: int 1..9}", &Declared::new()).unwrap();
+    assert!(t.match_code("X5-4").unwrap().is_some());
+    assert_eq!(t.match_code("X5--4").unwrap(), None);
 }
