@@ -2673,6 +2673,7 @@ fn a_pattern_replays_every_grouped_thread_pick_on_its_named_body() {
     let pattern = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_names: None,
                 features: vec![FeatureId(id)],
                 pattern: PatternKind::Rectangular {
                     dir1: Dir(Vec3::Y),
@@ -2732,6 +2733,7 @@ fn a_patterned_modelled_thread_reuses_its_final_check() {
     let pattern = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_names: None,
                 features: vec![FeatureId(id)],
                 pattern: PatternKind::Rectangular {
                     dir1: Dir(Vec3::Y),
@@ -5893,6 +5895,7 @@ fn unrelated_earlier_edits_keep_downstream_cosmetic_threads_and_pattern_cached()
     let pattern_b = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_names: None,
                 features: vec![FeatureId(thread_b)],
                 pattern: PatternKind::Rectangular {
                     dir1: Dir(Vec3::X),
@@ -6128,6 +6131,7 @@ fn unrelated_earlier_edits_keep_downstream_shell_scale_mirror_and_extrude_patter
     let pat_c = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_names: None,
                 features: vec![FeatureId(cut_c)],
                 pattern: PatternKind::Rectangular {
                     dir1: Dir(Vec3::X),
@@ -6251,6 +6255,7 @@ fn editing_external_sketch_line_axis_invalidates_revolve_and_pattern_cache() {
         (sk, id)
     };
     let rect_pattern = |src: u64| FeatureKind::Pattern {
+        body_names: None,
         features: vec![FeatureId(src)],
         pattern: PatternKind::Rectangular {
             dir1: Dir(Vec3::Y),
