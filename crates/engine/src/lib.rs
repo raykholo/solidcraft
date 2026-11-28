@@ -2874,7 +2874,7 @@ impl Session {
             let column = |id| table.columns.iter().position(|column| *column == Column::Suppress(id));
             let (Some(a), Some(b)) = (column(first), column(second)) else { return false };
             return table.rows.iter().all(|row| {
-                let suppressed = |index| row.cells.get(index).and_then(|cell| suppression_cell(cell).ok());
+                let suppressed = |index: usize| row.cells.get(index).and_then(|cell| suppression_cell(cell.as_str()).ok());
                 matches!((suppressed(a), suppressed(b)), (Some(a), Some(b)) if a || b)
             });
         }
