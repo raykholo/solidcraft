@@ -757,6 +757,12 @@ impl AgentChat {
 }
 
 impl AgentChat {
+    /// The active turn's validity flag, for async requests started synchronously during a turn
+    /// (Part of #23624).
+    pub(crate) fn active_turn(&self) -> Option<Arc<std::sync::atomic::AtomicBool>> {
+        self.turn.as_ref().map(|t| Arc::clone(&t.active))
+    }
+
     /// Exchange document state, keeping window services and preferences UI in the window.
     pub(crate) fn swap_document(&mut self, other: &mut Self) {
         std::mem::swap(self, other);

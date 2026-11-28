@@ -181,6 +181,7 @@ const ANSWERING: &[&str] = &[
     "chamfer_sides",
     "shell",
     "offset_faces",
+    "transform_face",
     "thicken",
     "offset_solid",
     "merge_faces",
@@ -209,6 +210,7 @@ const ANSWERING: &[&str] = &[
     "history",
     "check",
     "check_local",
+    "face_flat_corners",
     "check_owned",
     "check_stitched",
     "make_cylinder",
@@ -328,6 +330,8 @@ fn every_entry_point_answers() {
     says("chamfer_sides", a.chamfer_sides(&edge, 0.1, 1.0, ChamferSecond::Distance(2.0), p(0.0, 0.0, 1.0)));
     says("shell", a.shell(&top, 0.1, 1.0));
     says("offset_faces", a.offset_faces(&top, 0.1, 1.0));
+    let lost_face = crate::PickedFace { index: usize::MAX, at: top[0], tolerance: 0.1 };
+    assert!(a.transform_face(lost_face, p(0.0, 0.0, 1.0), top[0], p(0.0, 0.0, 1.0), 0.0).is_err());
     says("thicken", a.thicken(1.0, false));
     says("offset_solid", a.offset_solid(1.0, true));
     says("merge_faces", a.merge_faces(&top, 0.1));
@@ -362,6 +366,7 @@ fn every_entry_point_answers() {
     says("check", a.check(CheckLevel::All));
     says("check_stitched", a.check_stitched(CheckLevel::All));
     says("check_local", a.check_local(&[0], &[0], CheckLevel::All));
+    says("face_flat_corners", a.face_flat_corners(0));
     says("check_owned", a.try_clone().and_then(|c| c.check_owned(CheckLevel::All)));
     says("make_cylinder", Brep::make_cylinder([0.0; 3], 1.0, 1.0));
     says("make_sphere", Brep::make_sphere([0.0; 3], 1.0));

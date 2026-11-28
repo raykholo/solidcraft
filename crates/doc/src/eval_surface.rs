@@ -3,7 +3,7 @@
 //! `surface_offset`, `surface_ruled`, `surface_untrim`).
 
 use super::*;
-use crate::{RuledCorners, RuledMode, SheetSection};
+use crate::{FaceAt, FilletTrim, RuledCorners, RuledMode, SheetSection};
 use solidcore_record::Seg2;
 
 pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, st: &mut ModelState, warning: &mut Option<String>) -> Result<()> {
@@ -84,6 +84,23 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
                 return Err(DocError::Invalid("pick the surfaces to thicken".into()));
             }
             apply_traced(doc, st, f, tools, *operation, &crate::plain(targets))
+        }
+        FeatureKind::SurfaceFillet { a, b, radius, trim, extend } => {
+            let r = val(vals, radius, Kind::Length)?;
+            if !(r.is_finite() && r > 0.0) {
+                return Err(DocError::Invalid("Surface Fillet: the radius must be positive".into()));
+            }
+            // As Fillet builds it, so the round's face is named after the two faces it replaces.
+            let round = |body: &kernel::Body, seams: &[Vec3]| Ok(kernel::fillet_removing(body, seams, r, kernel::FilletTurn::Mitre)?.0);
+            round_seam(st, f, [a, b], *trim, *extend, &round)
+        }
+        FeatureKind::SurfaceChamfer { a, b, distance, distance2, angle, flip, trim, extend } => {
+            let d = val(vals, distance, Kind::Length)?;
+            if !(d.is_finite() && d > 0.0) {
+                return Err(DocError::Invalid("Surface Chamfer: the distance must be positive".into()));
+            }
+            let bevel = |body: &kernel::Body, seams: &[Vec3]| super::chamfer_with(vals, body, seams, d, distance2, angle, *flip);
+            round_seam(st, f, [a, b], *trim, *extend, &bevel)
         }
         FeatureKind::SurfaceTrim { body, plane, tool, tool_body, keep, keep_more, curves, with, keep_with, stitch, extend } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
@@ -641,19 +658,53 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::SurfaceLoft { sections, continuity, crown, rails, rail_fit, faced, stays_surface } => {
             use kernel::Continuity::{G0, G1};
             let in_space = sections.iter().any(|s| section_in_space(st, s));
-            let planar = !in_space && sections.iter().all(|s| s.body.is_none());
+            let sketch_only = sections.iter().all(|s| s.body.is_none());
+            let planar = !in_space && sketch_only;
             let plain = planar && *continuity == [G0, G0];
+            let space_railed = in_space && sketch_only && *continuity == [G0, G0] && !rails.is_empty();
             let tangent_end = match *continuity {
                 [G1, G0] if planar && sections.len() == 2 => Some((0, crown[0])),
                 [G0, G1] if planar && sections.len() == 2 => Some((1, crown[1])),
                 _ => None,
             };
-            if !plain && !rails.is_empty() {
-                return Err(DocError::Invalid(if in_space {
-                    "not supported yet: guide rails on a loft through 3D sketch curves".into()
+            if !plain && !space_railed && !rails.is_empty() {
+                return Err(DocError::Invalid("not supported yet: guide rails on a loft with edge sections or end continuity".into()));
+            }
+            if space_railed {
+                let mut secs = Vec::with_capacity(sections.len());
+                for sec in sections {
+                    let raw = loft_section_sketch(st, sec)?;
+                    if section_in_space(st, sec) {
+                        if sec.profiles.is_some() {
+                            return Err(loft_section_chain_error());
+                        }
+                        let mapped = path_in_frame(doc, raw, f.component)?;
+                        let path = path_points(&curves_in(mapped.as_ref(), &sec.curves), Vec3::new(f64::NAN, f64::NAN, f64::NAN))?
+                            .ok_or_else(loft_section_chain_error)?;
+                        secs.push(kernel::SpaceLoftSection::Space(path));
+                    } else {
+                        let (ss, chain) = planar_loft_section(doc, raw, f, sec)?;
+                        secs.push(kernel::SpaceLoftSection::Planar { plane: ss.plane, segs: chain });
+                    }
+                }
+                let start = secs
+                    .first()
+                    .and_then(|s| match s {
+                        kernel::SpaceLoftSection::Planar { plane, segs } => segs.first().map(|seg| plane.to_world(seg.start())),
+                        kernel::SpaceLoftSection::Space(path) => path.points().first().copied(),
+                    })
+                    .unwrap_or_default();
+                let rails = crate::eval::rail_polylines(doc, st, rails, f.component, start)?;
+                let fit = crate::eval::kernel_rail_fit(*rail_fit);
+                let body = if *faced {
+                    kernel::loft_sheet_space_with_rails(&secs, &rails, fit)?
                 } else {
-                    "not supported yet: guide rails on a loft with edge sections or end continuity".into()
-                }));
+                    kernel::loft_sheet_space_with_rails_legacy_sides(&secs, &rails, fit)?
+                };
+                let name = new_name(st, f, 0);
+                st.bodies.push(ModelBody::new(name, body, f.id));
+                stays_a_surface(st, *stays_surface);
+                return Ok(());
             }
             if !plain && tangent_end.is_none() {
                 loft_blend(st, f, sections, *continuity, *crown, doc)?;
@@ -1177,6 +1228,86 @@ fn boundary_frames(
         out.push(Boundary { frames, order: orders.get(side).copied().unwrap_or(solidcraft_kernel::Continuity::G1) });
     }
     Ok(out)
+}
+
+/// Surface Fillet and Surface Chamfer: the two surfaces of `a` and `b` cut each other (each keeping
+/// the side its point is on) and sewn into one body, the seam between them rounded or bevelled by
+/// `round`. With `trim` both, the
+/// result takes the place of `a`'s body and `b`'s is gone. With `first`, `a`'s body is the cut-back
+/// `a` sewn to the round and `b`'s is as it was; with `none`, both are as they were and the round
+/// alone is a new surface body.
+fn round_seam(
+    st: &mut ModelState,
+    f: &Feature,
+    [a, b]: [&FaceAt; 2],
+    trim: FilletTrim,
+    extend: bool,
+    round: &dyn Fn(&kernel::Body, &[Vec3]) -> Result<kernel::Body>,
+) -> Result<()> {
+    let i = st.bodies.iter().position(|x| x.name == a.body.0).ok_or_else(|| DocError::Unknown(format!("body `{}`", a.body)))?;
+    let before = (trim != FilletTrim::Both).then(|| st.clone());
+    mutual_trim(st, i, &b.body.0, kernel::TrimKeep::Side(a.point.0), &[b.point.0], true, extend)?;
+    // The second body is gone now, so the sewn one may have moved down: find it again by its name.
+    let sewn_at = st.bodies.iter().position(|x| x.name == a.body.0).ok_or_else(|| DocError::Invalid("the sewn body is missing".into()))?;
+    let Some(sewn) = st.bodies.get(sewn_at).cloned() else { return Err(DocError::Invalid("body".into())) };
+    // Each surface is one face and they are sewn along their seam: the edges two different faces
+    // share (not a periodic face's own seam, which has two uses on one face).
+    let seams: Vec<usize> = sewn
+        .body
+        .record()
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| matches!(e.uses.as_slice(), [u, v] if u.face != v.face))
+        .map(|(k, _)| k)
+        .collect();
+    if seams.is_empty() {
+        return Err(DocError::Invalid("Surface Fillet and Chamfer: the two surfaces don't meet along an edge".into()));
+    }
+    // One seam is blended at a time: surfaces that meet along more than one edge would leave more
+    // than one round, which `first` and `none` cannot split back into two surfaces and a round, so
+    // every trim refuses them alike, before any of them does its own work.
+    if seams.len() > 1 {
+        return Err(DocError::Invalid(
+            "Surface Fillet and Chamfer: a blend with more than one seam is not supported yet: pick surfaces that meet along one edge".into(),
+        ));
+    }
+    let mut picks = Vec::with_capacity(seams.len());
+    for k in seams {
+        let Some(p) = kernel::edge_middle(&sewn.body, k)? else {
+            return Err(DocError::Invalid("Surface Fillet and Chamfer: a seam has no middle".into()));
+        };
+        picks.push(p);
+    }
+    let rounded = round(&sewn.body, &picks)?;
+    // The round blends an edge this feature made (the seam), so the sewn body is a stage of the
+    // feature: its faces and edges are named first, and the round is named after the faces beside it.
+    let rounded = sewn.traced().then(rounded.with_preserved_planar_sources(&sewn.body)?);
+    let Some(before) = before else {
+        // Every trim refuses a point nearer the round than its own surface (`first` and `none`
+        // through `rounded_parts` below), before anything is written.
+        kernel::check_round_picks(&rounded.body, a.point.0, b.point.0)?;
+        if let Some(slot) = st.bodies.get_mut(sewn_at) {
+            *slot = ModelBody::traced_new(sewn.name, rounded, sewn.feature);
+        }
+        return Ok(());
+    };
+    // `first` and `none`: the pieces of the result, put back on the model as it was.
+    let [piece_a, _piece_b, round] = kernel::rounded_parts(&rounded.body, a.point.0, b.point.0)?;
+    let (piece_a, round) = (rounded.then(piece_a), rounded.then(round));
+    *st = before;
+    if trim == FilletTrim::First {
+        let sewn = kernel::stitch(&[&piece_a.body, &round.body], 0.0)?;
+        let sewn = Traced::step(sewn, &[&piece_a, &round]);
+        let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
+        if let Some(slot) = st.bodies.get_mut(i) {
+            *slot = ModelBody::traced_new(mb.name, sewn, mb.feature);
+        }
+    } else {
+        let name = new_name(st, f, 0);
+        st.bodies.push(ModelBody::traced_new(name, round, f.id));
+    }
+    Ok(())
 }
 
 /// Mutual Trim: the body at `i` and `other` trimmed by each other (each keeping its picks), the

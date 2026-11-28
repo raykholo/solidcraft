@@ -90,6 +90,7 @@ impl FeatureKind {
             FeatureKind::SplitFace { .. } => &["faces", "tool"],
             FeatureKind::Split { .. } => &["tool", "tool_faces"],
             FeatureKind::SurfaceTrim { .. } => &["tool"],
+            FeatureKind::SurfaceFillet { .. } | FeatureKind::SurfaceChamfer { .. } => &["a", "b"],
             FeatureKind::Hole { .. } => &["position", "to"],
             FeatureKind::Boss { .. } | FeatureKind::SnapFit { .. } | FeatureKind::Rest { .. } => &["position"],
             FeatureKind::Thread { .. } => &["face", "up_to"],
@@ -97,7 +98,7 @@ impl FeatureKind {
             FeatureKind::SheetConvert { .. } | FeatureKind::Lip { .. } | FeatureKind::SurfaceUntrim { .. } | FeatureKind::SurfaceRuled { .. } => {
                 &["face"]
             }
-            FeatureKind::Emboss { .. } | FeatureKind::Dome { .. } => &["face"],
+            FeatureKind::Emboss { .. } | FeatureKind::Dome { .. } | FeatureKind::TransformFace { .. } => &["face"],
             FeatureKind::Revolve { .. } => &["to"],
             FeatureKind::Extrude { .. } | FeatureKind::SurfaceExtrude { .. } => &["extent.to", "extent.from", "extent.to2"],
             FeatureKind::SurfaceExtend { .. } => &["up_to"],
@@ -125,7 +126,8 @@ impl FeatureKind {
             | FeatureKind::Lip { body, .. }
             | FeatureKind::SnapFit { body, .. }
             | FeatureKind::Rest { body, .. } => body.as_deref(),
-            FeatureKind::SheetConvert { body, .. }
+            FeatureKind::TransformFace { body, .. }
+            | FeatureKind::SheetConvert { body, .. }
             | FeatureKind::SheetSurfaceConvert { body, .. }
             | FeatureKind::SheetRecognize { body, .. }
             | FeatureKind::SurfaceRuled { body, .. } => Some(body.as_ref()),
@@ -152,6 +154,20 @@ impl FeatureKind {
         }
         let index = if slot == 0 { 0 } else { slot.checked_sub(usize::from(has_up_to))? };
         target_bodies.get(index).map(AsRef::as_ref)
+    }
+
+    /// The body a face point slot picks a face of, when each slot names its own body: a Thread's
+    /// target faces, and the `a` and `b` faces of Surface Fillet and Surface Chamfer. The point is
+    /// named, and found again, on that body only.
+    pub fn face_slot_body(&self, slot: usize) -> Option<&str> {
+        match self {
+            FeatureKind::SurfaceFillet { a, b, .. } | FeatureKind::SurfaceChamfer { a, b, .. } => match slot {
+                0 => Some(a.body.0.as_str()),
+                1 => Some(b.body.0.as_str()),
+                _ => None,
+            },
+            _ => self.thread_target_body(slot),
+        }
     }
 
     /// The feature's profile selections, each with its sketch.

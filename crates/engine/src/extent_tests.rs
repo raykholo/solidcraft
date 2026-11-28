@@ -899,6 +899,185 @@ fn the_faces_of_an_extrude_with_a_taper_of_zero_and_a_start_offset_take_a_sketch
     }
 }
 
+fn z_ends(s: &mut Session, name: &str) -> (f64, f64) {
+    let b = body(s, name);
+    (b["bbox"]["min"][2].as_f64().unwrap(), b["bbox"]["max"][2].as_f64().unwrap())
+}
+
+/// A 20×20×10 box (z 0..10) with the footprint used by the through-all joins.
+fn box_with_footprint() -> Session {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "Block"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Foot"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [2, 2], "p1": [18, 18]}));
+    run(&mut s, "sketch.finish", json!({}));
+    s
+}
+
+fn join_footprint_through_all(s: &mut Session) {
+    run(s, "solid.extrude", json!({"sketch": "Foot", "operation": "join", "through_all": true, "direction": "positive"}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+}
+
+/// a through-all join ends at the far end of the model along the extrude, not past it.
+/// The rectangle (2,2)-(18,18) lies inside the 20×20 box, so a tool that stops at z = 10 adds
+/// nothing: z max 10, z min 0, volume 20×20×10 = 4000. A margin of 2 % plus 1 mm (10×1.02+1 =
+/// 11.2) leaves a pad on top.
+#[test]
+fn far_end_through_all_join_of_a_box() {
+    let mut s = box_with_footprint();
+    join_footprint_through_all(&mut s);
+    let b = body(&mut s, "Block");
+    let (z_min, z_max) = (b["bbox"]["min"][2].as_f64().unwrap(), b["bbox"]["max"][2].as_f64().unwrap());
+    let volume = b["volume_mm3"].as_f64().unwrap();
+    assert!((z_max - 10.0).abs() < 1e-6, "z max {z_max}, z min {z_min}");
+    assert!((z_min - 0.0).abs() < 1e-6, "z min {z_min}, z max {z_max}");
+    assert!((volume - 4000.0).abs() < 1e-3, "volume {volume}");
+}
+
+/// a body the profile never meets still sets the model's far end. Tall (corner [100,0,0],
+/// 10×10×40, z 0..40) stands beside the footprint. With no targets the join runs to that end,
+/// z max 40, and stops there — not at 40×1.02+1 = 41.8. z min stays 0.
+#[test]
+fn far_end_through_all_join_beside_a_taller_body() {
+    let mut s = box_with_footprint();
+    run(&mut s, "solid.box", json!({"corner": [100, 0, 0], "length": 10, "width": 10, "height": 40, "body_name": "Tall"}));
+    join_footprint_through_all(&mut s);
+    let (z_min, z_max) = z_ends(&mut s, "Block");
+    assert!((z_max - 40.0).abs() < 1e-6, "z max {z_max}, z min {z_min}");
+    assert!((z_min - 0.0).abs() < 1e-6, "z min {z_min}, z max {z_max}");
+}
+
+/// extent along the extrude is one-sided. Side (corner [100,0,-40], 10×10×40, z −40..0)
+/// is entirely behind the XY sketch. Along +Z the model still ends at 10, so the joined block's
+/// z max is 10, not 40. Its z min stays 0; Side is a separate body.
+#[test]
+fn far_end_through_all_join_with_a_body_behind() {
+    let mut s = box_with_footprint();
+    run(&mut s, "solid.box", json!({"corner": [100, 0, -40], "length": 10, "width": 10, "height": 40, "body_name": "Side"}));
+    join_footprint_through_all(&mut s);
+    let (z_min, z_max) = z_ends(&mut s, "Block");
+    assert!((z_max - 10.0).abs() < 1e-6, "z max {z_max}, z min {z_min}");
+    assert!((z_min - 0.0).abs() < 1e-6, "z min {z_min}, z max {z_max}");
+}
+
+/// The reported part: an XZ rectangle revolved 360° about a construction axis on sketch Y.
+fn reported_revolve() -> Session {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XZ", "name": "Section"}));
+    run(&mut s, "sketch.line", json!({"points": [[10, 0], [11, 0], [11, 10], [10, 10]], "closed": true}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [0, 20]], "construction": true, "ids": ["axis"]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.revolve", json!({"sketch": "Section", "axis": "axis", "angle": "360 deg", "operation": "new", "body_name": "Body1"}));
+    s
+}
+
+/// Join the XY rectangle (5,0)-(12,1) downward into Body1, either through all or a fixed distance.
+fn negative_join_z_min(through_all: bool) -> (f64, f64) {
+    let mut s = reported_revolve();
+    let before = z_ends(&mut s, "Body1").0;
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Tab"}));
+    run(&mut s, "sketch.line", json!({"points": [[5, 0], [12, 0], [12, 1], [5, 1]], "closed": true}));
+    run(&mut s, "sketch.finish", json!({}));
+    let mut params = json!({
+        "sketch": "Tab",
+        "operation": "join",
+        "direction": "negative",
+        "profiles": [{"point": [8, 0.5]}],
+        "exact_regions": true,
+    });
+    if through_all {
+        params["through_all"] = json!(true);
+    } else {
+        params["distance"] = json!("10 mm");
+    }
+    run(&mut s, "solid.extrude", params);
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{through_all}: {:?}", s.model.results);
+    (before, z_ends(&mut s, "Body1").0)
+}
+
+/// the reported revolve, then an XY rectangle joined through all in the negative direction
+/// (the point [8, 0.5], exact regions). Body1's z min after the join equals the z min measured
+/// before it. A sibling extrude of distance "10 mm" reaches that same z min; the through-all
+/// margin would go past it.
+#[test]
+fn far_end_through_all_join_of_the_reported_revolve() {
+    let (before, after) = negative_join_z_min(true);
+    let (fixed_before, fixed_after) = negative_join_z_min(false);
+    assert!((fixed_before - before).abs() < 1e-6, "the two revolves differ: {before} vs {fixed_before}");
+    assert!(
+        (after - before).abs() < 1e-6 && (fixed_after - before).abs() < 1e-6,
+        "through all z min {after}, 10 mm z min {fixed_after}, measured {before}"
+    );
+}
+
+/// Removes every `key` from a design's JSON, as a design saved before the key existed lacks it.
+fn strip_key(v: &mut Value, key: &str) -> usize {
+    match v {
+        Value::Object(m) => {
+            let here = usize::from(m.remove(key).is_some());
+            here + m.values_mut().map(|c| strip_key(c, key)).sum::<usize>()
+        }
+        Value::Array(a) => a.iter_mut().map(|c| strip_key(c, key)).sum(),
+        _ => 0,
+    }
+}
+
+fn block_volume_and_z_max(s: &mut Session) -> (f64, f64) {
+    let b = body(s, "Block");
+    (b["volume_mm3"].as_f64().unwrap(), b["bbox"]["max"][2].as_f64().unwrap())
+}
+
+/// a new through-all join saves its marker and builds to the corner (volume 4000, z max 10);
+/// the same design saved before the marker existed reloads with the older reach: the far corner
+/// 10 x 1.02 + 1 = 11.2 over the 16 x 16 footprint, volume 4000 + 256 x 1.2 = 4307.2, z max 11.2.
+#[test]
+fn far_end_through_all_join_keeps_the_old_reach_for_an_old_design() {
+    let mut s = box_with_footprint();
+    join_footprint_through_all(&mut s);
+    let (volume, z_max) = block_volume_and_z_max(&mut s);
+    assert!((volume - 4000.0).abs() < 1e-3 && (z_max - 10.0).abs() < 1e-6, "new: volume {volume}, z max {z_max}");
+    let mut json: Value = serde_json::from_str(&s.doc.to_json()).unwrap();
+    assert_eq!(strip_key(&mut json, "through_all_to_corner"), 1, "the new join saves its marker once");
+    let doc = solidcraft_doc::Document::from_json(&json.to_string()).unwrap();
+    let mut old = Session::new(doc);
+    let (volume, z_max) = block_volume_and_z_max(&mut old);
+    assert!((volume - 4307.2).abs() < 1e-3 && (z_max - 11.2).abs() < 1e-6, "old: volume {volume}, z max {z_max}");
+}
+
+/// a join sketched on the far face and pointing outward, away from the model, builds. Nothing
+/// lies that way, so it takes the margined reach: from z = 10 the model reaches 10 back, so
+/// 10 x 1.02 + 1 = 11.2 out, z max 21.2, volume 4000 + 256 x 11.2 = 6867.2.
+#[test]
+fn far_end_through_all_join_outward_from_the_far_face_builds() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "Block"}));
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 10], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "Foot"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [2, 2], "p1": [18, 18]}));
+    run(&mut s, "sketch.finish", json!({}));
+    join_footprint_through_all(&mut s);
+    let (volume, z_max) = block_volume_and_z_max(&mut s);
+    assert!((z_max - 21.2).abs() < 1e-6 && (volume - 6867.2).abs() < 1e-3, "volume {volume}, z max {z_max}");
+}
+
+/// a cut past the end removes nothing extra. The 4×4 rectangle through the 20×20×10 box
+/// takes 4×4×10 = 160 mm³, so the volume is 3840, and z max is still 10.
+#[test]
+fn far_end_through_all_cut_of_a_box() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"corner": [0, 0, 0], "length": 20, "width": 20, "height": 10, "body_name": "Block"}));
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Hole"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [8, 8], "p1": [12, 12]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"sketch": "Hole", "operation": "cut", "through_all": true, "direction": "positive", "targets": ["Block"]}));
+    assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+    let b = body(&mut s, "Block");
+    let volume = b["volume_mm3"].as_f64().unwrap();
+    let z_max = b["bbox"]["max"][2].as_f64().unwrap();
+    assert!((volume - 3840.0).abs() < 0.1, "volume {volume}");
+    assert!((z_max - 10.0).abs() < 1e-6, "z max {z_max}");
+}
+
 /// A revolved shell (cone, cylinder or torus) under a small block's sketch at z = 0, and a
 /// join extrude of that sketch To the shell's inner face with `extra` params. Returns the session
 /// and the body's name.
@@ -1503,4 +1682,84 @@ fn extend_the_to_face_must_be_a_boolean() {
         let (_, r) = bar_and_post([[-4.0, -4.0], [4.0, 4.0]], json!({"extend_to_face": bad}));
         assert!(r.expect_err("refused").to_string().contains("extend_to_face"));
     }
+}
+
+/// #23614: a sketch plane through a cylinder has its surface on both sides of the profile; the cut
+/// To that face ends on the side the pick is on. Over the unit square (x ±0.5) on y = 0, with the
+/// cylinder r 5 about the line (0, 1), the surface lies at y = 1 ∓ √(25 − x²): toward −y the cut
+/// takes A − 1 and toward +y it takes A + 1, A = ∫ √(25 − x²) dx over x ±0.5.
+#[test]
+fn a_cut_to_a_cylinder_on_both_sides_of_the_profile_ends_on_the_side_picked() {
+    let (a, r) = (0.5_f64, 5.0_f64);
+    let area = a * (r * r - a * a).sqrt() + r * r * (a / r).asin();
+    for extend in [false, true] {
+        for (pick_y, want) in [(-4.0, area - 1.0), (6.0, area + 1.0)] {
+            let mut s = Session::default();
+            run(&mut s, "solid.cylinder", json!({"base": [0, 1, 0], "axis": [0, 0, 1], "radius": r, "height": 10, "body_name": "B"}));
+            // x along +x, y along +z: the normal is −y.
+            run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 0], "x_dir": [1, 0, 0], "y_dir": [0, 0, 1]}}));
+            run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-a, 2], "p1": [a, 3]}));
+            run(&mut s, "sketch.finish", json!({}));
+            run(&mut s, "solid.extrude", json!({"operation": "cut", "to": [0, pick_y, 2.5], "extend_to_face": extend}));
+            let left = body(&mut s, "B")["volume_mm3"].as_f64().unwrap();
+            let removed = PI * r * r * 10.0 - left;
+            assert!((removed - want).abs() < 1e-6, "extend {extend}, pick y {pick_y}: removed {removed}, want {want}");
+        }
+    }
+}
+
+/// #23612: a cut up to a face it splits, patterned about the axis, with the To pick inside the
+/// seed's own footprint: every copy still ends on that face, so four copies remove four cuts.
+#[test]
+fn a_pattern_of_a_cut_that_splits_its_to_face_ends_each_copy_on_it() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 0], "x_dir": [0, 0, -1], "y_dir": [0, 1, 0]}, "name": "rp"}));
+    run(
+        &mut s,
+        "sketch.line",
+        json!({"points": [[10, 15], [10, 17], [-7, 17], [-7, 13], [-5, 13], [-12, 6], [-14, 6], [-14, 3], [-10, 3], [-10, 5], [0, 15], [10, 15]], "infer": false}),
+    );
+    run(&mut s, "sketch.finish", json!({}));
+    run(
+        &mut s,
+        "solid.revolve",
+        json!({"sketch": "rp", "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}, "angle": "360 deg", "operation": "new", "name": "b"}),
+    );
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, -10], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}, "name": "cs"}));
+    run(
+        &mut s,
+        "sketch.arc.center_point",
+        json!({"center": [0, 0], "start": [-2.257426309670094, -12.802500789158705], "end": [2.2574263096700897, -12.802500789158707]}),
+    );
+    run(
+        &mut s,
+        "sketch.line",
+        json!({"points": [[2.2574263096700897, -12.802500789158707], [1.0418890660015798, -5.908846518073249]], "infer": false}),
+    );
+    run(
+        &mut s,
+        "sketch.arc.center_point",
+        json!({"center": [0, 0], "start": [1.0418890660015798, -5.908846518073249], "end": [-1.041889066001582, -5.908846518073248], "clockwise": true}),
+    );
+    run(
+        &mut s,
+        "sketch.line",
+        json!({"points": [[-1.041889066001582, -5.908846518073248], [-2.257426309670094, -12.802500789158705]], "infer": false}),
+    );
+    run(&mut s, "sketch.finish", json!({}));
+    let whole = run(&mut s, "inspect.measure", json!({}))["bodies"][0]["volume_mm3"].as_f64().unwrap();
+    run(
+        &mut s,
+        "solid.extrude",
+        json!({"sketch": "cs", "operation": "cut", "name": "cx", "direction": "positive", "to": [0, -10, 8], "extend_to_face": true}),
+    );
+    let one = whole - run(&mut s, "inspect.measure", json!({}))["bodies"][0]["volume_mm3"].as_f64().unwrap();
+    run(
+        &mut s,
+        "solid.pattern.circular",
+        json!({"features": ["cx"], "name": "cp", "axis": {"origin": [0, 0, 0], "dir": [0, 0, 1]}, "count": 4, "angle": "360 deg"}),
+    );
+    let all = whole - run(&mut s, "inspect.measure", json!({}))["bodies"][0]["volume_mm3"].as_f64().unwrap();
+    assert!((one - 69.638637155).abs() < 1e-6, "one cut removes {one}");
+    assert!((all - 4.0 * one).abs() < 1e-6, "four copies remove {all}, one cut {one}");
 }

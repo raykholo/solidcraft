@@ -491,6 +491,14 @@ mod imp {
                          run on tangentially into each other, or meet in a way no blend corner builds){why}"
                     ))
                 }
+                // Not a size a smaller radius fixes: the face has no width there at all.
+                SmError::FaceClosesToPoint { at } => {
+                    let at = at.map(|[x, y, z]| format!(" at ({x:.3}, {y:.3}, {z:.3})")).unwrap_or_default();
+                    KernelError::Invalid(format!(
+                        "the {what} cannot be built: a face beside its edge narrows to a point{at}, where the edge touches another edge \
+                         of that face tangentially, so no {what} of any size fits there"
+                    ))
+                }
                 SmError::NoRoom => KernelError::TooLarge(format!("the {what} is larger than the faces beside its edges allow")),
                 // Not a size a smaller radius fixes: solidcore builds no swept turn there.
                 SmError::TurnRefused { why, at, .. } => {
@@ -753,6 +761,31 @@ mod tests {
         assert!(!text.contains("ball") && !text.contains("roll"), "{text}");
     }
 
+    /// #16404: a 35 mm boss on a 50 mm base, 7.5 mm off its centre, so the boss's base circle
+    /// touches the base's rim at (0, -25, 15) and the top face between them narrows to a point
+    /// there. A round of the boss's base circle is refused at any radius, naming that point; with
+    /// the boss 1 mm clear of the rim it is too large, with the largest radius that fits.
+    #[test]
+    fn a_round_beside_a_face_that_narrows_to_a_point_is_refused_naming_it() {
+        let on_base = |offset: f64| {
+            let base = crate::cylinder(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0), 25.0, 15.0).unwrap();
+            let boss = crate::cylinder(Vec3::new(0.0, -offset, 15.0), Vec3::new(0.0, 0.0, 1.0), 17.5, 25.0).unwrap();
+            crate::boolean(&base, &boss, crate::BoolOp::Union).unwrap().unwrap()
+        };
+        let touching = on_base(7.5);
+        let joint = Vec3::new(17.5, -7.5, 15.0);
+        for radius in [2.0, 0.5] {
+            let e = imp::blend(&touching, "fillet", Kind::Round(FilletTurn::Mitre), &[joint], &[radius]).unwrap_err();
+            let KernelError::Invalid(text) = &e else { panic!("r{radius}: {e:?}") };
+            assert!(text.contains("the fillet cannot be built: a face beside its edge narrows to a point at ("), "r{radius}: {text}");
+            assert!(text.contains("-25.000, 15.000), where the edge touches another edge of that face tangentially"), "r{radius}: {text}");
+        }
+        let clear = on_base(6.5);
+        let e = imp::blend(&clear, "fillet", Kind::Round(FilletTurn::Mitre), &[Vec3::new(17.5, -6.5, 15.0)], &[2.0]).unwrap_err();
+        let KernelError::TooLarge(text) = &e else { panic!("{e:?}") };
+        assert!(text.contains("the largest radius that fits is 0.99"), "{text}");
+    }
+
     /// A fixed-angle chamfer's refusal identifies the edge, limiting top face and first
     /// distance. Two explicit setbacks retain the common scale of both inputs.
     #[test]
@@ -844,6 +877,25 @@ mod tests {
             .record
             .is_ok()
         );
+    }
+
+    /// #18204: a round beside a 0.8 mm chamfer on the neighbouring top edge, with a radius 1.5e-5 to
+    /// 2.5e-5 mm over the chamfer's size, is built and passes SMLib's check, like the radii just
+    /// under and just over that band; it failed with "Unable to map new Fillet Edge back to Edge
+    /// in Target Brep". Its volume is measured in solidcore's blend tests.
+    #[test]
+    fn a_round_a_hair_larger_than_the_chamfer_beside_it_is_built() {
+        let b = box_solid(Vec3::new(0.0, -4.15, 0.0), Vec3::new(33.0, 4.15, 9.7)).unwrap();
+        let c = imp::blend(&b, "chamfer", Kind::Chamfer, &[Vec3::new(33.0, 0.0, 9.7)], &[0.8]).unwrap();
+        for g in [1.3e-5, 1.5e-5, 1.8e-5, 2.0e-5, 2.5e-5, 3.0e-5] {
+            let r = imp::blend(&c, "fillet", Kind::Round(FilletTurn::Mitre), &[Vec3::new(16.5, 4.15, 9.7)], &[0.8 + g]);
+            let r = match r {
+                Ok(r) => r,
+                Err(e) => panic!("g {g}: {e}"),
+            };
+            assert_eq!(r.face_count(), 8, "g {g}");
+            assert!(matches!(crate::validity(&r).smlib, Some(crate::SmlibCheck::Valid)), "g {g}");
+        }
     }
 
     #[test]

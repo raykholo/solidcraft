@@ -32,6 +32,7 @@ use solidcore::blend::fillet_solver::p1::FilletSurfaceGeneratorType;
 use solidcore::curve::curve::Curve;
 use solidcore::error::{SolidError, SM_ERR, SM_ERR_INVALID_INPUT};
 use solidcore::kernel::{Kernel, KernelOptions, UpstreamFixes};
+use solidcore::math::det;
 use solidcore::math::{Point3, Vec3};
 use solidcore::primitive::api_curves::{create_arc, create_line_segment};
 use solidcore::primitive::api_primitives::create_box;
@@ -91,7 +92,7 @@ fn arc(c: (f64, f64), r: f64, from: f64, to: f64) -> Curve {
 
 /// R25 disc with a tab (sides x = +-4, R2 corners, top y = 280/9 + 2), 2 thick (#2176).
 fn plate(k: &mut Kernel) -> Brep {
-    let t = (4.0_f64 / 25.0).acos();
+    let t = det::acos(4.0_f64 / 25.0);
     let y = (625.0_f64 - 16.0).sqrt();
     let cy = 280.0 / 9.0;
     let curves = [
@@ -231,8 +232,8 @@ fn an_edge_between_tangent_faces_has_no_blend() {
 /// smallest radius that rounds it; that radius, a hair more, is not; a round of 0.5 builds.
 #[test]
 fn a_round_within_the_tolerance_of_its_edge_is_refused() {
-    let turn = SLOPE.atan();
-    let reach = 1.0 / (0.5 * turn).cos() - 1.0;
+    let turn = det::atan(SLOPE);
+    let reach = 1.0 / det::cos(0.5 * turn) - 1.0;
     let mut k = kernel(|_| {});
     let mut b = crease(&mut k);
     let e = pick(&k, &b, [10.0, 0.0, 2.5]);
@@ -474,6 +475,117 @@ fn a_setback_asked_past_a_far_cut_names_the_largest_with_its_ease() {
     };
     assert!((largest - want).abs() <= 1e-9, "{largest} against {want}");
     run(largest).0.unwrap();
+}
+
+/// #13649: the corner above asked past the right edge's room, 40 (its length: the Mitre at its
+/// far vertex sets nothing back), with an ease of 1. The room allows 40 less the ease and the
+/// fit margin, but the far Mitre cuts the right edge's round at 35, so the refusal names the
+/// lesser bound, 35 less the ease and the fit margin, as asked 37 does; main named the room's
+/// from the overlap check before the trace. The size named is the one the test above names
+/// and builds.
+#[test]
+fn a_setback_asked_past_its_room_names_a_far_cut_short_of_it() {
+    let at = [
+        [30.0, 40.0, 50.0],
+        [60.0, 20.0, 50.0],
+        [60.0, 40.0, 25.0],
+        [30.0, 0.0, 50.0],
+    ];
+    let corner = Point3::new(60.0, 40.0, 50.0);
+    let run = |setback: f64| -> (Result<(), SolidError>, VertexId, f64) {
+        let mut k = kernel(|_| {});
+        let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 50.0).unwrap();
+        let edges: Vec<EdgeId> = at.iter().map(|&p| pick(&k, &b, p)).collect();
+        let tol = edge::tolerance(&b, edges[1]).unwrap();
+        let v = b
+            .vertices()
+            .ids()
+            .find(|&v| b.vertex(v).unwrap().point.distance(corner) < 1e-9)
+            .unwrap();
+        let xs = vec![FilletSurfaceGeneratorType::Circular; 4];
+        let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+        s.prepare_per_edge_constant_radius(&mut k, &edges, &[5.0; 4], &xs, 1, 1.0)
+            .unwrap();
+        s.set_set_back_fill(v, setback, 1.0, false);
+        s.create_corners(&k, None).unwrap();
+        (s.do_filleting(&mut k, None), v, tol)
+    };
+    for asked in [40.0, 45.0] {
+        let (r, v, tol) = run(asked);
+        let want = 35.0 - 1.0 - 1000.0 * tol;
+        let largest = match r {
+            Err(SolidError::BlendRefused {
+                refusal:
+                    BlendRefusal::SetbackTooLong {
+                        vertex,
+                        largest,
+                        why: SetbackTooLongWhy::PastRails,
+                    },
+                ..
+            }) if vertex == v => largest,
+            other => panic!("asked {asked}: {other:?}"),
+        };
+        assert!(
+            (largest - want).abs() <= 1e-9,
+            "asked {asked}: {largest} against {want}"
+        );
+    }
+}
+
+/// #13649: two Setback corners asked setbacks that overlap on the edge they share are still
+/// refused before the trace (no far cut changes a claim between two setbacks). The box
+/// 60 x 40 x 40 rounded 5 on its back top edge (60 long) and on the two other edges at each of
+/// its ends, asked 35 at (60, 40, 40) and 30 at (0, 40, 40): `Overlap` at either corner, naming
+/// 60 less the other's setback and the fit margin (every other edge there is 40 long).
+#[test]
+fn two_setbacks_that_overlap_on_their_edge_are_refused_before_the_trace() {
+    let at = [
+        [30.0, 40.0, 40.0],
+        [60.0, 20.0, 40.0],
+        [60.0, 40.0, 20.0],
+        [0.0, 20.0, 40.0],
+        [0.0, 40.0, 20.0],
+    ];
+    let mut k = kernel(|_| {});
+    let mut b = create_box(&mut k, Point3::new(0.0, 0.0, 0.0), 60.0, 40.0, 40.0).unwrap();
+    let edges: Vec<EdgeId> = at.iter().map(|&p| pick(&k, &b, p)).collect();
+    let tol = edge::tolerance(&b, edges[0]).unwrap();
+    let vertex = |p: Point3| {
+        b.vertices()
+            .ids()
+            .find(|&v| b.vertex(v).unwrap().point.distance(p) < 1e-9)
+            .unwrap()
+    };
+    let (v1, v2) = (
+        vertex(Point3::new(60.0, 40.0, 40.0)),
+        vertex(Point3::new(0.0, 40.0, 40.0)),
+    );
+    let xs = vec![FilletSurfaceGeneratorType::Circular; 5];
+    let mut s = FilletSession::new(&mut k, &mut b).unwrap();
+    s.prepare_per_edge_constant_radius(&mut k, &edges, &[5.0; 5], &xs, 1, 1.0)
+        .unwrap();
+    s.set_set_back_fill(v1, 35.0, 0.0, false);
+    s.set_set_back_fill(v2, 30.0, 0.0, false);
+    s.create_corners(&k, None).unwrap();
+    match s.do_filleting(&mut k, None) {
+        Err(SolidError::BlendRefused {
+            refusal:
+                BlendRefusal::SetbackTooLong {
+                    vertex,
+                    largest,
+                    why: SetbackTooLongWhy::Overlap,
+                },
+            ..
+        }) => {
+            let want = if vertex == v1 { 30.0 } else { 35.0 };
+            assert!(vertex == v1 || vertex == v2, "{vertex:?}");
+            assert!(
+                (largest - (60.0 - want - 1000.0 * tol)).abs() <= 1e-9,
+                "{largest} at {vertex:?}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 /// #3145: at an N x N corner (the vertex named set back, no fill asked) a setback set on the

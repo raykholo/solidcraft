@@ -307,6 +307,13 @@ offset_face
   inputs:
     Distance = offset_face.distance (Length)
   expressions: offset_face.distance
+transform_face
+  inputs:
+    X distance = tx (Length)
+    Y distance = ty (Length)
+    Z distance = tz (Length)
+    Angle = turn (Angle)
+  expressions: tx, ty, tz, turn, ox, oy, oz
 delete_face
 bounding_solid
   inputs:
@@ -532,6 +539,16 @@ surface_midsurface
     Min thickness = smid.min_thickness (Length)
     Fill holes below = smid.suppress_holes_below (Length)
   expressions: smid.max_thickness, smid.min_thickness, smid.suppress_holes_below
+surface_fillet
+  inputs:
+    Radius = sfil.radius (Length)
+  expressions: sfil.radius
+surface_chamfer
+  inputs:
+    Distance = schm.distance (Length)
+    Distance 2 = schm.distance2 (Length)
+    Angle = schm.angle (Angle)
+  expressions: schm.distance, schm.distance2, schm.angle
 surface_blend
 surface_boundary
 surface_network

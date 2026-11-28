@@ -1193,7 +1193,7 @@ impl JsonSchema for CommandParams {
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
-            "description": "The parameters of the feature's command, as `describe_command` shows them for it: the feature is rebuilt from them. Keys it takes that this leaves out take their defaults, except that some are kept from the feature being edited: an extrude's or revolve's `convention` and an extrude's run-to body, a feature's `participants`, a frame member's `names` (when `body_name` is unchanged) and `next_pair`, a thread's old size, a perforation's outline and an emboss's face. Any value is read here and passed on, and the command refuses what is not its parameters. `name` is ignored: the feature keeps its name.",
+            "description": "The parameters of the feature's command, as `describe_command` shows them for it: the feature is rebuilt from them. Keys it takes that this leaves out take their defaults, except that some are kept from the feature being edited: an extrude's or revolve's `convention` and an extrude's run-to body, a feature's `participants`, a frame member's `names` (when `body_name` is unchanged) and `next_pair`, a thread's old size, a perforation's outline and an emboss's face. Any value is read here and passed on, and the command refuses what is not its parameters. `name` is ignored: the feature keeps its name. Body patterns accept a `body_name_template` string or a `body_names` list of pinned names; giving both is refused.",
             "type": "object"
         })
     }
@@ -1555,7 +1555,8 @@ pub struct TimelineRedefineParams {
     #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     #[schemars(with = "CommandId")]
     pub command: Option<CommandId>,
-    /// That command's parameters. Default: none.
+    /// That command's parameters. Body patterns also accept `body_name_template` as
+    /// `body_names`; both must be nonempty strings and agree if supplied together. Default: none.
     #[serde(default)]
     pub params: Option<CommandParams>,
 }

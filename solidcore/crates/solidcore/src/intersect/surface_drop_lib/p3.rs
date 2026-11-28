@@ -2950,8 +2950,18 @@ impl Surface {
                             }
                         }
 
-                        // fix boundary tangents
-                        if !preserve_uv {
+                        // fix boundary tangents (not upstream: with the traced jets kept, only
+                        // a tangent at an end on the boundary, or within the UV tolerance of
+                        // it, that would take the span out of the domain, before the span is
+                        // tested, #22816)
+                        if preserve_uv {
+                            let _fix_bt_change = start.keep_boundary_tangents_inside(
+                                &s_uv_domain,
+                                &mut end,
+                                uv_tol_x,
+                                uv_tol_y,
+                            );
+                        } else {
                             let _fix_bt_change = start.fix_boundary_tangents(
                                 &s_uv_domain,
                                 &mut end,
@@ -5214,7 +5224,7 @@ mod tests {
             let p = uv.evaluate_point(&k, t).unwrap();
             let c = curve.evaluate_point(&k, t).unwrap();
             assert!(
-                (p.x - c.x).hypot(p.y - c.y) <= tol,
+                det::hypot(p.x - c.x, p.y - c.y) <= tol,
                 "at {t}: uv {p:?}, curve {c:?}"
             );
         }

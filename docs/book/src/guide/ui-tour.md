@@ -84,6 +84,9 @@ view.
   with Select Other** in Preferences › Sketch & selection to restore the original visible-only
   list under the pointer. Picking a hidden object leaves its
   visibility unchanged, so an Extrude profile can be chosen through a covering body.
+  Hold over a closed cavity to list the faces the pointer crosses inside the solid, nearest first
+  within that body. Hover a face row to see its shape through the wall. With Extrude open, click
+  the row for a flat end of the cavity to use it as the profile.
   The sketch being edited comes first. Hovering a row lights it up; clicking it
   selects it (Shift or Ctrl adds), and in a command's dialog it goes to the active selection box.
   Esc or a click elsewhere closes the list. Clicking again on the same spot, with nothing changed

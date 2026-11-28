@@ -549,12 +549,17 @@ pub(crate) fn cylinder_tool(body: Body) -> Traced {
 /// A pipe swept from its circle (and, when hollow, the hole inside it), whose first
 /// `outer_segments` profile segments are the circle: its end faces `start` and `end`, as a
 /// sweep's caps are, its outside wall `side`, as a cylinder's is, and a hollow pipe's inside wall
-/// `inner` (#14897).
-pub(crate) fn pipe_tool(body: Body, outer_segments: usize) -> Traced {
+/// `inner` (#14897). Before that a pipe's faces were named by their place in the body it built
+/// (`face:<k>`), and a design saved then refers to them so: a pipe made as a body of its own
+/// (`own_body`) still answers to those names, as each is the face it named (#12485). A pipe
+/// joined to or cut from a body was named by its faces' places in the result, which its own
+/// faces don't tell: such a name finds nothing, to be picked again.
+pub(crate) fn pipe_tool(body: Body, outer_segments: usize, own_body: bool) -> Traced {
     let roles = body.history().filter(|h| h.operands == 0).map(|h| {
         h.faces
             .iter()
-            .map(|f| {
+            .enumerate()
+            .map(|(k, f)| {
                 let mut roles: Vec<String> = Vec::new();
                 for origin in &f.origins {
                     let role = match *origin {
@@ -573,6 +578,9 @@ pub(crate) fn pipe_tool(body: Body, outer_segments: usize) -> Traced {
                     if !roles.iter().any(|r| r == role) {
                         roles.push(role.to_string());
                     }
+                }
+                if own_body && !roles.is_empty() {
+                    roles.push(format!("face:{k}"));
                 }
                 roles
             })

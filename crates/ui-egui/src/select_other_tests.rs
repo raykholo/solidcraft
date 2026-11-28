@@ -328,7 +328,7 @@ fn overlapping_bodies_list_both_and_the_hidden_one_can_be_picked() {
     let rows = labels(&h);
     assert!(rows.iter().any(|r| r == "Body · Outer") && rows.iter().any(|r| r == "Body · Inner"), "{rows:?}");
     let faces = rows.iter().filter(|r| r.starts_with("Face ")).count();
-    assert_eq!(faces, 2, "the nearest face of each body: {rows:?}");
+    assert_eq!(faces, 4, "the front and back face of each box: {rows:?}");
     let i = rows.iter().position(|r| r == "Body · Inner").unwrap();
     h.call("ui.selectOther", json!({"pick": i}));
     assert_eq!(h.app.session.selection, [Sel::Body { name: "Inner".into() }]);
@@ -830,6 +830,64 @@ fn see_through_includes_hidden_bodies_and_occluded_edges_but_normal_picks_do_not
     assert!(
         !crate::viewport::pick_all(&h.app, &proj, pos).iter().any(|hit| matches!(hit, crate::viewport::Hit::Face { body, .. } if body == "Hidden"))
     );
+}
+
+#[test]
+fn hold_inside_extrude_reaches_both_ends_of_an_enclosed_cavity() {
+    let mut h = Harness::new();
+    h.app.set_origin_shown(false);
+    h.app.run("solid.box", json!({"corner":[-15,-12,0],"length":30,"width":24,"height":12,"body_name":"Housing"})).unwrap();
+    h.app.run("solid.cylinder", json!({"base":[3,2,3],"radius":5,"height":6,"operation":"cut","targets":["Housing"]})).unwrap();
+    h.call("ui.view", json!({"view":"top"}));
+    h.call("ui.view", json!({"view":"fit"}));
+    h.app.start("solid.extrude");
+    h.settle();
+    let at = h.at(&json!({"world":[3,2,9]})).unwrap();
+    let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let pos = egui::pos2(at[0] as f32, at[1] as f32);
+    let face_rows = |rows: &[super::Row]| {
+        rows.iter()
+            .enumerate()
+            .filter_map(|(i, row)| match &row.sel {
+                Sel::Face { body, index, point } if body == "Housing" => Some((i, *index, point.z)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let visible = face_rows(&super::rows_capped(&h.app, &proj, pos, false).0);
+    assert_eq!(visible.len(), 1);
+    assert!((visible[0].2 - 12.0).abs() < 1e-6);
+
+    h.step(&json!({"hold":at})).unwrap();
+    let rows = face_rows(&h.app.viewport.select_other.popup.as_ref().unwrap().rows);
+    assert_eq!(rows.len(), 4, "one row per crossing face: {rows:?}");
+    for ((_, _, z), expected) in rows.iter().zip([12.0, 9.0, 3.0, 0.0]) {
+        assert!((z - expected).abs() < 1e-6);
+    }
+    for &(row, index, _) in &rows[1..3] {
+        h.step(&json!({"move":{"handle":format!("select_other:{row}")}})).unwrap();
+        assert_eq!(super::hovered_face(&h.app), Some(("Housing", index)));
+        assert!(!crate::viewport::build_highlight(&h.app).merged().xray.is_empty());
+    }
+    h.step(&json!({"click":{"handle":format!("select_other:{}", rows[2].0)}})).unwrap();
+    assert_eq!(super::hovered_face(&h.app), None);
+    let dialog = h.app.dialog.as_mut().unwrap();
+    assert!(matches!(dialog.inputs[0].items.as_slice(), [Sel::Face { index, .. }] if *index == rows[2].1));
+    let crate::dialogs::Kind::Extrude { operation, distance, .. } = &mut dialog.kind else { panic!("expected Extrude") };
+    *operation = 0; // New Body
+    *distance = "1".into();
+    let commands = crate::dialogs::apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap();
+    h.app.dialog = None;
+    for (command, params) in commands {
+        h.app.run(&command, params).unwrap();
+    }
+    let world = h.app.session.world_state().unwrap();
+    assert_eq!(world.bodies.len(), 2);
+    let disk = &world.bodies.iter().find(|b| b.name != "Housing").unwrap().body;
+    let bounds = disk.exact_bounds().unwrap();
+    assert!((bounds.min.z - 3.0).abs() < 1e-6 && (bounds.max.z - 4.0).abs() < 1e-6);
+    let volume = solidcraft_engine::kernel::measure(disk).unwrap().volume;
+    assert!((volume - 25.0 * std::f64::consts::PI).abs() < 1e-5);
 }
 
 #[test]

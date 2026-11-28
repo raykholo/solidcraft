@@ -67,6 +67,23 @@ impl HoleThreadDraft {
     }
 }
 
+/// Resolve sizes with the document's literal precedence and text/number parameter evaluator.
+pub(crate) fn evaluated_designation(doc: &Document, source: &str) -> String {
+    doc.eval_thread_designation(source, &doc.param_values().0)
+}
+
+pub(crate) fn tapped_size(doc: &Document, source: &str) -> Result<TappedThread, String> {
+    let name = evaluated_designation(doc, source);
+    parse_tapped_thread(&name).ok_or_else(|| {
+        name.trim()
+            .strip_prefix(['M', 'm'])
+            .and_then(|d| d.trim().parse::<f64>().ok())
+            .and_then(solidcraft_engine::doc::thread_forms::no_coarse_pitch)
+            .or_else(|| solidcraft_engine::doc::untabulated_taper_tap(&name))
+            .unwrap_or_else(|| format!("unknown tapped thread `{name}` (ISO metric or a catalogued UNC/UNF, G, Rp, Rc or NPT size)"))
+    })
+}
+
 /// Tapped holes use a shared, finite catalogue; the engine derives the physical drill.
 /// Custom remains a dialog mode even when its current values match a catalogue size.
 pub(crate) fn hole_rows(
@@ -87,7 +104,7 @@ pub(crate) fn hole_rows(
         TappedThreadFamily::Rc,
         TappedThreadFamily::Npt,
     ];
-    let family = parse_tapped_thread(designation).map(|s| s.family).unwrap_or(TappedThreadFamily::Metric);
+    let family = parse_tapped_thread(&evaluated_designation(doc, designation)).map(|s| s.family).unwrap_or(TappedThreadFamily::Metric);
     let mut profile = families.iter().position(|f| *f == family).unwrap_or(0);
     let before_profile = profile;
     form_row(ui, "Profile", |ui| combo(ui, "hole_thread_profile", &["ISO metric", "UNC", "UNF", "G / BSPP", "Rp", "Rc", "NPT"], &mut profile));
@@ -102,9 +119,15 @@ pub(crate) fn hole_rows(
         *designation = size.designation.clone();
         *custom = None;
     }
-    let current = parse_tapped_thread(designation);
+    let current = parse_tapped_thread(&evaluated_designation(doc, designation));
     let catalogue = current.as_ref().and_then(|s| sizes.iter().position(|p| p.designation == s.designation));
-    if family == TappedThreadFamily::Metric
+    let evaluated = evaluated_designation(doc, designation);
+    let expression = evaluated != *designation;
+    if expression {
+        *custom = None;
+    }
+    if !expression
+        && family == TappedThreadFamily::Metric
         && (custom.as_ref().is_some_and(|draft| draft.source != *designation) || (custom.is_none() && catalogue.is_none()))
     {
         *custom = Some(HoleThreadDraft::new(designation));
@@ -138,12 +161,12 @@ pub(crate) fn hole_rows(
     });
     if matches!(family, TappedThreadFamily::G | TappedThreadFamily::Rp | TappedThreadFamily::Rc | TappedThreadFamily::Npt) {
         form_row(ui, "Thread diameter", |ui| {
-            if let Some(size) = parse_tapped_thread(designation) {
+            if let Some(size) = parse_tapped_thread(&evaluated_designation(doc, designation)) {
                 ui.label(format!("{:.3} mm, {}°", size.major_diameter, size.profile_degrees()));
             }
         });
         form_row(ui, "Pitch", |ui| {
-            if let Some(size) = parse_tapped_thread(designation) {
+            if let Some(size) = parse_tapped_thread(&evaluated_designation(doc, designation)) {
                 ui.label(format!("{:.4} mm ({} TPI)", size.pitch, (25.4 / size.pitch).round()));
             }
         });
@@ -158,8 +181,12 @@ pub(crate) fn hole_rows(
         enter |= diameter_enter || pitch_enter;
     }
     let response = form_row(ui, "Designation", |ui| crate::ui_kit::cell_editor(ui, designation_id, designation, "M5, M5x0.5, 1/4-20 UNC", false));
-    if response.changed() && custom.is_some() {
-        *custom = Some(HoleThreadDraft::new(designation));
+    if response.changed() {
+        if evaluated_designation(doc, designation) != *designation {
+            *custom = None;
+        } else if custom.is_some() {
+            *custom = Some(HoleThreadDraft::new(designation));
+        }
     }
     // The drill: the tap maker's for the size, or one the user types, from the thread's minor
     // diameter to 5% over the tap maker's. A new size goes back to its own drill.
@@ -168,7 +195,7 @@ pub(crate) fn hole_rows(
     }
     let mut drill_enter = false;
     form_row(ui, "Tap drill diameter", |ui| {
-        match parse_tapped_thread(designation).filter(|_| custom.as_ref().is_none_or(|draft| draft.error.is_none())) {
+        match parse_tapped_thread(&evaluated_designation(doc, designation)).filter(|_| custom.as_ref().is_none_or(|draft| draft.error.is_none())) {
             Some(size) => {
                 let default = tap_drill_label(&size);
                 let (lo, hi) = size.drill_range();
@@ -449,7 +476,9 @@ pub(crate) fn rows(
     let mut form = o.form;
     pick(ui, "Form", "thread_form", &mut form, FORMS);
     if form != o.form {
-        reset |= change_form(designation, suggested, o.form, form);
+        let mut evaluated = evaluated_designation(doc, designation);
+        reset |= change_form(&mut evaluated, suggested, o.form, form);
+        *designation = evaluated;
         o.form = form;
     }
     let f = o.form;
@@ -469,7 +498,12 @@ pub(crate) fn rows(
     }
 
     if !f.sizes().is_empty() {
-        size_rows(ui, f, designation, suggested);
+        let mut evaluated = evaluated_designation(doc, designation);
+        let before = evaluated.clone();
+        size_rows(ui, f, &mut evaluated, suggested);
+        if evaluated != before {
+            *designation = evaluated;
+        }
     }
     let hint = solidcraft_ui_text::format("thread.fits_the_face", &[("example", &example(f))]);
     let (submitted, changed) = text_row(ui, "Designation", designation, &hint);

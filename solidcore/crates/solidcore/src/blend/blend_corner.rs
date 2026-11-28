@@ -59,6 +59,7 @@ use crate::error::{EntityRef, Failure, Result, SolidError, SM_ERR_NULL_POINTER};
 use crate::geom::global_solver::SolverOperation;
 use crate::intersect::surface_intersector::p1::SrfIndex;
 use crate::kernel::Kernel;
+use crate::math::det;
 use crate::math::{Point2, Point3, Vec3, EFF_ZERO};
 use crate::nurbs::b_spline_curve::p1::{BSplineCurveForm, CanonicalData, KnotType};
 use crate::nurbs::b_spline_curve::BSplineCurve;
@@ -269,6 +270,12 @@ pub enum BlendEnd {
     /// `SM_BEND_AT_SMOOTH` (smlib 41a39ec): its edge runs on tangentially into an edge not
     /// blended, cut square to the edge there ([`end`]).
     AtSmooth,
+    /// Not the fork's: an End on its end face whose rail on one
+    /// face never reaches that face's side edge (the side edge dips towards the round and
+    /// turns back short of the rail, so the round run on past the vertex would never leave
+    /// the part through the end face). Cut square to its edge at the vertex, with the cap
+    /// of `AtSmooth` ([`end::cap_end_whose_rail_misses_side_edge`]).
+    Capped,
 }
 
 /// `SmBlendTurn`: a Turn's two modes.
@@ -352,6 +359,15 @@ impl BlendCorner {
     #[must_use]
     pub fn is_end_on_end_face(self) -> bool {
         self.event == BlendCornerEvent::End && self.end == BlendEnd::OnEndFace
+    }
+
+    /// An End cut by a plane through its vertex, whose patch is that cap
+    /// ([`FilletCorner::end_cap`](crate::blend::fillet_corner::p3::FilletCorner::end_cap)):
+    /// at a smooth vertex, or where a rail never reaches its side edge ([`BlendEnd::Capped`]).
+    #[must_use]
+    pub fn has_end_cap(self) -> bool {
+        self.event == BlendCornerEvent::End
+            && matches!(self.end, BlendEnd::AtSmooth | BlendEnd::Capped)
     }
 
     /// `IsClosedJoin` (the fork's 543d25a): a Join of one closed blended edge meeting
@@ -529,7 +545,7 @@ pub fn join_within_xsect_tolerance_deg(size: f64, xsect_tol: f64, tangency_tol_d
     let eps = f64::EPSILON;
     let budget = xsect_tol * (1.0 - 16.0 * eps) - 8.0 * eps * size;
     if budget > 0.0 {
-        crate::math::rad_to_deg(2.0 * (budget / (2.0 * size)).atan()).min(tangency_tol_deg)
+        crate::math::rad_to_deg(2.0 * det::atan(budget / (2.0 * size))).min(tangency_tol_deg)
     } else {
         0.0
     }
@@ -1026,7 +1042,7 @@ pub fn exact_mitre_curve(
     };
     let w = a.cross(u);
     let s_off = s_pnt - c;
-    let dt = s_off.dot(w).atan2(s_off.dot(u));
+    let dt = det::atan2(s_off.dot(w), s_off.dot(u));
     if dt.abs() <= EFF_ZERO || dt.abs() >= 0.99 * core::f64::consts::PI {
         return Ok(false);
     }
@@ -1036,8 +1052,8 @@ pub fn exact_mitre_curve(
     // curve runs as the edge does
     let mut arc = [
         (1.0, 0.0, 1.0),
-        (1.0, (0.5 * dt).tan(), (0.5 * dt).cos()),
-        (dt.cos(), dt.sin(), 1.0),
+        (1.0, det::tan(0.5 * dt), det::cos(0.5 * dt)),
+        (det::cos(dt), det::sin(dt), 1.0),
     ];
     if from_s {
         arc.reverse();
@@ -1239,11 +1255,11 @@ mod tests {
     #[test]
     fn blends_join_only_below_the_intersection_tolerance() {
         let deg = join_within_xsect_tolerance_deg(1.0, 2e-5, 10.0);
-        let bound = crate::math::rad_to_deg(2.0 * 1e-5_f64.atan());
+        let bound = crate::math::rad_to_deg(2.0 * det::atan(1e-5_f64));
         assert!(deg < bound, "{deg} not below {bound}");
         let a = deg.to_radians();
         assert!(
-            2.0 * (a / 2.0).tan() < 2e-5,
+            2.0 * det::tan(a / 2.0) < 2e-5,
             "{a}: the gap reaches the tolerance"
         );
         assert!(deg > bound * (1.0 - 1e-9), "{deg} far below {bound}");

@@ -12,7 +12,7 @@ const DELETE: TypedContract<WeldDeleteParams> = TypedContract::new();
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("weld.create", "Weld", crate::checked!("weld.create", create)).begins_edit()
         .at("WELDMENTS", "CREATE").icon("weld").contract(&CREATE).output(output_schema_for::<WeldCreated>)
-        .params("weld_type: fillet|butt|edge|plug|spot|seam|stud|surfacing|tack; size?: type-specific {a,z,z1,z2,h,s,d,w,t,l,e: length expr; n: positive integer}; picks?: grouped exact references; side?: arrow|other; process?: ISO 4063 text; density?, overlap?: optional expressions; spans?: {count,length_mm,pitch_mm}; symbol_standard?: iso2553_2019_a|iso2553_2019_b|aws_a2_4_2020; groove?, penetration?, root?, tack_mode?: names; root_gap?: length; add_fillet?: bool; ends?, spot_look?, reference_plane?: names; symbol?: settings symbol → id, number"),
+        .params("weld_type: fillet|butt|edge|plug|spot|seam|stud|surfacing|tack; size?: type-specific {a,z,z1,z2,h,s,d,w,t,l,e: length expr; n: positive integer}; picks?: grouped exact references; side?: arrow|other; process?: ISO 4063 text (135, 131-D, 522+15); position?: PA..PK; quality?: e.g. ISO 5817-C; wps?, tail_text?, filler?: text; ndt?: {methods: {VT|PT|MT|UT|RT: extent %}, note?}; density?, overlap?: optional expressions; spans?: {count,length_mm,pitch_mm}; symbol_standard?: iso2553_2019_a|iso2553_2019_b|aws_a2_4_2020; groove?, penetration?, root?, tack_mode?: names; root_gap?: length; add_fillet?: bool; ends?, spot_look?, reference_plane?: names; symbol?: settings symbol → id, number"),
     CommandSpec::new("weld.delete", "Delete Weld", crate::checked!("weld.delete", delete))
         .icon("delete").contract(&DELETE).output(output_schema_for::<WeldDeleted>).params("id: weld graphic identity → deleted"),
 ];
@@ -134,21 +134,12 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc.welds.len() >= MAX_WELDS {
         return Err(bad(CMD, "too many weld graphics"));
     }
-    let number = s
-        .doc
-        .welds
-        .iter()
-        .map(|w| w.number)
-        .max()
-        .unwrap_or(0)
-        .checked_add(1)
-        .filter(|n| *n <= 1_000_000)
-        .ok_or_else(|| bad(CMD, "too many weld numbers"))?;
+    let number = solidcraft_doc::weld::next_number(&s.doc.welds).ok_or_else(|| bad(CMD, "too many weld numbers"))?;
     if s.doc.next_item_id()? > solidcraft_doc::MAX_FEATURE_ID {
         return Err(bad(CMD, "too many document identities"));
     }
     let id = s.doc_mut().allocate_id()?;
-    s.doc_mut().welds.push(WeldRecord { id, number, settings, symbol });
+    s.doc_mut().welds.push(WeldRecord { id, number, label: None, settings, symbol });
     serde_json::to_value(WeldCreated { id, number: format!("W{number}"), param_warnings: Vec::new() }).map_err(|e| bad(CMD, e.to_string()))
 }
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {

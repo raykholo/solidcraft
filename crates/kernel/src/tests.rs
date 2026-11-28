@@ -876,6 +876,79 @@ fn loft_and_sweep() {
 }
 
 #[test]
+fn sweep_pipe_along_contiguous_tangent_3d_arcs_in_different_planes() {
+    let round6 = |v: Vec3| Vec3::new((v.x * 1e6).round() / 1e6, (v.y * 1e6).round() / 1e6, (v.z * 1e6).round() / 1e6);
+    let arc_from_3 = |a: Vec3, mid: Vec3, b: Vec3| -> PathSeg {
+        let (vb, vc) = (mid - a, b - a);
+        let n = vb.cross(vc);
+        let axis = n.normalized().unwrap();
+        let center = a + (n.cross(vb) * vc.len2() + vc.cross(n) * vb.len2()) * (0.5 / n.len2());
+        let (u, v) = (a - center, b - center);
+        let mut angle = u.cross(v).dot(axis).atan2(u.dot(v));
+        if angle <= 0.0 {
+            angle += std::f64::consts::TAU;
+        }
+        PathSeg::Arc { a, center, axis, angle }
+    };
+
+    let bend_r = 50.0_f64;
+    let pipe_r = 3.0_f64;
+    let disc = Region2 { outer: Loop2::circle(Vec2::ZERO, pipe_r), holes: vec![] };
+    let plane = Plane { origin: Vec3::ZERO, x: Vec3::Y, y: Vec3::Z };
+    let ang1 = 53.0_f64.to_radians();
+    let ang2 = 60.0_f64.to_radians();
+    let ang3 = 45.0_f64.to_radians();
+
+    // Case 1: three directly contiguous exact tangent 3D arcs in perpendicular planes.
+    let p1_end = Vec3::new(bend_r * ang1.sin(), bend_r * (1.0 - ang1.cos()), 0.0);
+    let t1 = Vec3::new(ang1.cos(), ang1.sin(), 0.0);
+    let n2 = Vec3::Z;
+    let axis2 = t1.cross(n2);
+    let p2_end = p1_end + t1 * (bend_r * ang2.sin()) + n2 * (bend_r * (1.0 - ang2.cos()));
+    let t2 = t1 * ang2.cos() + n2 * ang2.sin();
+    let n3 = Vec3::new(-ang1.sin(), ang1.cos(), 0.0);
+    let axis3 = t2.cross(n3);
+    let exact_arcs = [
+        PathSeg::Arc { a: Vec3::ZERO, center: Vec3::new(0.0, bend_r, 0.0), axis: Vec3::Z, angle: ang1 },
+        PathSeg::Arc { a: p1_end, center: p1_end + n2 * bend_r, axis: axis2, angle: ang2 },
+        PathSeg::Arc { a: p2_end, center: p2_end + n3 * bend_r, axis: axis3, angle: ang3 },
+    ];
+    let exact_body = sweep(&plane, &disc, &exact_arcs).unwrap();
+    let exact_vol = PI * pipe_r * pipe_r * bend_r * (ang1 + ang2 + ang3);
+    assert!(rel(measure(&exact_body).unwrap().volume, exact_vol) < 1e-3, "{} vs {exact_vol}", measure(&exact_body).unwrap().volume);
+
+    // Case 2: lead-in + two tangent 3D arcs in perpendicular planes separated by a 0.0009 mm
+    // 6-decimal rounded bridge + a directly contiguous third arc + lead-out (exercises the
+    // fitted curve-sweep path where a rounding-tilted short bridge previously folded the net).
+    let lead = 20.0_f64;
+    let bridge_len = 0.0009_f64;
+    let q1_start = Vec3::new(lead, 0.0, 0.0);
+    let q1_mid = Vec3::new(lead + bend_r * (ang1 * 0.5).sin(), bend_r * (1.0 - (ang1 * 0.5).cos()), 0.0);
+    let q1_end = Vec3::new(lead + bend_r * ang1.sin(), bend_r * (1.0 - ang1.cos()), 0.0);
+    let q2_start = q1_end + t1 * bridge_len;
+    let q2_mid = q2_start + t1 * (bend_r * (ang2 * 0.5).sin()) + n2 * (bend_r * (1.0 - (ang2 * 0.5).cos()));
+    let q2_end = q2_start + t1 * (bend_r * ang2.sin()) + n2 * (bend_r * (1.0 - ang2.cos()));
+    let q3_mid = q2_end + t2 * (bend_r * (ang3 * 0.5).sin()) + n3 * (bend_r * (1.0 - (ang3 * 0.5).cos()));
+    let q3_end = q2_end + t2 * (bend_r * ang3.sin()) + n3 * (bend_r * (1.0 - ang3.cos()));
+    let t3 = t2 * ang3.cos() + n3 * ang3.sin();
+    let q_out = q3_end + t3 * lead;
+    let (a1, m1, b1) = (round6(q1_start), round6(q1_mid), round6(q1_end));
+    let (a2, m2, b2) = (round6(q2_start), round6(q2_mid), round6(q2_end));
+    let (m3, b3) = (round6(q3_mid), round6(q3_end));
+    let bridged = [
+        PathSeg::Line { a: Vec3::ZERO, b: a1 },
+        arc_from_3(a1, m1, b1),
+        PathSeg::Line { a: b1, b: a2 },
+        arc_from_3(a2, m2, b2),
+        arc_from_3(b2, m3, b3),
+        PathSeg::Line { a: b3, b: round6(q_out) },
+    ];
+    let bridged_body = sweep(&plane, &disc, &bridged).unwrap();
+    let bridged_vol = PI * pipe_r * pipe_r * (2.0 * lead + bridge_len + bend_r * (ang1 + ang2 + ang3));
+    assert!(rel(measure(&bridged_body).unwrap().volume, bridged_vol) < 1e-3, "{} vs {bridged_vol}", measure(&bridged_body).unwrap().volume);
+}
+
+#[test]
 fn sweep_round_a_sharp_corner_is_mitred() {
     // A 2 × 2 square centred on an L of two 10 mm lines: lines alone would slide the profile
     // along the second leg within its own plane (an empty, inside-out body). Mitred, the
@@ -1156,6 +1229,87 @@ fn chamfer_top_loop_mitres() {
     let m = measure(&c).unwrap();
     assert!(rel(m.volume, 23730.666667) < 1e-6, "{}", m.volume);
     assert_eq!(m.merged.faces, 10);
+}
+
+/// #655: chamfers of the square-to-circle loft (`loft_and_sweep`, tests/oracle/17-loft) stay
+/// accepted. The action-matrix baseline records every `edge.chamfer` of that body as passing.
+/// Each edge is chamfered alone at the matrix distance
+/// `round3((min(own length, lengths of the edges that share an endpoint) * 0.1).max(0.01))`
+/// (`apps/solidcraft-cli/tests/action_matrix.rs`), the length being the display polyline.
+///
+/// The square's side is 40, and the creases that meet it are longer (`√(2500 − 400√2)`, from a
+/// corner `(±20, ±20, 0)` to the circle point in that direction `(±10/√2, ±10/√2, 40)`), so a
+/// bottom edge's distance is 4. Each top edge is a quarter of the radius-10 circle. The display
+/// mesh bisects that quarter until a chord sags at most the body's size / 1000 (the box diagonal
+/// `40√3`) and turns at most 20°: eight chords, `160 sin(π/32)`. A tenth of that rounds to 1.568,
+/// and a crease meets that arc, so it takes 1.568 too. The side faces are ruled, so the chamfer
+/// has no closed volume: one valid lump, strictly less than the loft, is the whole check.
+#[test]
+fn chamfer_square_to_circle_loft() {
+    let sq = Loop2::polygon(&[Vec2::new(-20.0, -20.0), Vec2::new(20.0, -20.0), Vec2::new(20.0, 20.0), Vec2::new(-20.0, 20.0)]);
+    let body = loft(&[(Plane::XY, sq), (Plane::XY.offset(40.0), Loop2::circle(Vec2::ZERO, 10.0))]).unwrap();
+    let loft_volume = measure(&body).unwrap().volume;
+    assert!(rel(loft_volume, 35080.725116) < 1e-6, "{loft_volume}");
+
+    // Same `round3` as the action matrix.
+    let round3 = |x: f64| {
+        let r = (x * 1000.0).round() / 1000.0;
+        if r == 0.0 { 0.0 } else { r }
+    };
+    let side = 40.0;
+    let quarter = 10.0 * std::f64::consts::FRAC_PI_2;
+    let inset = 20.0 - 5.0 * std::f64::consts::SQRT_2;
+    let crease_len = (2.0 * inset * inset + side * side).sqrt();
+    // Eight equal chords of the quarter: bisection stops at 11.25°, where the sag
+    // `10 (1 − cos(π/32))` is under `40√3 / 1000` and the turn is under 20°.
+    let chords = 8.0 * 20.0 * (std::f64::consts::PI / 32.0).sin();
+    assert!(crease_len > side && side > quarter && quarter > chords, "crease {crease_len}, arc {quarter}, chords {chords}");
+    let bottom_d = round3((side * 0.1).max(0.01));
+    let top_d = round3((chords * 0.1).max(0.01));
+    assert!((bottom_d - 4.0).abs() < 1e-12 && (top_d - 1.568).abs() < 1e-12, "{bottom_d} {top_d}");
+
+    let on_circle = 5.0 * std::f64::consts::SQRT_2;
+    let crease_mid = |x: f64, y: f64| Vec3::new((x + x.signum() * on_circle) * 0.5, (y + y.signum() * on_circle) * 0.5, 20.0);
+    // Bottoms, then the quarter-circle edges, then the creases (the matrix chamfers each alone).
+    let edges = [
+        (Vec3::new(0.0, -20.0, 0.0), bottom_d),
+        (Vec3::new(20.0, 0.0, 0.0), bottom_d),
+        (Vec3::new(0.0, 20.0, 0.0), bottom_d),
+        (Vec3::new(-20.0, 0.0, 0.0), bottom_d),
+        (Vec3::new(10.0, 0.0, 40.0), top_d),
+        (Vec3::new(0.0, 10.0, 40.0), top_d),
+        (Vec3::new(-10.0, 0.0, 40.0), top_d),
+        (Vec3::new(0.0, -10.0, 40.0), top_d),
+        (crease_mid(-20.0, 20.0), top_d),
+        (crease_mid(20.0, 20.0), top_d),
+        (crease_mid(20.0, -20.0), top_d),
+        (crease_mid(-20.0, -20.0), top_d),
+    ];
+    for (point, distance) in edges {
+        let made = chamfer(&body, &[point], distance).unwrap_or_else(|e| panic!("{point:?} at {distance}: {e}"));
+        assert!(made.validity().is_empty(), "{point:?} at {distance}: {:?}", made.validity());
+        assert_eq!(made.lumps().unwrap_or_else(|e| panic!("{point:?}: {e}")).len(), 1, "{point:?}");
+        let volume = measure(&made).unwrap().volume;
+        assert!(volume < loft_volume, "{point:?} at {distance}: {volume} is not below {loft_volume}");
+    }
+}
+
+/// #655: the four creases of that loft, chamfered together at the same 1.568 mm, stay
+/// accepted. Each ends on-vertex at a different point of the circle, so each trace
+/// still starts at its tip. Two edges that meet at one point are the tangent bore
+/// seam (`fillets/14283-chamfer-tangent-bore-edges`), which starts at the regular end.
+#[test]
+fn chamfer_square_to_circle_loft_creases_together() {
+    let sq = Loop2::polygon(&[Vec2::new(-20.0, -20.0), Vec2::new(20.0, -20.0), Vec2::new(20.0, 20.0), Vec2::new(-20.0, 20.0)]);
+    let body = loft(&[(Plane::XY, sq), (Plane::XY.offset(40.0), Loop2::circle(Vec2::ZERO, 10.0))]).unwrap();
+    let on_circle = 5.0 * std::f64::consts::SQRT_2;
+    let crease_mid = |x: f64, y: f64| Vec3::new((x + x.signum() * on_circle) * 0.5, (y + y.signum() * on_circle) * 0.5, 20.0);
+    let edges = [crease_mid(-20.0, 20.0), crease_mid(20.0, 20.0), crease_mid(20.0, -20.0), crease_mid(-20.0, -20.0)];
+    let made = chamfer(&body, &edges, 1.568).unwrap_or_else(|e| panic!("{e}"));
+    assert!(made.validity().is_empty(), "{:?}", made.validity());
+    assert_eq!(made.lumps().unwrap_or_else(|e| panic!("{e}")).len(), 1);
+    let volume = measure(&made).unwrap().volume;
+    assert!(volume < measure(&body).unwrap().volume, "{volume}");
 }
 
 #[test]

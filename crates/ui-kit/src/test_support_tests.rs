@@ -258,6 +258,11 @@ pub fn frame(ctx: &egui::Context, events: Vec<egui::Event>, add: impl FnMut(&mut
     draw_frame(ctx, events, add);
 }
 
+/// [`frame`], returning what it painted.
+pub fn frame_output(ctx: &egui::Context, events: Vec<egui::Event>, add: impl FnMut(&mut Ui)) -> egui::FullOutput {
+    draw_frame(ctx, events, add)
+}
+
 /// The cursor the frame asks the platform for: the pointer is at `pos` for the whole frame.
 pub fn frame_cursor(ctx: &egui::Context, pos: egui::Pos2, add: impl FnMut(&mut Ui)) -> egui::CursorIcon {
     draw_frame(ctx, vec![egui::Event::PointerMoved(pos)], add).platform_output.cursor_icon

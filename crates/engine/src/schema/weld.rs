@@ -45,6 +45,21 @@ mod tests {
         assert!(record.settings.density.is_none());
         assert_eq!(record.settings.size.len(), 1);
         assert_eq!(record.settings.side, "other");
+        s.execute("weld.create", &json!({"weld_type":"fillet","process":"522+15","position":"PB","quality":"ISO 13919-1-C","wps":"WPS-017","ndt":{"methods":{"VT":100,"UT":10},"note":"to ISO 17640"},"tail_text":"see note 4","filler":"ISO 14341-A G 3Si1"})).unwrap();
+        let data = &s.doc.welds.last().unwrap().settings;
+        assert_eq!(
+            (data.position.as_deref(), data.quality.as_deref(), data.ndt.as_ref().map(|n| n.methods["UT"])),
+            (Some("PB"), Some("ISO 13919-1-C"), Some(10.))
+        );
+        for invalid in [
+            json!({"weld_type":"fillet","position":"PL"}),
+            json!({"weld_type":"fillet","quality":"ISO 5817-A"}),
+            json!({"weld_type":"fillet","ndt":{"methods":{"XR":10}}}),
+            json!({"weld_type":"fillet","ndt":{"methods":{"UT":0}}}),
+            json!({"weld_type":"fillet","wps":"two\nlines"}),
+        ] {
+            assert!(s.execute("weld.create", &invalid).is_err(), "{invalid}");
+        }
         s.execute("weld.create", &json!({"weld_type":"fillet","spans":{"count":2,"length_mm":"1 cm","pitch_mm":"40 mm"}})).unwrap();
         let spans = s.doc.welds.last().unwrap().settings.spans.as_ref().unwrap();
         assert_eq!((spans.count, spans.length_mm, spans.pitch_mm), (2, 10., 40.));
@@ -68,14 +83,18 @@ mod tests {
                 "ends",
                 "face",
                 "field_weld",
+                "filler",
                 "groove",
                 "merge_crossing",
+                "ndt",
                 "overlap",
                 "passes_shown",
                 "penetration",
                 "penetration_shown",
                 "picks",
+                "position",
                 "process",
+                "quality",
                 "reference_plane",
                 "root",
                 "root_gap",
@@ -90,8 +109,10 @@ mod tests {
                 "symbol",
                 "symbol_standard",
                 "tack_mode",
+                "tail_text",
                 "tangent_chain",
                 "weld_type",
+                "wps",
             ],
         );
         let mut s = Session { param_check: ParamCheck::Warn, ..Default::default() };
@@ -194,9 +215,27 @@ pub struct WeldCreateParams {
     /// End treatment: square (default), tapered or rounded.
     #[serde(default)]
     pub ends: Option<String>,
-    /// Optional ISO 4063 number as 1-3 ASCII digits, e.g. "135".
+    /// Optional ISO 4063 process: 1-3 digits ("135", group "13"), an optional variant ("131-D"), several joined by + for a hybrid ("522+15").
     #[serde(default)]
     pub process: Option<String>,
+    /// ISO 6947 main welding position: PA, PB, PC, PD, PE, PF, PG, PH, PJ or PK.
+    #[serde(default)]
+    pub position: Option<String>,
+    /// Quality level: ISO 5817, ISO 10042, ISO 13919-1 or ISO 13919-2, then -B, -C or -D, e.g. "ISO 5817-C".
+    #[serde(default)]
+    pub quality: Option<String>,
+    /// Welding procedure specification reference, one line of at most 64 bytes.
+    #[serde(default)]
+    pub wps: Option<String>,
+    /// Non-destructive testing: methods VT, PT, MT, UT, RT with their extent in per cent, and a note.
+    #[serde(default)]
+    pub ndt: Option<WeldNdtParams>,
+    /// Free text for the symbol's tail, one line of at most 256 bytes.
+    #[serde(default)]
+    pub tail_text: Option<String>,
+    /// Filler metal designation, one line of at most 128 bytes.
+    #[serde(default)]
+    pub filler: Option<String>,
     /// Spot appearance: marks, ball, marks_ball, marks_pin, pin or dent.
     #[serde(default)]
     pub spot_look: Option<String>,
@@ -213,6 +252,18 @@ pub struct WeldCreateParams {
     #[serde(default)]
     #[schemars(with = "Option<SymbolSchema>")]
     pub symbol: Option<solidcraft_geom::weld::Weld>,
+}
+
+/// Non-destructive testing of one weld.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct WeldNdtParams {
+    /// Method (VT, PT, MT, UT, RT) -> extent in per cent of the weld, above 0 and at most 100.
+    #[serde(default)]
+    pub methods: BTreeMap<String, f64>,
+    /// One plain line of at most 256 bytes.
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// Intermittent elements; dimensions accept length expressions in mm.

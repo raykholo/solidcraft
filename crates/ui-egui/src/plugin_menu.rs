@@ -151,7 +151,10 @@ pub(crate) fn start_panel_picking(
 pub(crate) struct Field {
     pub(crate) key: String,
     pub(crate) label: String,
+    /// The schema's `description`: the row label's hover text.
     pub(crate) tip: Option<String>,
+    /// A dialog hook's `hint`, drawn under the field while its reply stands (#23623).
+    pub(crate) hint: Option<String>,
     pub(crate) required: bool,
     pub(crate) kind: Kind,
     /// Installed-family picker for an otherwise ordinary string.
@@ -523,6 +526,7 @@ fn field(key: &str, property: &Value, required: bool) -> Option<(Field, Input)> 
             key: key.to_owned(),
             label,
             tip: text("description"),
+            hint: None,
             required,
             kind,
             font,
@@ -608,6 +612,7 @@ fn selection_field(key: &str, p: &Map<String, Value>, required: bool) -> Option<
             key: key.to_owned(),
             label: title.unwrap_or_else(|| key.to_owned()),
             tip,
+            hint: None,
             required,
             kind,
             font: false,
@@ -1484,13 +1489,9 @@ fn apply_hook_reply(dialog: &mut EntryDialog, generation: u64, update: solidcraf
     hook.submitted = Some(generation);
     for (field, input) in fields.iter_mut() {
         field.hook = update.fields.get(&field.key).cloned();
-        field.tip = field
-            .hook
-            .as_ref()
-            .and_then(|f| f.get("hint"))
-            .and_then(Value::as_str)
-            .or_else(|| hook.schema.get("properties")?.get(&field.key)?.get("description")?.as_str())
-            .map(str::to_owned);
+        // The hint is the reply's own line under the field; the description stays the tooltip.
+        field.hint =
+            field.hook.as_ref().and_then(|f| f.get("hint")).and_then(Value::as_str).map(str::trim).filter(|h| !h.is_empty()).map(str::to_owned);
         if field.edited {
             continue;
         }
@@ -1544,13 +1545,7 @@ fn poll_hooks(app: &mut SolveApp, ctx: &egui::Context) {
                 {
                     *input = baseline;
                 }
-                field.tip = hook
-                    .schema
-                    .get("properties")
-                    .and_then(|p| p.get(&field.key))
-                    .and_then(|p| p.get("description"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
+                field.hint = None;
             }
             refresh_conditions(fields);
             hook.observed = fields.iter().map(|(_, i)| i.clone()).collect();
@@ -3256,6 +3251,9 @@ fn body(
                     if matches!(input, Input::Selection(_)) {
                         picks += 1;
                     }
+                    if let Some(hint) = &field.hint {
+                        ui_kit::status_line(ui, hint, ui_kit::StatusTone::Dim);
+                    }
                     if let Some(error) = field_errors.get(&field.key) {
                         ui_kit::status_line(ui, error, ui_kit::StatusTone::Error);
                     }
@@ -3441,7 +3439,8 @@ fn field_row(app: &SolveApp, ui: &mut egui::Ui, plugin: &Listed, field: &Field, 
                             titles: &titles,
                             textures: &tiles,
                             choose: &choose,
-                            search_hint: app.tr("ui.plugin_swatch_search"),
+                            // Pictured parts are not finishes: their search says just that (#23596).
+                            search_hint: if field.pictured { app.tr("Search") } else { app.tr("ui.plugin_swatch_search") },
                             preview: field.pictured,
                         },
                     )

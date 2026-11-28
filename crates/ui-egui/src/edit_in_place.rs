@@ -253,9 +253,12 @@ pub(crate) fn command_ran(app: &mut SolveApp, result: &Value) -> Result<bool, St
     let component = result["component"].as_u64().unwrap_or(0);
     let path = result["path"].as_array().map(|p| p.iter().filter_map(Value::as_u64).collect::<Vec<_>>());
     let ask = app.edit_in_place.ask;
-    // Leaving the tab would stop the design's agent in the middle of its turn. Asked by that agent
-    // (a command, which it sends during its turn), the part opens once the turn ends.
-    if app.agent_chat.state() == crate::agent_chat::State::Busy {
+    // Leaving the tab would stop the design's agent in the middle of its turn unless the assistant
+    // shares one session across design tabs (Part of #23624). Asked by a per-tab agent (a command,
+    // which it sends during its turn), the part opens once the turn ends.
+    if app.agent_chat.state() == crate::agent_chat::State::Busy
+        && (ask || !app.preferences.agent_shared_session || !app.agent_chat.following_document)
+    {
         if ask {
             return Err(solidcraft_ui_text::tr("ui.edit_in_place_agent_busy").to_string());
         }
@@ -289,8 +292,18 @@ fn check_enter(app: &SolveApp) -> Result<(), String> {
 /// its placement `path` (default: its first) puts it (`ask`: with the open's questions).
 fn enter(app: &mut SolveApp, component: u64, path: Option<Vec<u64>>, ask: bool) -> Result<(), String> {
     let (context, link) = prepare(app, component, path, ask)?;
+    let part = context.part.clone();
     app.edit_in_place.pending = Some(context);
-    crate::network_prompt::open_linked(app, &link);
+    if !ask && app.agent_chat.following_document && app.preferences.agent_shared_session {
+        let mut request = crate::file_load::Request::new(&part, crate::file_load::Kind::Open);
+        request.chat_turn = app.agent_chat.active_turn();
+        if let Err(e) = crate::file_load::begin_request(app, request) {
+            app.edit_in_place.pending = None;
+            return Err(e);
+        }
+    } else {
+        crate::network_prompt::open_linked(app, &link);
+    }
     Ok(())
 }
 
@@ -513,9 +526,12 @@ fn finish_with(app: &mut SolveApp, save: bool) -> Result<bool, String> {
         crate::toolbar::save(app);
         return Ok(false);
     }
-    // Leaving the tab would stop the part's agent in the middle of its turn. Asked by that agent
-    // (a command, which it can only send during its turn), the edit finishes once the turn ends.
-    if app.agent_chat.state() == crate::agent_chat::State::Busy {
+    // Leaving the tab would stop the part's agent in the middle of its turn unless the assistant
+    // shares one session across design tabs (Part of #23624). Asked by a per-tab agent (a command,
+    // which it can only send during its turn), the edit finishes once the turn ends.
+    if app.agent_chat.state() == crate::agent_chat::State::Busy
+        && (save || !app.preferences.agent_shared_session || !app.agent_chat.following_document)
+    {
         if save {
             return Err(solidcraft_ui_text::tr("ui.edit_in_place_agent_busy").to_string());
         }

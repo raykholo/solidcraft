@@ -55,6 +55,7 @@ use crate::geom::extent2d::Extent2d;
 use crate::geom::vector2d::Point2;
 use crate::geom::vector3d::{Point3, Vec3};
 use crate::kernel::Kernel;
+use crate::math::det;
 use crate::math::EFF_ZERO_RAD;
 use crate::nurbs::b_spline_curve::{BSplineCurve, NurbCircleParam};
 use crate::nurbs::b_spline_surface_n_lib::p2::EvaluateFlags;
@@ -487,13 +488,11 @@ fn frame(
             .surface
             .clone()
             .ok_or_else(|| SolidError::invalid_input(OP, "a face with no surface"))?;
-        // a B-spline edge only lies within tolerance of the line the bead runs along: its
-        // tangent may lean off it, so its binormal is taken square to the line (the section's
-        // plane, as `BeadArc::new` reads it)
-        let binormal = match curve.kind() {
-            CurveKind::Line(_) => eval.binormal,
-            _ => eval.binormal - dir * eval.binormal.dot(dir),
-        };
+        // into the face square to the line the bead runs along (the section's plane, as
+        // `BeadArc::new` reads it): a B-spline edge's tangent may lean off that line, so the
+        // edge use's binormal gives only the side
+        let across = eval.face_normal.cross(dir);
+        let binormal = across * across.dot(eval.binormal).signum();
         sides.push((
             face,
             binormal.unitize()?,
@@ -525,7 +524,7 @@ fn frame(
             "a weld bead lies in an inside corner (a concave edge) only, not on an outside or a tangent edge",
         ));
     }
-    let wedge = u1.cross(u2).length().atan2(u1.dot(u2));
+    let wedge = det::atan2(u1.cross(u2).length(), u1.dot(u2));
     let chamfer = ChamferDefinition::new(size, wedge)?;
     let [d1, d2] = chamfer.setbacks();
     // a leg is a setback, how far a toe lies from the edge along its face, whether given as a
@@ -576,7 +575,9 @@ fn frame(
         uv: [uv1, uv2],
         offsets: signed,
         centre,
-        tol: edge::tolerance(target, edge_id)?,
+        // the field's contract: placements are decided within the body's tolerance (the
+        // faces'), not the edge's, which may be 0 or an import's loose one
+        tol: target.tolerance(),
         ball_on_collapsed: false,
         radii_can_change: false,
     };

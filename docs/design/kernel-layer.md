@@ -1,6 +1,48 @@
 # A swappable kernel layer in SolidCraft
 
-Status: approved by the owner in full. He approved phase 1, the seam (§12), on 2026-11-24, and on 2026-11-26 every later phase of §12 as well: "I asked for it". Phase 1 is the kernel interface in SolidCraft, the solidcore adapter behind it, and SolidCraft calling the kernel only through that interface. No second kernel is planned or being built. The later sections describe what the seam must allow, so that the interface is right the first time; they are not a plan to add another kernel.
+Status: approved by the owner in full. He approved phase 1, the seam (§12), on 2026-11-24, and on 2026-11-26 every later phase of §12 as well: "I asked for it". Phase 1 is the kernel interface in SolidCraft, the solidcore adapter behind it, and SolidCraft calling the kernel only through that interface. No second kernel is planned or being built. On 2026-11-28 he amended the body format: "basically if solidcore is deleted it should still work". A body now lives in its own kernel's form, and the record is an exchange format only (§3; the stages are in §12). The later sections describe what the seam must allow, so that the interface is right the first time; they are not a plan to add another kernel.
+
+## Why we're doing this
+
+**The problem today.** App code reaches straight into solidcore's B-rep structs: about 3,430
+references across 14 crates. That has three costs:
+
+- Any other kernel's body has to be converted into solidcore's format after every operation.
+- A refactor inside the kernel breaks app code.
+- "Any kernel can plug in" isn't really true yet.
+
+**The goal.** If solidcore were deleted, SolidCraft should still build and run on another
+kernel. I want high cohesion and low coupling:
+
+- each kernel owns its own bodies;
+- the app talks to a kernel only through `kernel-api`.
+
+**What it buys us.**
+
+- **A stable, versioned kernel contract.** That pushes solidcore to be stable too.
+- **solidcore stands on its own.** It can be tested and refactored without the app in the way.
+- **"Does it run on SolidCraft" becomes real.** A kernel plugs in through an adapter and is tested
+  on the same cases as solidcore.
+- **No conversion on every operation.** A body stays in its own kernel's form.
+
+**The risks, and how we guard against them.**
+
+- **Naming and history is the riskiest stage.** The guard is the full rig and the naming corpus,
+  plus reopening real saved designs before and after each change, with identical results.
+- **The API could copy solidcore's quirks.** The guard is a stub kernel: every call must be
+  something it can implement cleanly.
+- **The extra layer costs a little.** The guard is measuring that cost at every stage, and
+  solidcore's own path stays at zero conversions.
+
+**What changes for contributors.**
+
+- **No new direct solidcore imports in app crates.** A CI check enforces it
+  (`xtask/kernel-coupling.txt`, checked by `cargo xtask layers`). The list only shrinks: when you
+  remove uses, `cargo xtask layers --kernel-coupling-shrink` updates it.
+- **Kernel geometry still goes in solidcore.** App code reaches it through `kernel-api`.
+- **Existing code isn't blocked.** It moves over stage by stage (§12).
+- **Saved designs keep working.** The timeline stays the source of truth, so any kernel replays
+  it (§3).
 
 The owner's brief (2026-11-24):
 
@@ -30,13 +72,15 @@ What follows from that:
   kernel in SolidCraft, they write and maintain its adapter to our interface. To count, it must
   pass our naming gate and an accuracy gate with a tolerance equal to or tighter than solidcore's
   (§8), and it is listed in the kernel support matrix (§8). None is planned.
-- **The solidcore adapter is the only SolidCraft code that depends on solidcore crates.** The one
-  exception is the record's data types, which are the body format itself (§10). `cargo xtask
-  layers` enforces this, as it once kept truck inside `crates/kernel`. This also helps solidcore:
+- **The solidcore adapter is the only SolidCraft code that depends on solidcore crates.** Since
+  2026-11-28 there is no exception for the record's data types either (§3, §10): SolidCraft must
+  build and run with solidcore deleted. `cargo xtask layers` enforces this, as it once kept
+  truck inside `crates/kernel`. This also helps solidcore:
   every call SolidCraft makes goes through `solidcore-ops`, so its public API ends up complete and
   documented, which is what makes solidcore usable as a general kernel.
 - **Kernels are chosen at compile time.** Build features decide which kernels are compiled in.
-  solidcore is always in, and is the only one in any build we ship. Choosing a kernel at run time,
+  solidcore is in every build we ship, and is the only one in them. A build without it still
+  compiles, with a stub kernel in its place (§3). Choosing a kernel at run time,
   and swapping one while the app runs, come later, not in phase 1.
 - **STEP stays in solidcore.** Import and export are solidcore's, reached through `solidcore-ops`.
 - **solidcore stays the default,** and the default path stays byte-identical to today.
@@ -56,13 +100,14 @@ Decisions the owner has made. The rest of this document follows them; the open q
 | 2026-11-24 | **We write and maintain the solidcore adapter, and only it.** It adapts `solidcore-ops`, solidcore's own API, and lives in SolidCraft. Anyone else writes and maintains their own kernel's adapter to our interface; it must pass our naming gate and an accuracy gate (tolerance equal to or tighter than solidcore's) and appear in the support matrix (§8). |
 | 2026-11-24 | **Run-time selection comes later.** In phase 1, build features alone decide which kernels are compiled in, and solidcore is the only one. The launch-time switch, per-operation routes and hot swap described below are later work. This supersedes the launch-time switch in the compile-time decision above. |
 | 2026-11-24 | **STEP stays in solidcore** (§2, §10). |
+| 2026-11-28 | **A body lives in its own kernel's form; the record is an exchange format only.** "Basically if solidcore is deleted it should still work": high cohesion, low coupling. The app holds an opaque handle and talks to a body only through `kernel-api`. Only the composition root names a concrete kernel. Save files stay kernel-neutral. Kernel-specific geometry lives in its kernel, and generic maths in a kernel-neutral crate. This replaces "the record is the body format" in §3 and §10, and answers §13 question 1. The stages are in §12, and the acceptance test is in §3. |
 | 2026-11-26 | **Build all of it.** Every later phase of §12 is approved too (steps 6 to 16: smlib onto `solidcore-ops`, the adapter split, sweep and loft in the trait, exchange, measurement, run-time selection and designs recording their kernel). Each step still follows §12's rules. Still no second kernel. |
 
 Contents:
 0. [Decisions](#decisions)
 1. [Where the abstraction lives](#1-where-the-abstraction-lives)
 2. [The trait surface](#2-the-trait-surface)
-3. [The body exchange format](#3-the-body-exchange-format)
+3. [Bodies and the exchange format](#3-bodies-and-the-exchange-format)
 4. [Naming](#4-naming)
 5. [Designs record their kernel](#5-designs-record-their-kernel)
 6. [Errors](#6-errors)
@@ -103,7 +148,7 @@ Contents:
 
 | Crate | Holds | Depends on |
 |---|---|---|
-| `crates/kernel-api` (`solidcraft-kernel-api`, new) | the `Backend` trait, `OpKind`, `Route`, `Made`, `ExchangeLoss`, `BackendError`, and the neutral input types (profiles, path segments, extents) | `solidcore-record` (its data types only, §10), `thiserror` |
+| `crates/kernel-api` (`solidcraft-kernel-api`, new) | the `Backend` trait, `OpKind`, `Route`, `Made`, `ExchangeLoss`, `BackendError`, and the neutral input types (profiles, path segments, extents) | the kernel-neutral value-type crate (§3) and `thiserror`, never a solidcore crate. Until stage 5 of §12 it still uses `solidcore-record`'s data types |
 | `crates/kernel` (`solidcraft-kernel`, as now) | the **router**: the same public functions as today, each picking its backend from the route; the `Body` type and its caches of backend forms; the record services' public face | `kernel-api`, and each adapter crate (solidcore's always; the others behind features) |
 | `crates/kernel-solidcore` (new; today's solidcore code in `crates/kernel` and `crates/smlib`, moved) | the solidcore adapter: `impl Backend for Solidcore`, plus every call SolidCraft makes into `solidcore-ops`, `-tess` and `-step` | `kernel-api`, the solidcore crates |
 | `crates/kernel-<name>` (only if someone brings another kernel; none is planned) | that kernel's adapter, written and maintained by whoever brings that kernel, not by us | `kernel-api`, that kernel |
@@ -139,8 +184,10 @@ these rules:
 
 - adapters depend on `kernel-api` and their own kernel, never on `crates/kernel` or on each other;
 - only `crates/kernel` depends on adapters;
-- only `crates/kernel-solidcore` depends on solidcore crates, apart from the record's data types
-  (§10).
+- only `crates/kernel-solidcore` depends on solidcore crates, the record included (§3, §10), once
+  stage 5 of §12 is done. Until then, the kernel-coupling ratchet (`xtask/kernel-coupling.txt`,
+  added in stage 0) freezes every app crate's solidcore dependencies and references, so they only
+  fall.
 
 ---
 
@@ -307,20 +354,108 @@ Phase 1 has one kernel, so it builds the parts of this shape that the seam needs
 
 ---
 
-## 3. The body exchange format
+## 3. Bodies and the exchange format
 
-### The neutral form is the schema 4 record
+The owner, 2026-11-28: "basically if solidcore is deleted it should still work". He wants high
+cohesion and low coupling. This section was first written with the record as SolidCraft's body
+format. It now says where a body lives, and keeps the record as the exchange format.
 
-Bodies move as a `solidcore_record::brep::Brep`, in two places: between the app and a backend,
-and between two backends. That record is SolidCraft's body format. It is schema 4, kept in
-canonical order, and it is already what the model cache in a design file stores.
+### A body lives in its kernel's own form
 
-Why the record and not a new format:
+- **The body is its kernel's own representation.** A body solidcore made is a solidcore body. A
+  body another kernel made stays in that kernel's form. Nothing converts it while it is shown,
+  picked, named, measured or saved, unless its kernel declines the question.
+- **The app holds an opaque handle.** `solidcraft_kernel::Body` wraps the kernel's form behind a
+  handle. App code never reads the form's insides: no `record()`, no face or edge arrays, no
+  kernel types.
+- **The app talks to a body only through `kernel-api` traits.** These are the families:
 
-- **It is already the body.** `Body` is the record plus caches, and every name, mesh and saved
-  model is in the record's order. A second neutral form would be a second implementation of one
-  job, which solidcore's layers.md §5 calls a bug. It would also put a conversion on the default
-  path, which §9 rules out.
+  | Trait | What it answers |
+  |---|---|
+  | `Model` | the modelling operations: today's `Modelling` family, and the extensions as they are routed |
+  | `Query` | topology; picks (ray, closest, classify); measure (mass, bounds, distance); face and edge evaluation and kinds |
+  | `Tessellate` | the display and export mesh, and the display plan where the kernel has one |
+  | `Name` | the operation's history in the kernel's own ids, which the router renumbers into canonical order (§4) |
+  | `Store` | serialising and deserialising a body for the cache, tagged with the kernel and its version |
+  | optional extras | hidden-line drawing, section, and others as they come. A kernel without one answers `Support::No`, and the router falls back (below) |
+
+  The names are the target shape. Today's traits (`Modelling`, `Queries`, `Tessellate`, `Points`,
+  `Sections` and the rest) fold into them stage by stage (§12, "Decoupling stages").
+- **Ids stay canonical.** A kernel's own face and edge ids never reach names. The router
+  renumbers them into a canonical order, so the naming rules in §4 hold whichever kernel made the
+  body.
+
+### The record and `ExactBody` are exchange formats only
+
+The record (`solidcore_record::brep::Brep`) and `ExactBody` are how a body crosses a boundary,
+and nothing more. A body is converted into one of them in three places:
+
+- **on export:** STEP, IGES and CADIR writing, which are solidcore's (§2);
+- **on fallback to another kernel:** an operation or query the body's kernel declines runs on a
+  kernel that takes it, and the body crosses once, as an exact body or a record (below);
+- **for the cache:** only where a kernel has no `Store` of its own. The cache entry is then the
+  record's encoding, tagged with the kernel and version like any other entry.
+
+Each conversion is counted per call site, so the rig shows what each stage still converts (§12).
+
+### Only the composition root names a kernel
+
+- **The app binary's entry point is the composition root.** It is the one place that names a
+  concrete kernel. It builds the router with the kernels compiled in and hands it to the app.
+- **Nothing else names one.** doc, engine, io, ui-egui and the other app crates see `kernel-api`
+  and the router's `Body` handle only. They never name solidcore, its crates or its types.
+- **A kernel is a build feature of the composition root.** solidcore is the default kernel and the
+  one we ship. A build without it still compiles, with a stub kernel in its place (below).
+
+### Save files stay kernel-neutral
+
+- **The timeline is the source of truth.** A design file holds the feature history, which names no
+  kernel and holds no kernel ids. Any kernel replays it.
+- **The cache is tagged with its kernel and version.** A cached body is its kernel's own
+  serialised form (`Store`), with that kernel's id and version (§5).
+- **A missing kernel or another version replays.** When the tag is unknown, or that kernel isn't
+  compiled in, the design replays its timeline. It never refuses to open.
+
+### Kernel-specific geometry in the kernel, generic maths in a neutral crate
+
+"One implementation in solidcore" now reads:
+
+- **Kernel-specific geometry lives in its kernel.** A body's topology, surfaces and curves, and the
+  maths of blends, booleans and the other operations, are solidcore's, in `solidcore/`, with one
+  implementation each.
+- **Generic maths goes in a kernel-neutral crate.** These are value types and maths with no
+  topology: `Vec3`, `Vec2`, `Plane`, `Seg2`/`Loop2`/`Region2`, the mesh data shape (positions,
+  normals, triangles, `tri_face`, edge polylines), and the per-feature data. They are defined once,
+  in a crate that belongs to no kernel, and both the app and solidcore depend on it. They are not
+  copied into a SolidCraft version, which would be a second implementation of one job.
+- **The rule for new code:** if it needs a body's insides, it goes in the kernel. If it is maths on
+  plain values, it goes in the neutral crate.
+
+### The acceptance test
+
+A build with solidcore removed, and a stub kernel in its place, compiles and runs the app's
+non-modelling paths: start, open a design (it replays, reports the features the stub can't build,
+and never refuses to open), sketch, parameters, the timeline, Preferences, save and close. The
+stub kernel answers every operation with a typed `Support::No` (§6).
+
+This is the exit test of stage 5 (§12). Until then, `xtask/kernel-coupling.txt` (checked by
+`cargo xtask layers`) freezes every app crate's direct solidcore dependencies and its references
+into solidcore crates, and lets them only fall.
+
+### The record as the exchange format
+
+When a body crosses, it crosses as a `solidcore_record::brep::Brep`, or as an exact body (below):
+between two kernels, to a file, and into the cache of a kernel with no `Store`. It is schema 4,
+kept in canonical order. Until stage 4 of §12 it is also what every body still carries, since
+today `Body` is the record plus caches. That is the state the stages move away from, not the
+target.
+
+Why the record and not a new exchange format:
+
+- **It is what bodies are today.** Every name, mesh and saved model is in the record's order. A
+  second exchange format would be a second implementation of one job, which solidcore's
+  layers.md §5 calls a bug. A solidcore body keeps its record as its own form, so the default
+  path converts nothing (§9).
 - **It is exact data with no kernel inside.** It holds:
   - analytic surfaces (`Plane`, `Cylinder`, `Cone`, `Sphere`, `Torus`);
   - B-splines and NURBS (`Spline`, `RationalSpline`);
@@ -339,6 +474,9 @@ becomes a change for every adapter, and that pull request updates them. An adapt
 (`Support::No`) a schema it wasn't built for.
 
 ### Where conversion happens
+
+This is today's path, while every body still carries its record. Stage 0 of §12 makes the record
+lazy, so a body another kernel made exports it only when something asks for it.
 
 ```text
           record (the Body)                              record (the result Body)
@@ -546,6 +684,62 @@ That holds by construction and is checked on every pull request.
 - **The loopback backend** (§12, step 12) must give 180/180 identical names. Loopback is
   solidcore forced through `export` → `import` and tag-and-read history on every operation. It
   proves the exchange and the renumbering exact before any foreign kernel is involved.
+
+
+### Stage 2: names of a body another kernel holds (2026-11-28)
+
+Stage 1 (§12, "Decoupling stages") draws and picks a held body without its record. Stage 2 names
+it without its record, and resolves saved names against it. Nothing about names moves into the
+file: a saved name stays the string it is today (`F5:side:l1`, `F2:top#[F2:side:l4,F4:side:l4]`,
+`A|B~k`), and it resolves through the timeline's histories and the body's topology as today.
+Only where that topology and those histories come from changes.
+
+**What the kernel gives.** Two optional answers on `HeldBody`, both in the kernel's own ids:
+
+- **`topology()`**: regions, each a list of shells; each shell a list of oriented faces; each face
+  its loops in the kernel's stored order, each loop its oriented edges; each edge its two vertices.
+  Topology only, no geometry. This is the walk the record's canonical order is defined on
+  (`docs/native-brep.md`, "Canonical order").
+- **the op's history** as `ExactHistory`, which already exists for exact bodies (§3), over the
+  operands' kernel ids.
+
+A kernel that gives neither has the router read the record, counted, as in stages 0 and 1.
+
+**What the router does with them.** It walks the topology in canonical order (regions, shells,
+oriented faces, loops, oriented edges, vertices) and numbers faces, edges and vertices as they
+are first met. That gives a map from the kernel's ids to canonical indices with no record and no
+geometry. The walk is the same one that orders an exported record, so the numbers are the ones
+the record would have. The router renumbers the history through the map, checks it as today
+(`BodyHistory::check`: one entry per face and edge, every origin in range), and answers
+`Body::history()`. Display and pick answers (stage 1) are renumbered through the same map, so
+they no longer need the kernel to number its answers as its record does.
+
+**What the document reads.** Today naming and lookup read `record().faces[f].loops`,
+`record().edges[e].uses` and `record().vertices` (`naming.rs`, `name_lookup.rs`,
+`history_names.rs`; about 25 sites). They move onto one kernel-neutral view, `Body::topology()`:
+faces with their loops of oriented edges, edges with their faces and vertices, all in canonical
+indices. A solidcore body answers it by borrowing its record, with no copy and nothing new
+computed, so its names cannot change. A held body answers it from the renumbered topology. Every
+site keeps its order of iteration, so the strings it builds are byte-identical.
+
+**Geometric fallback names.** Names made from geometry (faces with no exact history, pieces told
+apart by place) already read the display mesh's `tri_face`. For a held body, that mesh comes from
+the kernel (stage 1) and is renumbered like everything else. These names stay marked unverified,
+as on solidcore.
+
+**What still reads the record after stage 2.** Face certificates that read a face's surface
+(`with_*_certificate`, `FaceSource`), the edge nearest a point (`Body::edge_lines`), and sheet
+metal's role rules read geometry, not topology. They move with stage 3's queries.
+
+**Gates, on every stage 2 pull request:**
+
+- the naming corpus (180/180 identical) on solidcore, and again with the loopback kernel, which
+  holds every result as a held body that answers `topology()` and its history and exports nothing
+  unless asked: the proof that names come out identical without the record;
+- the kernel rig, base against branch, 0 differ;
+- real saved designs (the corpus's `.sc` files and the action-matrix designs) opened, rebuilt and
+  saved before and after, with identical stored names and identical rebuilt bodies;
+- the record-read counter from stage 0, showing naming and lookup of a held body read no record.
 
 ---
 
@@ -1063,10 +1257,17 @@ Results don't change, because they are the same functions.
 
 #### What may stay outside the adapter
 
+Amended 2026-11-28 (§3): in the end state, nothing of solidcore stays outside the adapter. The
+list below is what may stay **until stage 5 of §12**. `xtask/kernel-coupling.txt` freezes it: a
+new use fails, and the list only shrinks. In stage 5 the record's value types move to the
+kernel-neutral crate (§3), and its body types (`brep::*`, `history::*`) are reached only through
+`kernel-api`.
+
 - **The record's data types,** in any crate: `Vec3`, `Vec2`, `Plane`, `Seg2`/`Loop2`/`Region2`,
   `brep::{Brep, Curve, Surface, Frame, Edge, Loop, …}`, `history::*` and `part::*`, with their
   serde and their structural validation (`validate`, `check_counts`, `Budget`).
-  - They are the body format itself, the way a file format crate is.
+  - They were the body format itself, the way a file format crate is. Since 2026-11-28 they are
+    the exchange format only (§3).
   - `solidcore-record` forbids maths (its `lib.rs` bans sqrt, trig and solves), so using it
     computes nothing below ops.
   - Moving about 2,700 lines to a SolidCraft copy would make a second implementation of one job.
@@ -1081,13 +1282,15 @@ Results don't change, because they are the same functions.
 - **Only `crates/kernel-solidcore` depends on** `solidcore-ops`, `solidcore-tess`,
   `solidcore-step` and `solidcore-cadir`. It reaches no crate below ops, so
   `xtask/solidcore-seam.txt` is empty and stays empty.
-- **`solidcore-record` is allowed** in any crate, for its data types.
+- **No app crate depends on any solidcore crate,** `solidcore-record` included (§3). The value
+  types come from the kernel-neutral crate. Until stage 5 of §12, `solidcore-record` is allowed
+  where `xtask/kernel-coupling.txt` lists it, and nowhere new.
 - **`xtask/solidcore-public.txt` becomes a list per crate:**
 
   ```text
   # crate                      may depend on
   crates/kernel-solidcore      solidcore-ops solidcore-tess solidcore-step solidcore-cadir solidcore-record
-  *                            solidcore-record
+  *                            (none: the value types come from the kernel-neutral crate, §3)
   crates/viewport              solidcore-tess   # display-format exception, if approved
   crates/viewport-gpu          solidcore-tess   # display-format exception, if approved
   ```
@@ -1126,6 +1329,27 @@ Rules for every step:
   the ladder golden unchanged, and NLT with no REGRESSION lines.
 
 The steps that move existing call sites don't change any function that runs.
+
+### Decoupling stages (2026-11-28)
+
+These deliver §3: a body lives in its own kernel's form, and the app compiles without solidcore.
+They run alongside the steps below and follow the same rules. Stages 1 to 3 are gated on the
+naming corpus (180/180 identical) and the rig, run with a loopback adapter that keeps a native
+form and exports nothing until asked. That is the cheapest proof that each stage really removes
+its conversions. The solidcore path stays at zero cost throughout: a solidcore body keeps its
+record as its form (§9).
+
+| Stage | What it does | What still converts a body to a record |
+|---|---|---|
+| **0. A lazy record, counted** (S–M) | `RecordCell` gains a `Native(BackendId, Arc<dyn NativeBody>)` arm, beside `Ready` and `Moved`. `Body::record()` exports on first use and counts each call site, like `route/foreign.rs::fell_back`. `kernel-api` gains an object-safe `NativeBody` trait next to `Backend::Form`. Nothing else changes. The ratchet (`xtask/kernel-coupling.txt`) lands here. | everything that reads the record: display, picks, names, measure, projection, drawings, save, every op that isn't routed, checks, sheet metal. From now on the rig reports how many conversions each concern forces |
+| **1. Display and picking** (M; picking S–M) | `Tessellate`: the mesh with `tri_face` and `edge_faces` in the kernel's ids, and an optional display plan (`Support::No` draws the CPU mesh). `Query`: bounds, ray, classify, closest, face info, face and edge counts, and whether the body is a surface. | storing a pick as a reference (naming), measure, Project and sketch on a face, exact drawings, save, ops that aren't routed, checks, sheet metal |
+| **2. Naming and history in kernel ids** (L) | `Name` and `Query` topology: faces, edges with their faces and vertices, face loops, vertices, and the op's history (`ExactHistory`) in the kernel's ids. The router renumbers into canonical order without a record. Features can reference a native body's faces and edges, and fillets and sketch on a face resolve their references. | measure and exact queries, projection, exact hidden lines, save, ops that aren't routed, sheet metal, checks |
+| **3. Queries for measure, sketch and projection** (M–L) | `Query`: mass, face and edge evaluation, face and edge kinds, edge curves, face loops, face planes, distance. `Queries` is re-keyed from `&Brep` to the kernel's form, and geom's `CurveEval`/`SurfaceEval` callers move onto these queries. The inspect panel, snaps, Project and sketch on a face run natively. | exact hidden lines, save, ops that aren't routed, sheet metal, checks |
+| **4. Save, load and rebuild** (S–M) | `Store`: a cache entry tagged with the kernel and version; tolerance and region count on the form. A natively built design saves and reopens with no record round trip; opened without that kernel, it replays its timeline. A file-format change, reviewed under the file-formats rules. | exact hidden lines, file export (STEP and IGES, by design), ops that aren't routed, sheet metal, checks |
+| **5. The long tail, and the cut** (L, ongoing) | Exact hidden lines become an optional `hidden_lines` extra, or stay solidcore-only beside the mesh-line drawings that already work. More op families join `Model`; `check(form)`; sheet metal on topology queries. The value types move to the kernel-neutral crate (§3), the composition root becomes the only crate that names solidcore, and the acceptance test (§3) passes: a build with solidcore removed and a stub kernel compiles and runs the non-modelling paths. | only file export and op families a kernel declines. Those are designed fallbacks, not coupling |
+
+Rough totals: about 1 to 1.5 weeks to stage 1, 3 to 4 weeks to stage 3, 4 to 5 weeks to stage 4;
+stage 5 is open-ended.
 
 ### Phase 1: the seam (approved, built)
 
@@ -1182,7 +1406,9 @@ The owner approved them on 2026-11-26. Each step follows the rules at the top of
     - `git mv` the solidcore code of `crates/kernel`, together with all of `crates/smlib`, into
       `crates/kernel-solidcore`, leaving `crates/kernel` as the router with the same public API.
     - `xtask layers` switches to the end-state rule (§10). From here, only the adapter depends on
-      solidcore crates.
+      solidcore crates beyond `solidcore-record`. Until stage 5 of the decoupling stages (above),
+      `solidcore-record` stays allowed where `xtask/kernel-coupling.txt` lists it, so this step
+      lands on its own whichever comes first.
     - This is the only large diff in the series, and it is purely mechanical: moves and paths,
       with the same functions.
 11. **Sweep and loft in the trait.** `PathSeg` and `SweepControl` carry geometry of their own
@@ -1269,7 +1495,11 @@ How this design limits the cost:
 Only questions 1 and 2 touch phase 1, and phase 1 goes ahead on the leaning given for each. The
 others matter only if someone brings another kernel.
 
-1. **The record as the neutral format, allowed everywhere.** `solidcore-record` is solidcore's
+1. **Answered 2026-11-28 (§3):** the record is an exchange format only, and in the end no app crate
+   depends on any solidcore crate, the record included. The value types move to a kernel-neutral
+   crate. The original question and the CADIR option follow, for the record.
+
+   **The record as the neutral format, allowed everywhere.** `solidcore-record` is solidcore's
    data crate, not its kernel. The recommendation is to use it as the exchange format and allow
    its data types in every crate (§10): it computes nothing, and a SolidCraft copy would be a
    second implementation. Is that within "only the adapter depends on solidcore crates", or

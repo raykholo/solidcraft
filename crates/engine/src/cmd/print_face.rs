@@ -580,6 +580,8 @@ mod tests {
             ("file.export", "a.obj", json!(true)),
             ("file.export", "a.glb", json!(true)),
             ("file.export", "a.json", json!(true)),
+            ("file.export", "a.urdf", json!(true)),
+            ("file.export", "a.sdf", json!(true)),
             ("file.export", "b.stl", json!("yes")),
             ("file.export_stl", "c.stl", json!(1)),
             ("file.export_3mf", "d.3mf", json!([true])),
@@ -590,6 +592,11 @@ mod tests {
             assert!(e.contains("lay_on_print_faces"), "{id} {name}: {e}");
             assert!(std::fs::metadata(&path).is_err(), "{id} {name}: a refused export writes nothing");
         }
+        // MJCF is named by its format: it was written unlaid, the flag ignored.
+        let path = temp_path("refused", "robot.xml");
+        let e = s.execute("file.export", &json!({"path": path, "format": "mjcf", "lay_on_print_faces": true})).expect_err("mjcf").to_string();
+        assert!(e.contains("lay_on_print_faces"), "mjcf: {e}");
+        assert!(std::fs::metadata(&path).is_err(), "mjcf: a refused export writes nothing");
         // False is accepted for any format: the file is written as the design has it.
         let path = temp_path("false", "a.step");
         run(&mut s, "file.export", json!({"path": path, "lay_on_print_faces": false}));

@@ -282,6 +282,14 @@ pub(super) fn thread_on_in(st: &ModelState, feature: u64, component: Option<u64>
         })
         .ok_or_else(|| DocError::Invalid("no cylindrical face there to thread".into()))?;
     let mb = st.bodies.get(bi).ok_or_else(|| DocError::Invalid("threaded body".into()))?;
+    // A bore that a cut across it split (a cross hole) is one cylinder in pieces: a Thread runs
+    // along all of them, as it does when it was made before the cut (#23507), and a pick on any
+    // piece is the same thread. A tapped hole lists its wall's pieces itself (#13505).
+    let joined = if ask.tapped { None } else { pieces_span(&mb.body, &cyl) };
+    let cyl = match joined {
+        Some((start, end)) => kernel::CylinderFace { start, end, ..cyl },
+        None => cyl,
+    };
     let dia = cyl.radius * 2.0;
     let form = match (ask.form, ask.designation.and_then(ThreadForm::of_designation)) {
         // Saved Threads without a form predate Unified support and must keep their metric
@@ -571,6 +579,39 @@ pub(super) fn thread_on_in(st: &ModelState, feature: u64, component: Option<u64>
         .filter(|g| !(g.root_r - cyl.radius >= g.basic_depth / 4.0))
         .map(|g| g.crest_r);
     Ok(ThreadOn { info, cyl, ends, steep: ask.steep, ease, from: side, narrow, shoulder_unchecked: unchecked })
+}
+
+/// The axial extent, in `cyl`'s coordinates, of every face of `body` on `cyl`'s cylinder, when it
+/// has more than one (a bore a cross hole cut into pieces); `None` for a single face. Each
+/// piece's extent is read from its exact outline and mapped onto `cyl`'s axis by the kernel.
+fn pieces_span(body: &kernel::Body, cyl: &kernel::CylinderFace) -> Option<(f64, f64)> {
+    use kernel::services::face_pair::{CylinderFace, axial_range_in};
+    if body.is_mesh() {
+        return None;
+    }
+    let region = body.exact_bounds().ok()?;
+    let tol = (body.size() * 1e-6).max(1e-6);
+    let picked = kernel::FaceSurface::Cylinder { origin: cyl.axis_point, axis: cyl.axis, radius: cyl.radius };
+    let arr = |v: Vec3| [v.x, v.y, v.z];
+    let host = CylinderFace { axis_point: arr(cyl.axis_point), axis: arr(*cyl.axis), radius: cyl.radius, material_toward_axis: !cyl.internal };
+    let q = solidcraft_develop::Query::new(body.record());
+    let (mut count, mut lo, mut hi) = (0usize, f64::INFINITY, f64::NEG_INFINITY);
+    for f in 0..body.record().faces.len() {
+        let Some(s @ kernel::FaceSurface::Cylinder { origin, axis, radius }) = kernel::face_surface(body, f) else { continue };
+        if !kernel::same_surface(&picked, &s, tol * 100.0, &region) {
+            continue;
+        }
+        // The piece's extent along its own axis, from its outline in its own chart.
+        let chart = crate::sheet_surface_convert::cylinder_chart(body, &q, f, tol)?;
+        let (mut a, mut b) = (f64::INFINITY, f64::NEG_INFINITY);
+        for p in chart.outer.polyline(tol) {
+            (a, b) = (a.min(p.x), b.max(p.x));
+        }
+        let own = CylinderFace { axis_point: arr(origin), axis: arr(*axis), radius, material_toward_axis: !cyl.internal };
+        let [x0, x1] = axial_range_in(&host, &own, [a, b]).ok()?;
+        (count, lo, hi) = (count + 1, lo.min(x0), hi.max(x1));
+    }
+    (count > 1 && lo < hi).then_some((lo, hi))
 }
 
 /// The end of the face (0: its start, 1: its end) a thread of limited length starts at: the end
@@ -976,6 +1017,7 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
     // A default form keeps historical inference (`Tr20x4`), but never opts into Unified.
     // New Unified Thread features store their form explicitly at command creation.
     let form = (*form != ThreadForm::Metric).then_some(*form);
+    let designation = designation.as_deref().map(|text| doc.eval_thread_designation(text, vals));
     let ask = ThreadAsk {
         form,
         designation: designation.as_deref(),
@@ -1133,6 +1175,92 @@ fn cut_grouped(st: &ModelState, selected: &[ThreadOn], continuous_flanks: bool) 
     // Nothing enters the live state or its validation scope until every target succeeded.
     for (name, body) in checked {
         super::remember_checked_thread_output(&name, &body);
+    }
+    Ok(Some(next))
+}
+
+/// The box one tap's groove tool lies in: the groove reaches at most the major radius and
+/// overruns a free end by one pitch.
+fn tap_tool_box(on: &ThreadOn) -> Option<solidcraft_geom::Aabb3> {
+    let pad = on.info.pitch + on.ease[0] + on.ease[1];
+    let (lo, hi) = (on.info.start.min(on.info.end) - pad, on.info.start.max(on.info.end) + pad);
+    let axis = *on.info.axis;
+    let bounds = solidcraft_geom::Aabb3::from_iter([on.info.axis_point + axis * lo, on.info.axis_point + axis * hi])
+        .inflated(on.info.major_diameter * 0.5 + on.info.pitch);
+    (bounds.min.is_finite() && bounds.max.is_finite() && !bounds.is_empty()).then_some(bounds)
+}
+
+fn tap_tools_apart(group: &[&ThreadOn]) -> bool {
+    let mut boxes = Vec::with_capacity(group.len());
+    for on in group {
+        let Some(bounds) = tap_tool_box(on) else { return false };
+        if boxes.iter().any(|other| bounds.meets(other)) {
+            return false;
+        }
+        boxes.push(bounds);
+    }
+    true
+}
+
+/// Plain internal taps lying apart share one cut per body and its one validity check. `None`
+/// leaves every tap on [`cut`]: an unsupported tap, overlapping tools or a refused boolean.
+pub(super) fn cut_apart_taps(st: &ModelState, ons: &[ThreadOn]) -> Result<Option<ModelState>> {
+    if ons.len() < 2 || super::EVAL_VALIDATION.get() != kernel::Validation::EachFeature {
+        return Ok(None);
+    }
+    if ons
+        .iter()
+        .any(|on| !on.info.internal || on.info.form.is_taper() || on.narrow.is_some() || on.shoulder_unchecked || on.ends.contains(&End::Shoulder))
+    {
+        return Ok(None);
+    }
+    let mut groups: BTreeMap<&str, Vec<&ThreadOn>> = BTreeMap::new();
+    for on in ons {
+        groups.entry(on.info.body.as_str()).or_default().push(on);
+    }
+    if groups.values().any(|group| !tap_tools_apart(group)) {
+        return Ok(None);
+    }
+    let mut next = st.clone();
+    let mut checked = Vec::new();
+    for (name, group) in groups {
+        let index = st.bodies.iter().position(|body| body.name == name).ok_or_else(|| DocError::Invalid("threaded body".into()))?;
+        let original = st.bodies.get(index).ok_or_else(|| DocError::Invalid("threaded body".into()))?;
+        let mut tools = Vec::with_capacity(group.len());
+        for on in group {
+            match groove_tool(&on.info, on.cyl, on.ends, on.steep, on.ease, on.cyl.radius, None, false) {
+                Ok(tool) => tools.push(tool),
+                Err(DocError::Kernel(_)) => return Ok(None),
+                Err(error) => return Err(error),
+            }
+        }
+        let tool = match tools.as_slice() {
+            [one] => one.clone(),
+            many => match kernel::join_apart(many) {
+                Ok(Some(one)) => one,
+                Ok(None) | Err(_) => return Ok(None),
+            },
+        };
+        #[cfg(test)]
+        super::cost_tests::count(|c| c.thread_cuts += 1);
+        let body = match kernel::boolean(&original.body, &tool, BoolOp::Cut) {
+            Ok(Some(body)) => body,
+            Ok(None) => return Err(DocError::Invalid("the threads removed everything".into())),
+            Err(_) => return Ok(None),
+        };
+        if super::check_feature_body(&body).is_err() {
+            return Ok(None);
+        }
+        let faces = crate::lineage::Lineage::unnamed(&tool);
+        let lineage = original.traced().lineage.and_then(|lineage| crate::lineage::Lineage::step(&body, &[&lineage, &faces]));
+        checked.push((original.name.clone(), body.clone()));
+        if let Some(slot) = next.bodies.get_mut(index) {
+            *slot = original.remade(Traced { body, lineage, recipe: None });
+        }
+    }
+    // Nothing enters the live state or its validation scope until every body succeeded.
+    for (name, body) in &checked {
+        super::remember_checked_thread_output(name, body);
     }
     Ok(Some(next))
 }

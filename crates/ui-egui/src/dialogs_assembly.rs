@@ -1710,9 +1710,10 @@ pub fn rows(app: &mut SolveApp, ui: &mut egui::Ui, k: &mut Asm, inputs: &mut Vec
         Asm::Joint(f) => {
             let picked = sel_items(inputs, 0);
             f.whole_components.retain(|w| w.bodies.iter().all(|b| picked.contains(&Sel::Body { name: b.clone() })));
-            // As-built: two components picked, the position comes next. Counted as OK counts
-            // them: a component with two bodies, or with a sub-component, is one.
-            if f.as_built && *active == 0 && occurrences(&app.session, picked, &f.whole_components).len() >= 2 {
+            // As-built: exactly two components picked, the position comes next. Counted as OK
+            // counts them: a component with two bodies, or with a sub-component, is one. With more,
+            // Components stays active so one can be taken out there (#23704).
+            if f.as_built && *active == 0 && occurrences(&app.session, picked, &f.whole_components).len() == 2 {
                 *active = 1;
             }
             // Picks that make no joint say why, under them, and offer the way out (#1239).
@@ -3020,9 +3021,10 @@ pub(crate) fn row_adds_nested_whole(d: &Dialog, path: &[u64]) -> bool {
         .is_some_and(|whole| whole.iter().any(|w| path.starts_with(&w.path) || w.path.starts_with(path)) && !whole.iter().any(|w| w.path == path))
 }
 
-/// As-built with fewer than two components in Components: they are still being picked.
+/// As-built without exactly two components in Components: they are still being picked, or one
+/// is to be taken out (OK takes exactly two).
 pub(crate) fn as_built_wants_components(s: &Session, d: &Dialog) -> bool {
-    matches!(&d.kind, Kind::Assembly(Asm::Joint(f)) if f.as_built && occurrences(s, sel_items(&d.inputs, 0), &f.whole_components).len() < 2)
+    matches!(&d.kind, Kind::Assembly(Asm::Joint(f)) if f.as_built && occurrences(s, sel_items(&d.inputs, 0), &f.whole_components).len() != 2)
 }
 
 /// The occurrences of picked bodies (deduplicated, in pick order). A body of a component picked

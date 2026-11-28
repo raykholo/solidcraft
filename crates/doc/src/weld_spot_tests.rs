@@ -278,12 +278,16 @@ fn bad_sizes_normals_and_styles_are_refused_as_invalid_input() {
     for style in [STYLES[1], STYLES[2]] {
         refused(&SpotWeld { thicknesses: vec![T_L, T_U, T_U], ..spot(style) });
     }
+    // an edge as wide as the band (a site's room held it there) draws no edge zone, not refused
+    let flush = pieces(&SpotWeld { style: SpotStyle { marks: Some(SpotMarks { edge: 1.0, ..MARKS }), ..NONE }, ..s.clone() });
+    assert_eq!(flush.len(), 4);
+    assert!(flush.iter().all(|p| p.zone != SpotZone::Edge));
     refused(&SpotWeld { normal: [0.0; 3], ..s.clone() });
     refused(&SpotWeld { at: [f64::NAN, 0.0, 0.0], ..s.clone() });
     let bad_marks = [
         SpotMarks { core: 0.0, ..MARKS },
         SpotMarks { band: 0.5, ..MARKS },
-        SpotMarks { edge: 1.0, ..MARKS },
+        SpotMarks { edge: 0.9, ..MARKS },
         SpotMarks { top: MarkTop::Flat { thickness: 0.0 }, ..MARKS },
         SpotMarks { top: MarkTop::Dish { rim: 0.04, middle: 0.04 }, ..MARKS },
         // deeper than its outer radius: 0.9 d deep under a radius of 0.525 d
@@ -555,6 +559,31 @@ fn a_footprint_past_a_face_edge_is_refused_with_the_diameter_that_fits() {
     assert!((fits - 3.0).abs() < 1e-9, "fits {fits}");
     let face = face_at(&lower, [0.0; 3]);
     assert!(spot_site(&[&lower, &small], 0, face, [0.0; 3], 2.99).is_ok());
+}
+
+/// On the 3 × 3 sheet a spot of 2.9 fits (1.45 to its band, 1.5 to the edges): taken, and its
+/// marks' edge zone is drawn to the edges, 1.5, not to 1.05 × 1.45, so it stays on the face.
+#[test]
+fn an_edge_zone_near_a_face_edge_is_drawn_only_as_far_as_the_room() {
+    let lower = sheet(0.0, 1.5);
+    let small = block([-1.5, -1.5, 1.5], [3.0, 3.0, 1.0]);
+    let face = face_at(&lower, [0.0; 3]);
+    let d = 2.9;
+    let s = spot_site(&[&lower, &small], 0, face, [0.0; 3], d).unwrap();
+    assert!((s.room - 1.5).abs() < 1e-6, "room {}", s.room);
+    let spot = SpotWeld {
+        at: s.at,
+        normal: s.normal,
+        thicknesses: s.sheets.iter().map(|x| x.thickness).collect(),
+        diameter: d,
+        style: SpotLook::Marks.style().within(d, s.room),
+    };
+    let pieces = spot_weld(&spot).unwrap();
+    assert!(pieces.iter().any(|p| p.zone == SpotZone::Edge), "{pieces:?}");
+    for p in &pieces {
+        let bb = p.body.exact_bounds().unwrap();
+        assert!(bb.max.x <= 1.5 + 1e-6 && bb.min.x >= -1.5 - 1e-6, "{:?} {:?}", p.zone, bb);
+    }
 }
 
 /// Fewer than two sheets, a picked sheet or face not listed, a point that is not finite or a

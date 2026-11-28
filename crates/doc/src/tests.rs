@@ -11,6 +11,7 @@ mod weld_tests {
         crate::weld::WeldRecord {
             id: 42,
             number: 1,
+            label: None,
             settings: crate::weld::WeldSettings::default(),
             symbol: Some(solidcraft_geom::weld::Weld {
                 arrow_side: Some(solidcraft_geom::weld::WeldSide {
@@ -116,6 +117,88 @@ mod weld_tests {
             let settings = WeldSettings { spans: Some(WeldSpans { count, length_mm, pitch_mm }), ..Default::default() };
             assert_eq!(settings.validate().is_ok(), valid);
         }
+    }
+    #[test]
+    fn weld_data_fields_validate_round_trip_and_stay_out_of_older_saves() {
+        use crate::weld::{WeldNdt, WeldSettings};
+        let plain = serde_json::to_value(WeldSettings::default()).unwrap();
+        for key in ["position", "quality", "wps", "ndt", "tail_text", "filler"] {
+            assert!(plain.get(key).is_none(), "{key} is not saved while empty");
+        }
+        let full = WeldSettings {
+            process: Some("522+15".into()),
+            position: Some("PH".into()),
+            quality: Some("ISO 13919-2-B".into()),
+            wps: Some("WPS-017 rev 2".into()),
+            ndt: Some(WeldNdt { methods: [("VT".into(), 100.), ("UT".into(), 10.)].into_iter().collect(), note: Some("to ISO 17640".into()) }),
+            tail_text: Some("see note 4".into()),
+            filler: Some("ISO 14341-A G 42 4 M21 3Si1".into()),
+            ..Default::default()
+        };
+        full.validate().unwrap();
+        let back: WeldSettings = serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
+        assert_eq!(back, full);
+        for (p, ok) in [
+            ("135", true),
+            ("13", true),
+            ("131-D", true),
+            ("522+15", true),
+            ("522+131-D", true),
+            ("1234", false),
+            ("131-", false),
+            ("131-d", false),
+            ("+15", false),
+            ("135+", false),
+        ] {
+            assert_eq!(crate::weld::process_valid(p), ok, "{p}");
+        }
+        let bad = |f: fn(&mut WeldSettings)| {
+            let mut s = WeldSettings::default();
+            f(&mut s);
+            s.validate().is_err()
+        };
+        assert!(bad(|s| s.position = Some("PL".into())));
+        assert!(bad(|s| s.quality = Some("ISO 5817-A".into())));
+        assert!(bad(|s| s.quality = Some("ISO 9999-C".into())));
+        assert!(bad(|s| s.wps = Some(" ".into())));
+        assert!(bad(|s| s.tail_text = Some("two\nlines".into())));
+        assert!(bad(|s| s.filler = Some("x".repeat(129))));
+        assert!(bad(|s| s.ndt = Some(WeldNdt::default())));
+        assert!(bad(|s| s.ndt = Some(WeldNdt { methods: [("XR".into(), 10.)].into_iter().collect(), note: None })));
+        assert!(bad(|s| s.ndt = Some(WeldNdt { methods: [("UT".into(), 0.)].into_iter().collect(), note: None })));
+        assert!(bad(|s| s.ndt = Some(WeldNdt { methods: [("UT".into(), 100.5)].into_iter().collect(), note: None })));
+        assert!(!bad(|s| s.ndt = Some(WeldNdt { methods: Default::default(), note: Some("visual only".into()) })));
+    }
+    #[test]
+    fn weld_numbers_renumber_in_creation_order_and_labels_stay_unique() {
+        use crate::weld::{next_number, renumber, set_label, set_number};
+        let mut welds: Vec<_> =
+            [(7, 5), (3, 9), (12, 2)].into_iter().map(|(id, number)| crate::weld::WeldRecord { id, number, ..record() }).collect();
+        assert_eq!(next_number(&welds), Some(10));
+        renumber(&mut welds);
+        assert_eq!(welds.iter().map(|w| (w.id, w.number)).collect::<Vec<_>>(), [(7, 2), (3, 1), (12, 3)]);
+        assert!(set_number(&mut welds, 7, 1).is_err(), "W1 is taken");
+        assert!(set_number(&mut welds, 7, 0).is_err());
+        set_number(&mut welds, 7, 12).unwrap();
+        assert_eq!(welds[0].name(), "W12");
+        set_label(&mut welds, 7, Some("A-12".into())).unwrap();
+        assert_eq!((welds[0].name(), welds[0].number), ("A-12".into(), 12));
+        for taken in ["A-12", "W3", "W3 ", " W3", " A-1", "seventeen bytes!!", ""] {
+            assert!(set_label(&mut welds, 3, Some(taken.into())).is_err(), "{taken}");
+        }
+        set_label(&mut welds, 7, None).unwrap();
+        assert_eq!(welds[0].name(), "W12");
+        assert!(set_number(&mut welds, 99, 50).is_err());
+        let mut doc = Document::new("Welds");
+        doc.welds = welds;
+        doc.welds[1].label = Some("Root".into());
+        let back = crate::format::read(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.welds, doc.welds);
+        let mut value = serde_json::to_value(&doc).unwrap();
+        value["welds"][2]["label"] = serde_json::json!("Root");
+        assert!(crate::format::read(&value.to_string()).is_err(), "labels are unique in a saved design");
+        value["welds"][2]["label"] = serde_json::json!("W4");
+        assert!(crate::format::read(&value.to_string()).is_err(), "a label never reads as another number");
     }
     #[test]
     fn weld_graphics_refuse_hostile_saved_records() {
@@ -318,6 +401,7 @@ fn plate_doc() -> (Document, u64) {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -435,6 +519,7 @@ fn an_outline_closed_by_point_on_curve_tangent_joints_extrudes() {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -2137,6 +2222,7 @@ fn box_fillet_cut_timeline() {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -2377,6 +2463,7 @@ fn copy_lineage_resolves_seed_material_and_respects_overrides() {
     let pat_id = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_name_template: None,
                 features: Vec::new(),
                 pattern: PatternKind::Rectangular {
                     dir1: crate::points::Dir(Vec3::X),
@@ -2456,6 +2543,7 @@ fn copy_lineage_resolves_seed_material_and_respects_overrides() {
     let join_id = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_name_template: None,
                 features: Vec::new(),
                 pattern: PatternKind::Rectangular {
                     dir1: crate::points::Dir(Vec3::X),
@@ -3260,6 +3348,7 @@ fn a_split_of_a_body_of_two_pieces_gives_the_halves_of_both() {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -3310,6 +3399,8 @@ fn a_split_of_a_body_of_two_pieces_gives_the_halves_of_both() {
                 tool_bodies: Vec::new(),
                 sketch: None,
                 line: None,
+                curves: Vec::new(),
+                extend: true,
             },
             None,
         )
@@ -3776,6 +3867,7 @@ fn an_extruded_ellipse_or_spline_is_one_wall_named_by_its_curve() {
             symmetric_offset: false,
             through_all: false,
             second_follows_first: false,
+            through_all_to_corner: false,
             taper: None,
             taper2: None,
             corner: Default::default(),
@@ -4105,6 +4197,62 @@ fn thread_additional_faces_round_trip_without_moving_legacy_face_name_slots() {
 }
 
 #[test]
+fn transform_face_mirror_replays_the_resolved_pick_and_reflects_the_pivot_and_turn() {
+    let mut doc = Document::new("Mirrored walls");
+    let block = doc
+        .add_feature(
+            FeatureKind::Box {
+                corner: point_expr(Vec3::new(-5.0, -5.0, 0.0)),
+                length: "10".into(),
+                width: "10".into(),
+                height: "10".into(),
+                operation: Operation::NewBody,
+                centred: false,
+            },
+            None,
+        )
+        .unwrap();
+    doc.feature_mut(block).unwrap().body_names = vec!["Block".into()];
+    let mut model = Model::new();
+    model.evaluate(&doc);
+    let right = naming::face_names_at(&model.state(), &[Vec3::new(5.0, 0.0, 5.0)]);
+    assert!(!right[0].is_empty());
+    let seed = doc
+        .add_feature(
+            FeatureKind::TransformFace {
+                // The right face was picked before the block grew wider.
+                face: Vec3::new(4.0, 0.0, 5.0).into(),
+                body: "Block".into(),
+                translate: point_expr(Vec3::X),
+                rotate_axis: Vec3::Y.into(),
+                origin: Some(point_expr(Vec3::new(5.0, 0.0, 0.0))),
+                angle: Some("45 deg".into()),
+            },
+            None,
+        )
+        .unwrap();
+    doc.feature_mut(seed).unwrap().face_names = right;
+    doc.add_feature(
+        FeatureKind::Mirror {
+            features: vec![seed.into()],
+            plane: PlaneRef::Origin { name: "YZ".into() },
+            bodies: vec![],
+            combine: false,
+            placements: vec![],
+        },
+        None,
+    )
+    .unwrap();
+    model.evaluate(&doc);
+    assert!(model.results.iter().all(|r| r.error.is_none()), "{:?}", model.results);
+    let st = model.state();
+    assert_eq!(st.bodies.len(), 1);
+    // The walls are x = ±(6 + z): widths 12 and 32 at the two ends, 10 mm apart.
+    let volume = measure(&st.body("Block").unwrap().body).unwrap().volume;
+    assert!(rel(volume, 2200.0) < 1e-9, "{volume}");
+}
+
+#[test]
 fn thread_target_body_identities_follow_face_slots_and_reference_remapping() {
     let mut kind: FeatureKind = serde_json::from_value(serde_json::json!({
         "type":"thread", "face":[3,0,2],
@@ -4125,6 +4273,24 @@ fn thread_target_body_identities_follow_face_slots_and_reference_remapping() {
     assert_eq!(saved["target_bodies"], serde_json::json!(["Renamed", "B", "Renamed"]));
     let reopened: FeatureKind = serde_json::from_value(saved).unwrap();
     assert_eq!(reopened, kind);
+}
+
+/// Surface Fillet and Chamfer name and find each pick on its own body (#769): `a` on `a.body`,
+/// `b` on `b.body`, never on another body with a face at the same point.
+#[test]
+fn surface_fillet_and_chamfer_scope_each_face_slot_to_its_body() {
+    for kind in ["surface_fillet", "surface_chamfer"] {
+        let kind: FeatureKind = serde_json::from_value(serde_json::json!({
+            "type": kind, "a": {"body": "A", "point": [0, 5, 0]}, "b": {"body": "B", "point": [0, 0, 5]},
+            "radius": "2 mm", "distance": "2 mm"
+        }))
+        .unwrap();
+        assert_eq!(kind.face_points(), vec![Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, 0.0, 5.0)]);
+        assert_eq!([kind.face_slot_body(0), kind.face_slot_body(1), kind.face_slot_body(2)], [Some("A"), Some("B"), None]);
+    }
+    // Other kinds keep their own rule: a thread's slot is its target body, the rest none.
+    let thread: FeatureKind = serde_json::from_value(serde_json::json!({"type": "thread", "face": [3, 0, 2], "target_bodies": ["T"]})).unwrap();
+    assert_eq!(thread.face_slot_body(0), Some("T"));
 }
 
 #[test]
@@ -5489,6 +5655,7 @@ fn capture_position_20644_isolation_for_to_object_mirror_pattern_plane_and_joint
                     start_offset: None,
                     symmetric_offset: false,
                     through_all: false,
+                    through_all_to_corner: false,
                     second_follows_first: false,
                     taper: None,
                     taper2: None,
@@ -5535,6 +5702,7 @@ fn capture_position_20644_isolation_for_to_object_mirror_pattern_plane_and_joint
     let pattern_pre = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_name_template: None,
                 features: Vec::new(),
                 pattern: PatternKind::Rectangular {
                     dir1: crate::points::Dir(Vec3::Y),
@@ -5835,6 +6003,7 @@ fn extrude_start_offset_caps_are_named_consistently_across_rotations() {
                         start_offset: Some("4".into()),
                         symmetric_offset: false,
                         through_all: false,
+                        through_all_to_corner: false,
                         second_follows_first: false,
                         taper: None,
                         taper2: None,
@@ -5910,6 +6079,160 @@ fn asymmetric_profile_and_old_designs_preserve_face_names() {
     for (i, name) in names.iter().enumerate() {
         assert!(!name.is_empty(), "face {i} has valid name");
     }
+}
+
+/// #14426: a named driven sketch dimension is exposed as a read-only parameter to downstream
+/// features and parameters, recomputes downstream geometry when the driving sketch changes, and
+/// participates in incremental caching and `.sc` JSON serialization.
+#[test]
+fn driven_dimension_parameter_drives_downstream_feature_and_recomputes_on_geometry_change() {
+    let (mut doc, s) = plate_doc();
+    let cid = {
+        let sk = doc.sketch_mut(s).unwrap();
+        let p0 = match sk.curves[0].kind {
+            solidcraft_sketch::CurveKind::Line { a, .. } => a,
+            _ => panic!("expected first rectangle side to be a line"),
+        };
+        let p2 = match sk.curves[1].kind {
+            solidcraft_sketch::CurveKind::Line { b, .. } => b,
+            _ => panic!("expected second rectangle side to be a line"),
+        };
+        let cid = sk.add_constraint(ConstraintKind::Distance { p: p0, q: p2, value: 50.0 }, None).unwrap();
+        if let Some(c) = sk.constraints.iter_mut().find(|c| c.id == cid) {
+            c.driven = true;
+        }
+        cid
+    };
+    doc.set_driven_dimension_param(s, &cid, Some("diag")).unwrap();
+    doc.set_param("half_diag", "diag / 2", Some("mm"), None).unwrap();
+    let extrude_id = doc.features[1].id;
+    if let FeatureKind::Extrude { extent, .. } = &mut doc.feature_mut(extrude_id).unwrap().kind {
+        extent.distance = "half_diag".into();
+    }
+
+    let mut m = Model::new();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results);
+    assert!(m.is_current(&doc));
+    assert!((m.state().driven_params().get("diag").unwrap().v - 50.0).abs() < 1e-6);
+    assert!(rel(measure(&m.state().bodies[0].body).unwrap().volume, 40.0 * 30.0 * 25.0) < 1e-6);
+
+    // Unchanged document reuses every cached result.
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (0, 0));
+
+    // Changing upstream `width` updates `diag` and forces the downstream extrude to recompute.
+    doc.set_param("width", "60 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert!(m.results.iter().all(|r| r.error.is_none()), "{:?}", m.results);
+    assert!(m.is_current(&doc));
+    assert_eq!(m.last_recomputed, 2);
+    let expected_diag = (60.0_f64.powi(2) + 30.0_f64.powi(2)).sqrt();
+    assert!((m.state().driven_params().get("diag").unwrap().v - expected_diag).abs() < 1e-6);
+    assert!(rel(measure(&m.state().bodies[0].body).unwrap().volume, 60.0 * 30.0 * (expected_diag / 2.0)) < 1e-6);
+
+    // Reverting `width` restores both features cleanly from the cache.
+    doc.set_param("width", "40 mm", None, None).unwrap();
+    m.evaluate(&doc);
+    assert_eq!((m.last_recomputed, m.last_restored), (0, 2));
+    assert!(rel(measure(&m.state().bodies[0].body).unwrap().volume, 40.0 * 30.0 * 25.0) < 1e-6);
+
+    // Serialization preserves `driven_param`, and legacy JSON without `driven_param` still loads.
+    let json = doc.to_json();
+    assert!(json.contains("\"driven_param\":\"diag\"") || json.contains("\"driven_param\": \"diag\""));
+    let reopened = Document::from_json(&json).unwrap();
+    assert!(reopened.is_driven_param("diag"));
+    let mut legacy_val: serde_json::Value = serde_json::from_str(&json).unwrap();
+    fn strip_driven_param(v: &mut serde_json::Value) {
+        match v {
+            serde_json::Value::Object(map) => {
+                map.remove("driven_param");
+                for child in map.values_mut() {
+                    strip_driven_param(child);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    strip_driven_param(item);
+                }
+            }
+            _ => {}
+        }
+    }
+    strip_driven_param(&mut legacy_val);
+    let legacy = serde_json::to_string(&legacy_val).unwrap();
+    let legacy_doc = Document::from_json(&legacy).unwrap();
+    assert!(!legacy_doc.is_driven_param("diag"));
+}
+
+/// #14426: driven dimension parameters are strictly read-only and cannot be referenced by the
+/// sketch that defines them or by any feature earlier in the timeline.
+#[test]
+fn driven_dimension_parameter_rejects_self_and_forward_references_and_edits() {
+    let (mut doc, s1) = plate_doc();
+    let cid = {
+        let sk = doc.sketch_mut(s1).unwrap();
+        let p0 = match sk.curves[0].kind {
+            solidcraft_sketch::CurveKind::Line { a, .. } => a,
+            _ => panic!("expected line"),
+        };
+        let p2 = match sk.curves[1].kind {
+            solidcraft_sketch::CurveKind::Line { b, .. } => b,
+            _ => panic!("expected line"),
+        };
+        let cid = sk.add_constraint(ConstraintKind::Distance { p: p0, q: p2, value: 50.0 }, None).unwrap();
+        if let Some(c) = sk.constraints.iter_mut().find(|c| c.id == cid) {
+            c.driven = true;
+        }
+        cid
+    };
+    doc.set_driven_dimension_param(s1, &cid, Some("diag")).unwrap();
+
+    // Read-only protection across every mutation entry point.
+    assert!(doc.set_param("diag", "10 mm", None, None).unwrap_err().to_string().contains("read-only"));
+    assert!(doc.change_param("diag", "10 mm", None, None).unwrap_err().to_string().contains("read-only"));
+    assert!(doc.change_params_atomic(&[("diag".into(), "10 mm".into())]).unwrap_err().to_string().contains("read-only"));
+    assert!(doc.remove_param("diag").unwrap_err().to_string().contains("driven dimension"));
+    assert!(doc.import_params(r#"[{"name":"diag","expression":"10 mm","unit":"mm"}]"#).unwrap_err().to_string().contains("read-only"));
+
+    // Self-reference through `width` (which drives `Sketch1`) is rejected before commit.
+    let self_err = doc.set_param("width", "diag", None, None).unwrap_err().to_string();
+    assert!(self_err.contains("circular reference"), "{self_err}");
+
+    // Even if a saved file bypasses authoring checks, evaluation fails cleanly without looping.
+    let mut bad_self = doc.clone();
+    if let Some(p) = bad_self.params.iter_mut().find(|p| p.name == "width") {
+        p.expr = "diag".into();
+    }
+    let mut m = Model::new();
+    m.evaluate(&bad_self);
+    let s1_err = m.result(s1).and_then(|r| r.error.as_deref()).unwrap_or_default();
+    assert!(s1_err.contains("circular reference"), "{s1_err}");
+
+    // Add a later sketch `Sketch2` exposing `late_dim`, then test forward-reference rejection.
+    let mut sk2 = Sketch::new();
+    let a = sk2.add_point(Vec2::new(0.0, 0.0), None).unwrap();
+    let b = sk2.add_point(Vec2::new(25.0, 0.0), None).unwrap();
+    let l = sk2.add_line_pts(a, b, None).unwrap();
+    let c2 = sk2.add_constraint(ConstraintKind::Length { l, value: 25.0 }, None).unwrap();
+    if let Some(c) = sk2.constraints.iter_mut().find(|c| c.id == c2) {
+        c.driven = true;
+    }
+    let s2 = doc.add_feature(FeatureKind::Sketch { plane: PlaneRef::Origin { name: "XY".into() }, sketch: sk2 }, None).unwrap();
+    doc.set_driven_dimension_param(s2, &c2, Some("late_dim")).unwrap();
+
+    let fwd_err = doc.set_param("width", "late_dim", None, None).unwrap_err().to_string();
+    assert!(fwd_err.contains("forward reference"), "{fwd_err}");
+
+    let mut bad_fwd = doc.clone();
+    let extrude_id = bad_fwd.features[1].id;
+    if let FeatureKind::Extrude { extent, .. } = &mut bad_fwd.feature_mut(extrude_id).unwrap().kind {
+        extent.distance = "late_dim".into();
+    }
+    let mut m2 = Model::new();
+    m2.evaluate(&bad_fwd);
+    let ext_err = m2.result(extrude_id).and_then(|r| r.error.as_deref()).unwrap_or_default();
+    assert!(ext_err.contains("forward reference"), "{ext_err}");
 }
 
 /// #18815: a design with a failing feature still keeps a partial model cache for all valid

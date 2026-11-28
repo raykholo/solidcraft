@@ -13,6 +13,7 @@
 use crate::blend::blend_corner::end::continuing_edges;
 use crate::blend::fillet_executive::p1::{is_radius_supported, SUPPORTED_TOLERANCES};
 use crate::error::blend::BlendFailure;
+use crate::math::det;
 use crate::math::{rad_to_deg, EFF_ZERO_SQRT, PI};
 use crate::topology::edgeuse::p1 as eu1;
 use crate::topology::edgeuse::p3::{evaluate_binormal, BinormalOptions};
@@ -163,9 +164,12 @@ pub enum SetbackTooShortWhy {
 pub enum SetbackTooLongWhy {
     /// With its ease it leaves an edge at its corner no length past the far end's claim (that
     /// end's fill's setback and ease, or the setback set on its corner; 0 where it has none):
-    /// an open bound. Every set-back corner, before the blends are traced; `largest` is the
-    /// least of `length - ease - far` less the fit margin, a thousand of the edge's
-    /// tolerances, and a setback above it is refused.
+    /// an open bound. Decided before the blends are traced, but at the Setback on an edge
+    /// whose far end makes no claim once the far corners are placed, refused as
+    /// [`SetbackTooLongWhy::PastRails`] instead where a far corner cuts a round's rail nearer
+    /// (#13649). `largest` is the least of
+    /// `length - ease - far` less the fit margin, a thousand of the edge's tolerances, and a
+    /// setback above it is refused.
     Overlap,
     /// At a Setback corner, with its ease it does not lie below an edge's room by the
     /// tolerance: `setback + ease >= length - claim - tol`, the far end's claim its fill's
@@ -444,13 +448,13 @@ pub fn round_too_small(
     }
     // the blend's tangency angle: faces within it are tangent ([`edge::blend_edgeuse`])
     let tangent = PI / 180.0 * (90.0 - edge::CREASE_ANGLE);
-    let reach = 1.0 / (0.5 * turn).cos() - 1.0;
+    let reach = 1.0 / det::cos(0.5 * turn) - 1.0;
     if turn <= tangent || !(reach.is_finite() && reach > 0.0) {
         return Ok(None);
     }
     let tolerance = b.edge(e)?.tolerance.max(b.tolerance());
     // the round's width across its faces, the chord between its two edges
-    let chord = 2.0 * (0.5 * turn).sin();
+    let chord = 2.0 * det::sin(0.5 * turn);
     let narrowest = SUPPORTED_TOLERANCES * b.tolerance() / chord * (1.0 + EFF_ZERO_SQRT);
     if radius * reach >= tolerance && radius >= narrowest {
         return Ok(None);

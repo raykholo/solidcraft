@@ -230,12 +230,17 @@ fn picked_faces(call: &'static str, body: &Body, points: &[[f64; 3]], tolerance:
     Ok(once)
 }
 
-/// A copy of `body` for an operation to work on (`SmApiBrepCopy`): solidcore-ops' offsets
-/// change the body they are given.
-fn working_copy(call: &'static str, body: &Body) -> Result<Body> {
+fn require_finished(call: &'static str, body: &Body) -> Result<()> {
     if body.kernel_left_unfinished() {
         return Err(Error::Internal(format!("{call}: the body was left unfinished by an earlier panic")));
     }
+    Ok(())
+}
+
+/// A copy of `body` for an operation to work on (`SmApiBrepCopy`): solidcore-ops' offsets
+/// change the body they are given.
+fn working_copy(call: &'static str, body: &Body) -> Result<Body> {
+    require_finished(call, body)?;
     ops_as(call, &[("brep", body)], offset_error, || body.copy())
 }
 
@@ -284,6 +289,17 @@ pub(crate) fn offset_faces(body: &Body, points: &[[f64; 3]], tolerance: f64, dis
     let order = w.own_order();
     ops_as(CALL, &[("brep", body)], offset_error, || solidcore_ops::offset::offset_faces(&w, &order, &picked, distance))?;
     Ok(w)
+}
+
+/// Retrim the face numbered `face` in the tagged operand, carrying that order through the copy.
+pub(crate) fn transform_face(body: &Body, face: usize, translate: [f64; 3], origin: [f64; 3], axis: [f64; 3], angle: f64) -> Result<(Body, bool)> {
+    const CALL: &str = "smlib_transform_face";
+    require_finished(CALL, body)?;
+    ops_as(CALL, &[("brep", body)], offset_error, || {
+        let (w, order) = body.copy_with_order(&body.own_order())?;
+        let changed = solidcore_ops::offset::transform_face(&w, &order, face, translate, origin, axis, angle)?;
+        Ok((w, changed))
+    })
 }
 
 /// `smlib_thicken`: a sheet thickened by `thickness` along its normals, or (symmetric) moved back
@@ -402,9 +418,9 @@ pub(super) fn moved_faces(w: &mut Brep) -> solidcore::Result<bool> {
 
 /// `smlib_draft`: its checks, the solid check, the pick, then `draft_faces`: each picked face (a
 /// plane parallel to the pull) gets a copy of its plane turned by `angle` about its line on the
-/// neutral plane, and a cylinder or cone about the pull the cone solidcore's `draft_surface` gives
-/// (tangency-labs/smlib#27); `SmBrep::LocalOperation` extends or trims the faces around them to
-/// meet the tilted surfaces.
+/// neutral plane, a cylinder or cone about the pull the cone solidcore's `draft_surface` gives
+/// (tangency-labs/smlib#27), and the side of an extrusion along the pull its ruled wall (#22809);
+/// `SmBrep::LocalOperation` extends or trims the faces around them to meet the tilted surfaces.
 pub(crate) fn draft(
     body: &Body,
     points: &[[f64; 3]],
@@ -442,20 +458,18 @@ pub(crate) fn draft(
             };
             // A cylinder or cone about the pull drafted becomes the cone solidcore's draft gives
             // (`draft_surface`: its generators turned about its circle on the neutral plane),
+            // and the side of an extrusion along the pull its certified ruled wall (#22809), each
             // carrying its draft definition, so that the local operation knows it for a draft.
-            if let SurfaceKind::Cone(_) = surf.kind_with_nurb(k)? {
+            let SurfaceKind::Plane(plane) = surf.kind_with_nurb(k)? else {
                 let Ok(the_draft) = Draft::new(p3(neutral_origin), normal, along, angle) else {
                     return Ok(Err(Error::Argument));
                 };
                 match answer(draft_surface(k, &w, f, &the_draft))? {
-                    Some(Ok(cone)) => surfaces.push(cone),
+                    Some(Ok(drafted)) => surfaces.push(drafted),
                     Some(Err(r)) => return Ok(Err(cone_refused(r))),
                     None => return Ok(Err(Error::Unsupported)),
                 }
                 continue;
-            }
-            let SurfaceKind::Plane(plane) = surf.kind_with_nurb(k)? else {
-                return Ok(Err(cannot_draft("a drafted face is neither a plane nor a cone or cylinder")));
             };
             // The face's outward normal: the plane's, turned with the outer faceuse.
             let mut n = plane.position().z_axis();

@@ -78,6 +78,57 @@ fn swatch_picker_preview_keeps_the_tiles_in_place_when_an_option_is_highlighted(
     assert_eq!(tile(), before, "tiles stay put when the highlight goes away");
 }
 
+/// #23596: a search hides the large picture, so the matching tiles sit right under the search
+/// box instead of below the popup's fold; and labels that differ only at their end (a size)
+/// keep that end visible.
+#[test]
+fn swatch_picker_search_shows_results_under_the_search_box_and_label_ends() {
+    let ctx = context();
+    let texture = ctx.load_texture("synthetic", egui::ColorImage::filled([2, 2], egui::Color32::from_rgb(90, 90, 90)), Default::default());
+    let titles: Vec<String> = ["Coude 90° à coller d25", "Vanne à bille FIP VEEIV d25", "Vanne à bille FIP VEEIV d32", "Vanne à bille FIP VEEIV d40"]
+        .map(String::from)
+        .to_vec();
+    let textures = vec![Some(egui::load::SizedTexture::new(texture.id(), texture.size_vec2())); titles.len()];
+    let mut chosen = None;
+    let mut draw = |ui: &mut Ui| {
+        row(ui, "Piece", |ui| {
+            swatch_picker(
+                ui,
+                "piece",
+                &mut chosen,
+                SwatchPicker { titles: &titles, textures: &textures, choose: "Choose…", search_hint: "Search", preview: true },
+            )
+        });
+    };
+    frame(&ctx, vec![], &mut draw);
+    let trigger = registry::handle_at("dialog:Piece").unwrap();
+    frame(&ctx, pointer(trigger, true), &mut draw);
+    frame(&ctx, pointer(trigger, false), &mut draw);
+    frame(&ctx, vec![], &mut draw);
+    assert!(registry::rect_of("swatch:piece:preview").is_some(), "the large picture shows before a search");
+    let search = registry::rect_of("swatch:piece:search").unwrap();
+    frame(&ctx, pointer(search.center(), true), &mut draw);
+    frame(&ctx, pointer(search.center(), false), &mut draw);
+    frame(&ctx, vec![egui::Event::Text("Vanne".into())], &mut draw);
+    let output = frame_output(&ctx, vec![], &mut draw);
+    assert!(registry::rect_of("swatch:piece:preview").is_none(), "the large picture gives way while searching");
+    let first = registry::rect_of("swatch:piece:tile:1").expect("the first match is drawn");
+    let t = solidcraft_theme::Tokens::get();
+    assert!(first.top() - search.bottom() < t.control_height, "the first match {first:?} sits right under the search box {search:?}");
+    assert!(registry::rect_of("swatch:piece:tile:0").is_none(), "the elbow does not match");
+    let texts: Vec<String> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+            _ => None,
+        })
+        .collect();
+    for size in ["d25", "d32", "d40"] {
+        assert!(texts.iter().any(|text| text.trim_end().ends_with(size)), "a label ends with {size}: {texts:?}");
+    }
+}
+
 #[test]
 fn segmented_allocates_only_its_reserved_row() {
     for layout in [egui::Layout::top_down(egui::Align::Min), egui::Layout::left_to_right(egui::Align::Center)] {

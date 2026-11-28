@@ -83,12 +83,17 @@ impl Direction {
 /// Per block of `blocks` (in order, over the variables `vars`): whether every one of its rows
 /// is a combination of the rows before it. With `support`, also for the block at that index
 /// (when redundant) the earlier blocks its rows combine.
+///
+/// A block is dependent only where it is dependent at the pose the sketch is in AND at the
+/// lifted pose (see [`super::lifted_pose`]): the radius of an arc that lies on its chord is at
+/// a turning point, so a dimension on it is dependent only there.
 pub(super) fn dependent_blocks(
     sk: &Sketch,
     lay: &Layout,
     blocks: &[(Block, Vec<usize>)],
     vars: &[usize],
     x: &mut [f64],
+    lifted: Option<&mut [f64]>,
     support: Option<usize>,
 ) -> (Vec<bool>, Vec<usize>) {
     #[cfg(feature = "solver-profiling")]
@@ -103,7 +108,14 @@ pub(super) fn dependent_blocks(
         let _timer = profiling::timer(Phase::RedundancyJacobian);
         local_system(sk, lay, blocks, x, &col, vars.len())
     };
-    classify_rows(&j, &owner, blocks.len(), support)
+    let (dependent, by) = classify_rows(&j, &owner, blocks.len(), support);
+    let Some(lifted) = lifted else { return (dependent, by) };
+    let (_, j, owner) = local_system(sk, lay, blocks, lifted, &col, vars.len());
+    let (off, _) = classify_rows(&j, &owner, blocks.len(), None);
+    let dependent: Vec<bool> = dependent.iter().zip(&off).map(|(a, b)| *a && *b).collect();
+    // The support: what determines the block, read where the block is redundant at both poses.
+    let by = if support.is_some_and(|t| dependent.get(t).copied().unwrap_or(false)) { by } else { Vec::new() };
+    (dependent, by)
 }
 
 fn classify_rows(j: &Mat, owner: &[usize], block_count: usize, support: Option<usize>) -> (Vec<bool>, Vec<usize>) {
@@ -237,7 +249,8 @@ pub fn determined_by(sk: &Sketch, ci: usize) -> Vec<usize> {
         .collect();
     order.push(t);
     let sub: Vec<(Block, Vec<usize>)> = order.iter().filter_map(|bi| blocks.get(*bi).map(|(b, v)| (super::copy_block(b), v.clone()))).collect();
-    let (_, by) = dependent_blocks(sk, &lay, &sub, &vars, &mut x, Some(sub.len().saturating_sub(1)));
+    let mut lifted = super::lifted_pose(sk, &lay, &x);
+    let (_, by) = dependent_blocks(sk, &lay, &sub, &vars, &mut x, lifted.as_deref_mut(), Some(sub.len().saturating_sub(1)));
     let mut out: Vec<usize> = by.iter().filter_map(|k| sub.get(*k).and_then(|(b, _)| block_constraint(b))).collect();
     out.sort_unstable();
     out.dedup();

@@ -229,6 +229,29 @@ pub struct Ask {
     pub tab: Option<u64>,
 }
 
+/// Both kinds of import dialog share the same queue so a mixed drop asks in file order.
+pub(crate) enum Prompt {
+    Mesh(crate::mesh_units::Ask),
+    Options(Ask),
+}
+
+pub(crate) fn enqueue(app: &mut SolveApp, prompt: Prompt) {
+    app.import_options_waiting.push_back(prompt);
+    next_prompt(app);
+}
+
+/// Show the next file only when neither dialog is active.
+fn next_prompt(app: &mut SolveApp) {
+    if app.import_options.is_some() || app.mesh_units.is_some() {
+        return;
+    }
+    match app.import_options_waiting.pop_front() {
+        Some(Prompt::Mesh(ask)) => app.mesh_units = Some(ask),
+        Some(Prompt::Options(ask)) => app.import_options = Some(ask),
+        None => {}
+    }
+}
+
 /// Ask for the import options of `path` before it is opened or inserted. Returns whether the file
 /// was held for the answer (the caller then stops: the dialog starts the import itself). A file
 /// whose format shows no options here goes on at once, and so does every file but a KiCad board
@@ -248,12 +271,7 @@ pub fn ask(app: &mut SolveApp, path: &str, insert: bool) -> bool {
     // A board chosen to insert opens as a design of its own (see the module docs).
     let insert = insert && !board;
     let tab = insert.then(|| app.docs.active_tab());
-    let ask = Ask { path: path.into(), insert, values, tab };
-    if app.import_options.is_some() {
-        app.import_options_waiting.push_back(ask);
-    } else {
-        app.import_options = Some(ask);
-    }
+    enqueue(app, Prompt::Options(Ask { path: path.into(), insert, values, tab }));
     true
 }
 
@@ -270,6 +288,8 @@ fn request(app: &SolveApp, ask: &Ask) -> file_load::Request {
 
 /// The dialog, while a file waits for its options. Enter imports, Esc cancels.
 pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
+    // Advance at the start of a frame so the next dialog cannot see this one's answer.
+    next_prompt(app);
     let Some(mut ask) = app.import_options.take() else { return };
     let file = std::path::Path::new(&ask.path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| ask.path.clone());
     let format = formats::find(ask.values.format).map_or("", |f| solidcraft_ui_text::tr_label(f.label));
@@ -313,8 +333,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
             ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         }
     }
-    // The next file of a drop of several is asked now.
-    app.import_options = app.import_options_waiting.pop_front();
+    if !app.import_options_waiting.is_empty() {
+        ctx.request_repaint();
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +477,58 @@ mod tests {
         for p in [a, b] {
             let _ = std::fs::remove_dir_all(p.parent().unwrap());
         }
+    }
+
+    #[test]
+    fn mesh_units_and_step_options_follow_the_drop_order() {
+        #[derive(Debug)]
+        struct Dropped(std::path::PathBuf);
+        impl egui::DroppedFile for Dropped {
+            fn path(&self) -> &std::path::Path {
+                &self.0
+            }
+            fn bytes(&self) -> Result<Vec<u8>, String> {
+                std::fs::read(&self.0).map_err(|e| e.to_string())
+            }
+        }
+
+        let step = step_file("mixed-drop");
+        let dir = step.parent().unwrap();
+        let stl = dir.join("first.stl");
+        let obj = dir.join("last.obj");
+        std::fs::write(
+            &stl,
+            "solid part\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid part\n",
+        )
+        .unwrap();
+        std::fs::write(&obj, "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+
+        let mut h = crate::scenario::Harness::new();
+        h.app.home.open = false;
+        h.app.run("solid.box", json!({"length": 10, "width": 10, "height": 10})).unwrap();
+        let files = [&stl, &step, &obj].map(|path| std::sync::Arc::new(Dropped(path.clone())) as egui::DroppedFileHandle);
+        h.drop_files(egui::pos2(800.0, 500.0), files.into());
+        h.frames(3);
+        assert_eq!(h.app.mesh_units.as_ref().map(|ask| ask.path.as_str()), stl.to_str());
+        assert!(crate::scenario::handle_at("import_options:ok").is_none());
+
+        h.step(&json!({"click": {"handle": "mesh_units:ok"}})).unwrap();
+        h.settle();
+        assert_eq!(h.app.import_options.as_ref().map(|ask| ask.path.as_str()), step.to_str());
+        assert!(h.app.mesh_units.is_none());
+        assert_eq!(h.app.session.world_state().unwrap().bodies.len(), 2, "the STL is inserted");
+
+        h.step(&json!({"click": {"handle": "import_options:cancel"}})).unwrap();
+        h.frames(2);
+        assert_eq!(h.app.mesh_units.as_ref().map(|ask| ask.path.as_str()), obj.to_str());
+        assert!(h.app.file_load.idle(), "Cancel starts no import");
+
+        h.step(&json!({"click": {"handle": "mesh_units:ok"}})).unwrap();
+        h.settle();
+        assert!(h.app.mesh_units.is_none() && h.app.import_options.is_none());
+        assert!(h.app.import_options_waiting.is_empty());
+        assert_eq!(h.app.session.world_state().unwrap().bodies.len(), 3, "both meshes are inserted and STEP is skipped");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// On Home, Esc gives the question up and leaves Home open, as the unit question does (#15598).

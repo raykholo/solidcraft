@@ -1,5 +1,5 @@
-//! Contracts and result types for the commands that list the open designs and show one of them
-//! (`document.list`, `document.activate`).
+//! Contracts and result types for the commands that list the open designs, show one of them,
+//! and close one (`document.list`, `document.activate`, `document.close`).
 //!
 //! The engine holds one design, so these describe what a command line or headless server answers
 //! (its one design). The desktop window answers them for every design tab it has open.
@@ -57,6 +57,30 @@ pub struct DocumentActivateResult {
     pub name: String,
     /// The file it is saved in, or null while it has none.
     pub path: Option<String>,
+    /// In the warn parameter-check mode: what the call's parameters got wrong.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
+/// Close the active clean design tab without discarding unsaved changes.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocumentCloseParams {
+    /// Optional guard: the expected `document_id` of the active design (from `document.list` or
+    /// `document.revision`). Refused if another design is active.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_id: Option<String>,
+}
+
+/// What `document.close` returns: the closed design's id, the design now active, and how many tabs remain.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DocumentCloseResult {
+    /// The `document_id` of the design that was closed.
+    pub closed_document_id: String,
+    /// The `document_id` of the design now active.
+    pub document_id: String,
+    /// How many design tabs remain open.
+    pub documents: usize,
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

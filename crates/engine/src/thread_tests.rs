@@ -1751,7 +1751,10 @@ fn a_saved_segmented_thread_flank_pick_does_not_select_a_different_face() {
                 let (face, point) = solidcraft_doc::naming::face_on_body(shaft, name, *pick).unwrap();
                 assert!(point.dist(*pick) < 0.01, "{tip}: {name} must stay on its original flank: {point:?}");
                 assert!(
-                    matches!(shaft.body.record().faces[face].surface, Surface::Spline { .. } | Surface::RationalSpline { .. }),
+                    matches!(
+                        shaft.body.record().faces[face].surface,
+                        Surface::Spline { .. } | Surface::RationalSpline { .. } | Surface::Sweep { .. }
+                    ),
                     "{tip}: {name} must not select a cylinder"
                 );
             }
@@ -1791,7 +1794,10 @@ fn a_modelled_thread_keeps_each_flank_as_one_face() {
             .faces
             .iter()
             .enumerate()
-            .filter(|(_, f)| f.nurbs.is_none() && matches!(f.surface, Surface::Spline { .. } | Surface::RationalSpline { .. }))
+            .filter(|(_, f)| {
+                matches!(f.surface, Surface::Sweep { .. })
+                    || (f.nurbs.is_none() && matches!(f.surface, Surface::Spline { .. } | Surface::RationalSpline { .. }))
+            })
             .map(|(i, _)| i)
             .collect();
         assert_eq!(flanks.len(), 2, "one selectable face per flank, independent of the turn count");
@@ -1811,7 +1817,10 @@ fn a_modelled_thread_keeps_each_flank_as_one_face() {
         for (name, point) in picks {
             let (face, found) = solidcraft_doc::naming::face_on_body(shaft, &name, point).unwrap();
             assert!(found.dist(point) < 1e-6, "the saved flank pick must remain on its named face: {name}");
-            assert!(matches!(shaft.body.record().faces[face].surface, Surface::Spline { .. } | Surface::RationalSpline { .. }));
+            assert!(matches!(
+                shaft.body.record().faces[face].surface,
+                Surface::Spline { .. } | Surface::RationalSpline { .. } | Surface::Sweep { .. }
+            ));
         }
     }
 }
@@ -2652,6 +2661,72 @@ fn a_thread_goes_on_a_body_of_its_own_component() {
     let on: Vec<String> = s.model.state().threads.iter().map(|t| t.body.clone()).collect();
     assert_eq!(on, [body_of(&s, "Stud B")]);
 }
+
+#[test]
+fn thread_designation_follows_text_parameters_and_configuration_rows() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name":"size_name", "expression":"M5", "unit":"text"}));
+    run(&mut s, "parameters.add", json!({"name":"stock_radius", "expression":"2.5 mm"}));
+    run(&mut s, "solid.cylinder", json!({"radius":"stock_radius", "height":10}));
+    run(&mut s, "solid.thread", json!({"face":[2.5,0,5], "designation":"size_name + ''"}));
+    let check = |s: &Session, designation: &str, major: f64, pitch: f64| {
+        let state = s.model.state();
+        let t = &state.threads[0];
+        assert_eq!(t.designation, designation);
+        assert!((t.major_diameter - major).abs() < 1e-9);
+        assert!((t.pitch - pitch).abs() < 1e-9);
+    };
+    check(&s, "M5", 5.0, 0.8);
+    run(&mut s, "parameters.change", json!({"name":"size_name", "expression":"M5x0.5"}));
+    check(&s, "M5x0.5", 5.0, 0.5);
+    // Configure both the stock and designation so the thread continues to fit its face.
+    run(&mut s, "config.configure", json!({"params":["size_name", "stock_radius"]}));
+    run(&mut s, "config.row", json!({"name":"Six", "values":{"size_name":"M6", "stock_radius":"3 mm"}}));
+    run(&mut s, "config.activate", json!({"row":"Six"}));
+    check(&s, "M6", 6.0, 1.0);
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened, "M6", 6.0, 1.0);
+}
+
+#[test]
+fn thread_designation_evaluates_text_and_preserves_literal_sizes() {
+    for designation in ["M5", "size_name", "'M' + '5'"] {
+        let mut s = Session::default();
+        run(&mut s, "parameters.add", json!({"name":"size_name", "expression":"M5", "unit":"text"}));
+        run(&mut s, "solid.cylinder", json!({"radius":2.5, "height":10}));
+        run(&mut s, "solid.thread", json!({"face":[2.5,0,5], "designation":designation}));
+        assert_eq!(s.model.state().threads[0].designation, "M5");
+    }
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name":"size_name", "expression":"unknown_size", "unit":"text"}));
+    run(&mut s, "solid.cylinder", json!({"radius":2.5, "height":10}));
+    let error = s.execute("solid.thread", &json!({"face":[2.5,0,5], "designation":"size_name"})).unwrap_err().to_string();
+    assert!(error.contains("unknown metric thread"), "{error}");
+    assert!(error.contains("unknown_size"), "{error}");
+}
+
+#[test]
+fn tapped_hole_designation_follows_text_parameter_and_drill_size() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name":"size_name", "expression":"M5", "unit":"text"}));
+    run(&mut s, "solid.box", json!({"length":20,"width":20,"height":10}));
+    run(&mut s, "solid.hole", json!({"position":[10,10,10],"thread":"size_name","depth":8}));
+    let check = |s: &Session, major: f64, pitch: f64| {
+        let state = s.model.state();
+        assert_eq!(state.threads.len(), 1);
+        assert!((state.threads[0].major_diameter - major).abs() < 1e-9);
+        assert!((state.threads[0].pitch - pitch).abs() < 1e-9);
+    };
+    check(&s, 5.0, 0.8);
+    run(&mut s, "parameters.change", json!({"name":"size_name", "expression":"M6"}));
+    check(&s, 6.0, 1.0);
+    let reopened = Session::new(solidcraft_doc::Document::from_json(&s.doc.to_json()).unwrap());
+    check(&reopened, 6.0, 1.0);
+    run(&mut s, "config.configure", json!({"params":["size_name"]}));
+    run(&mut s, "config.row", json!({"name":"Small", "values":{"size_name":"M5"}}));
+    run(&mut s, "config.activate", json!({"row":"Small"}));
+    check(&s, 5.0, 0.8);
+}
 /// A plain `solid.move` (no copy) must carry the body's thread record with the body.
 /// The record keeps the thread feature's id and its hand; a rigid turn does not flip that hand,
 /// and a body left out of the move keeps the record it had. A copied move is covered above.
@@ -3173,4 +3248,70 @@ fn placed_thread_up_to_an_unmappable_plane_name_is_refused() {
     run(&mut s, "component.activate", json!({"component": "root"}));
     let e = s.execute("solid.thread", &json!({"face": [4, 0, 102], "up_to": "o:9999/origin/XY"})).expect_err("refused").to_string();
     assert!(e.contains("cannot be mapped") && e.contains("explicit"), "{e}");
+}
+
+#[test]
+fn literal_thread_size_ignores_an_errored_parameter_with_the_same_name() {
+    let mut s = Session::default();
+    run(&mut s, "solid.cylinder", json!({"radius":4,"height":10}));
+    // Insert an invalid expression directly: parameter commands reject it at entry.
+    s.doc_mut().params.push(solidcraft_doc::Param {
+        name: "M8".into(),
+        expr: "missing_parameter".into(),
+        unit: String::new(),
+        comment: String::new(),
+        model: false,
+    });
+    run(&mut s, "solid.thread", json!({"face":[4,0,5],"designation":"M8"}));
+    assert!(s.model.param_errors.contains_key("M8"));
+    assert_eq!(s.model.state().threads[0].designation, "M8");
+}
+
+/// A cosmetic thread in a bore that a cross hole cut before it runs its asked length across the
+/// cross hole, as it does when the thread comes first (#23507): the cut splits the bore's wall
+/// into two coaxial faces, 0 to 10 - sqrt(3.675^2 - 2.1^2) = 6.984 mm and from 13.016 mm on.
+#[test]
+fn a_thread_through_an_earlier_cross_hole_keeps_its_length() {
+    let block = |s: &mut Session| {
+        run(s, "sketch.create", json!({"plane": "YZ", "name": "Section"}));
+        run(s, "sketch.line", json!({"points": [[-10, -10], [10, -10], [10, 10], [-10, 10]], "closed": true}));
+        run(s, "sketch.circle.center", json!({"center": [0, 0], "diameter": 4.2}));
+        run(s, "sketch.finish", json!({}));
+        run(s, "solid.extrude", json!({"distance": 30, "name": "Block", "body_name": "Block"}));
+    };
+    let cross = json!({"diameter": 7.35, "height": 100, "base": [10, -50, 0], "axis": "Y", "operation": "cut", "name": "CrossCut"});
+    for (extent, want) in [(json!({"extent": "length", "length": 15}), (0.0, 15.0)), (json!({}), (0.0, 30.0))] {
+        let mut thread = json!({"face": [0.5, 2.1, 0], "designation": "M5", "from": [0, 2.1, 0], "name": "Thread"});
+        thread.as_object_mut().unwrap().extend(extent.as_object().unwrap().clone());
+        let mut spans = Vec::new();
+        for cut_first in [false, true] {
+            let mut s = Session::default();
+            block(&mut s);
+            if cut_first {
+                run(&mut s, "solid.cylinder", cross.clone());
+            }
+            run(&mut s, "solid.thread", thread.clone());
+            if !cut_first {
+                run(&mut s, "solid.cylinder", cross.clone());
+            }
+            let st = s.model.state();
+            let t = &st.threads[0];
+            let (a, b) = (t.start.min(t.end), t.start.max(t.end));
+            let along = |v: f64| (t.axis_point + t.axis * v).x;
+            spans.push((along(a).min(along(b)), along(a).max(along(b))));
+        }
+        for (lo, hi) in spans {
+            assert!((lo - want.0).abs() < 1e-6 && (hi - want.1).abs() < 1e-6, "{thread}: thread spans x {lo}..{hi}, not {want:?}");
+        }
+    }
+    // Both pieces picked: one thread, the whole bore.
+    let mut s = Session::default();
+    block(&mut s);
+    run(&mut s, "solid.cylinder", cross);
+    let faces = json!([{"body": "Block", "point": [0.5, 2.1, 0]}, {"body": "Block", "point": [20, 2.1, 0]}]);
+    run(&mut s, "solid.thread", json!({"faces": faces, "designation": "M5"}));
+    let st = s.model.state();
+    assert_eq!(st.threads.len(), 1, "{:?}", st.threads);
+    let length = (st.threads[0].end - st.threads[0].start).abs();
+    assert!((length - 30.0).abs() < 1e-6, "{length}");
 }

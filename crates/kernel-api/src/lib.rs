@@ -31,6 +31,7 @@ pub mod exact;
 pub mod exchange;
 pub mod frames;
 pub mod hatch;
+pub mod held;
 pub mod hole_stacks;
 pub mod mesh;
 pub mod modelling;
@@ -53,6 +54,7 @@ pub use dxf::Dxf;
 pub use exact::{ExactAssembled, ExactBody, ExactBound, ExactEdge, ExactExported, ExactFace, ExactHistory, ExactKind, ExactUse};
 pub use exchange::{CadirBodies, CadirFailure, CadirRead, CadirRefused, CadirWritten, Exchange};
 pub use frames::{Frames, GussetFailure, MemberRefusal, PathFailure, PathRefusal, TrimRefusal, TrimTarget};
+pub use held::{HeldBody, HeldMesh};
 pub use hole_stacks::{HoleStacks, HoleStacksRefused};
 pub use mesh::{MeshRebuilt, MeshRefused, Meshes, ReconstructionKind};
 pub use modelling::{
@@ -111,6 +113,8 @@ pub enum OpKind {
     Thicken,
     /// Faces moved along their normals ([`Modelling::offset_faces`]).
     OffsetFaces,
+    /// One face retrimmed on its rigidly moved surface ([`Modelling::transform_face`]).
+    TransformFace,
     /// Faces tilted about a neutral plane ([`Modelling::draft`]).
     Draft,
     /// Faces and bodies split by a tool, and surface bodies trimmed ([`Modelling::split_body`],
@@ -181,6 +185,7 @@ impl OpKind {
         OpKind::Shell,
         OpKind::Thicken,
         OpKind::OffsetFaces,
+        OpKind::TransformFace,
         OpKind::Draft,
         OpKind::Split,
         OpKind::Sweep,
@@ -222,6 +227,7 @@ impl OpKind {
             OpKind::Shell => "shell",
             OpKind::Thicken => "thicken",
             OpKind::OffsetFaces => "offset_faces",
+            OpKind::TransformFace => "transform_face",
             OpKind::Draft => "draft",
             OpKind::Split => "split",
             OpKind::Sweep => "sweep",

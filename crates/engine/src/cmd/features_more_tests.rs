@@ -4811,6 +4811,68 @@ fn an_emboss_apart_from_its_body_says_it_left_two_pieces() {
     assert!(warning.contains("deboss changed nothing") && !warning.contains("separate pieces"), "{reply}");
 }
 
+/// #23673: a Rib and a raised Cell Grid join as an Emboss does, with no operation to pick, so one
+/// drawn beside the 20 mm box A leaves A in pieces and says so, without the New Body hint neither
+/// window has. Drawn on A, each makes one piece and says nothing. A Thicken, which picks its
+/// operation, keeps its warning and hint.
+#[test]
+fn a_rib_or_raised_cell_grid_apart_from_its_body_says_it_left_pieces() {
+    let apart = |n: usize| format!("the joined piece doesn't touch `A`, so `A` is now in {n} separate pieces");
+    let on_box = |plane: Value| {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 20, "width": 20, "height": 20, "corner": [0, 0, 0], "body_name": "A"}));
+        run(&mut s, "sketch.create", json!({"plane": plane, "name": "S"}));
+        s
+    };
+    let pieces = |s: &Session| s.model.state().body("A").map_or(0, |b| b.body.lumps().map_or(0, |l| l.len()));
+    for (from, want) in [([40, 0], Some(2)), ([20, 10], None)] {
+        let mut s = on_box(json!("XY"));
+        run(&mut s, "sketch.line", json!({"points": [from, [from[0] + 20, from[1]]], "ids": ["r1"]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let reply = run(&mut s, "solid.rib", json!({"sketch": "S", "curves": ["r1"], "thickness": 2, "depth": 5}));
+        let warning = reply["warning"].as_str().unwrap_or_default();
+        match want {
+            Some(n) => {
+                assert!(warning.contains(&apart(n)) && !warning.contains("New Body"), "rib from {from:?}: {reply}");
+                assert_eq!(s.model.results.last().and_then(|r| r.warning.as_deref()), reply["warning"].as_str());
+            }
+            None => assert!(!warning.contains("separate pieces"), "rib from {from:?}: {reply}"),
+        }
+        assert_eq!(pieces(&s), want.unwrap_or(1), "rib from {from:?}");
+    }
+    for (plane, x0, apart_from_a) in [(json!("XY"), 40, true), (json!({"origin": [0, 0, 20], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}), 0, false)] {
+        let mut s = on_box(plane);
+        run(&mut s, "sketch.rectangle.two_point", json!({"p0": [x0, 0], "p1": [x0 + 20, 20]}));
+        run(&mut s, "sketch.finish", json!({}));
+        let grid = json!({"sketch": "S", "size": 4, "web": 1, "depth": 3, "mode": "raised", "targets": ["A"]});
+        let reply = run(&mut s, "solid.cell_grid", grid);
+        let warning = reply["warning"].as_str().unwrap_or_default();
+        let n = pieces(&s);
+        if apart_from_a {
+            assert!(n > 2 && warning.contains(&apart(n)) && !warning.contains("New Body"), "grid at x {x0}: {n} pieces, {reply}");
+        } else {
+            assert!(n == 1 && !warning.contains("separate pieces"), "grid at x {x0}: {n} pieces, {reply}");
+        }
+    }
+    // A Mirror rebuilds a Rib at its copy: a Rib on A mirrored across x = 40 lands apart from A,
+    // and says so without the hint. (A Mirror refuses a Cell Grid.)
+    let mut s = on_box(json!("XY"));
+    run(&mut s, "sketch.line", json!({"points": [[20, 10], [30, 10]], "ids": ["r1"]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.rib", json!({"sketch": "S", "curves": ["r1"], "thickness": 2, "depth": 5, "name": "Rib"}));
+    let reply = run(&mut s, "solid.mirror", json!({"features": ["Rib"], "plane": {"origin": [40, 0, 0], "normal": [1, 0, 0]}}));
+    let warning = reply["warning"].as_str().unwrap_or_default();
+    assert!(pieces(&s) == 2 && warning.contains(&apart(2)) && !warning.contains("New Body"), "mirrored rib: {reply}");
+
+    let mut s = on_box(json!("XY"));
+    run(&mut s, "sketch.line", json!({"points": [[40, 0], [60, 0]], "ids": ["l1"]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "surface.extrude", json!({"sketch": "S", "curves": ["l1"], "distance": 10, "body_name": "Sheet"}));
+    let reply = run(&mut s, "surface.thicken", json!({"bodies": ["Sheet"], "thickness": 2, "operation": "join", "targets": ["A"]}));
+    let warning = reply["warning"].as_str().unwrap_or_default();
+    assert!(warning.contains(&apart(2)) && warning.contains("(New Body makes it a body of its own)"), "{reply}");
+}
+
 /// #6612: an explicitly fixed face extrusion stays on its fixed plane even when the converted
 /// mesh also supports dynamic attachments. A 20 x 20 x 10 block with a bore of
 /// radius 3, through STL and Convert Mesh, joined 5 up from its top face.
@@ -5406,29 +5468,34 @@ fn a_draft_on_a_pocket_wall_beside_rounds_never_fails_with_a_bare_status() {
     }
 }
 
-/// #18541: a 3° draft of the side of an extruded closed spline outline is refused, and the
-/// refusal says what about the face it cannot handle: the side is neither a plane nor a cone or
-/// cylinder. It used to read "not supported yet: SMLib draft for this geometry". The body is
-/// left as it was.
+/// #22809 (#18541): the side of an extruded closed spline outline drafted 3° about the bottom,
+/// pulled up, narrows toward the top: the section at height z is the outline moved inward by
+/// d = z tan 3°. The signed area inside a smooth closed curve moved inward by d is
+/// A(d) = A0 - L d + pi d^2 for any such curve (Green's theorem on C + d N with C' = T, N' = -k T
+/// and a total turning of 2 pi), and here d stays below the outline's least radius of curvature,
+/// so it is the section's area: V = A0 H - L tan 3° H^2 / 2 + pi tan^2 3° H^3 / 3, with A0 and L
+/// read off the undrafted extrusion (V0 = A0 H, its area 2 A0 + L H). The issue's outline gives
+/// 36140.077 mm³. Still the three faces. It was refused: "a drafted face is neither a plane nor
+/// a cone or cylinder".
 #[test]
-fn a_draft_of_a_spline_side_is_refused_naming_what_the_face_is() {
+fn a_spline_sides_draft_narrows_each_section_by_its_inward_offset() {
     let mut s = Session::default();
     run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Outline"}));
-    let outline = [[30.0, 0.0], [22.7, 15.1], [0.0, 18.0], [-22.7, 15.1], [-30.0, 0.0], [-19.7, -13.1], [0.0, -22.0], [19.7, -13.1]];
+    let outline = [[30.0, 0.0], [20.0, 15.0], [0.0, 20.0], [-20.0, 15.0], [-30.0, 0.0], [-20.0, -15.0], [0.0, -20.0], [20.0, -15.0]];
     run(&mut s, "sketch.spline.fit_point", json!({"points": outline, "periodic": true}));
-    run(&mut s, "solid.extrude", json!({"sketch": "Outline", "distance": 25, "operation": "new", "body_name": "Base"}));
-    let shape = |s: &Session| {
-        let state = s.model.state();
-        let b = &state.body("Base").unwrap().body;
-        [b.shell_count(), b.face_count(), b.edge_count(), b.vertex_count()]
-    };
-    let (before, volume) = (shape(&s), body_volume(&s, "Base"));
-    let draft = json!({"faces": [[-30, 0, 12.5]], "angle": "3 deg", "neutral": "XY", "body": "Base"});
-    let e = s.execute("solid.draft", &draft).unwrap_err().to_string();
-    assert!(e.contains("a drafted face is neither a plane nor a cone or cylinder"), "{e}");
-    assert!(!e.contains("for this geometry"), "{e}");
-    assert_eq!(shape(&s), before);
-    assert_eq!(body_volume(&s, "Base"), volume);
+    run(&mut s, "sketch.finish", json!({}));
+    let h = 20.0_f64;
+    run(&mut s, "solid.extrude", json!({"sketch": "Outline", "distance": h, "operation": "new", "body_name": "Part"}));
+    let before = solidcraft_kernel::measure(&s.model.state().body("Part").unwrap().body).unwrap();
+    let a0 = before.volume / h;
+    let l = (before.area - 2.0 * a0) / h;
+    let t = 3.0_f64.to_radians().tan();
+    let expected = a0 * h - l * t * h * h / 2.0 + std::f64::consts::PI * t * t * h * h * h / 3.0;
+    assert!((expected - 36140.077).abs() < 1e-3, "{expected}");
+    run(&mut s, "solid.draft", json!({"faces": [[30, 0, 10]], "angle": "3 deg", "neutral": "XY", "body": "Part"}));
+    let after = solidcraft_kernel::measure(&s.model.state().body("Part").unwrap().body).unwrap();
+    assert!((after.volume - expected).abs() <= 1e-6 * expected, "{} vs {expected}", after.volume);
+    assert_eq!((after.shells, after.merged.faces), (1, 3));
 }
 
 /// #22803: a cylinder R 20 x 60 whose top edge is rounded 2, its side drafted 3° about its circle

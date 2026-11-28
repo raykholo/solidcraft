@@ -60,6 +60,7 @@
     clippy::print_stdout,
     clippy::cast_precision_loss
 )] // test
+use solidcore::math::det;
 
 #[path = "../../solidcore/tests/support/solidcraft_fixes.rs"]
 mod solidcraft_fixes;
@@ -101,6 +102,7 @@ const PORTED: &[&str] = &[
     "make_sphere",
     "shell",
     "offset_faces",
+    "transform_face",
     "split_faces",
     "extend_sheet",
     "draft",
@@ -653,7 +655,7 @@ fn call_with_copy(
                 how => {
                     return Err(Stop::Unsupported(format!(
                         "extend_sheet: continuation {how} not ported"
-                    )))
+                    )));
                 }
             };
             made(extend_sheet(&s.body, order, edge, distance, how))
@@ -695,6 +697,45 @@ fn call_with_copy(
             let d = p["distance"].as_f64().ok_or_else(|| bad("distance"))?;
             let r = offset::offset_faces(&s.body, &order, &picked, d);
             in_place(Slot { order: None, ..s }, r)
+        }
+        "transform_face" => {
+            if ins.len() != 1 {
+                return Err(bad("one input"));
+            }
+            let input = first()?;
+            let mut s = copy_for_edit(&input)?;
+            let translate = f64s(&p["translate"]).ok_or_else(|| bad("translate"))?;
+            let origin = f64s(&p["origin"]).ok_or_else(|| bad("origin"))?;
+            let axis = f64s(&p["axis"]).ok_or_else(|| bad("axis"))?;
+            let angle = p["angle"].as_f64().ok_or_else(|| bad("angle"))?;
+            let selection = &p["face"];
+            let points = selection["points"]
+                .as_array()
+                .ok_or_else(|| bad("face.points"))?;
+            let [point] = points.as_slice() else {
+                return Err(bad("one face point"));
+            };
+            let point = f64s(point).ok_or_else(|| bad("face point"))?;
+            let reach = selection["tolerance"]
+                .as_f64()
+                .filter(|r| *r >= 0.0)
+                .ok_or_else(|| bad("face.tolerance"))?;
+            let order = ensure_order(&mut s, op)?;
+            let face = record_pick(op, selection, "face", order.faces.len())?;
+            // Use the recorded choice (including at a shared rim), but not if its
+            // point no longer lies within the traced reach of that trimmed face.
+            let distance = s
+                .body
+                .face_distances(&order, face, &[point])
+                .map_err(|e| Stop::Fail(format!("{op}: face pick: {e}")))?;
+            if !matches!(distance.as_slice(), [Some(d)] if *d <= reach) {
+                return Err(bad("face outside pick tolerance"));
+            }
+            match offset::transform_face(&s.body, &order, face, translate, origin, axis, angle) {
+                Ok(true) => Ok(Slot { order: None, ..s }),
+                Ok(false) => Ok(input),
+                Err(e) => Err(e.to_string()),
+            }
         }
         "draft" => {
             if ins.len() != 1 {
@@ -1119,7 +1160,7 @@ fn call_with_copy(
         other => {
             return Err(Stop::Fail(format!(
                 "{other} is listed as ported but not run"
-            )))
+            )));
         }
     })
 }
@@ -1391,7 +1432,7 @@ fn run_case_with_records(
                 );
             }
             Err(solidcore_ops::Error::Unsupported(w)) => {
-                return Err(Stop::Unsupported(format!("{name}: the conversion: {w}")))
+                return Err(Stop::Unsupported(format!("{name}: the conversion: {w}")));
             }
             Err(x) => return Err(Stop::Fail(format!("{name}: from_record: {x}"))),
         }
@@ -1457,7 +1498,7 @@ fn run_case_with_records(
             (Ok(_), Some(want)) => {
                 return Err(Stop::Fail(format!(
                     "call {i} ({op}) ran where the rig's refused: {want}"
-                )))
+                )));
             }
         }
     }
@@ -1487,7 +1528,7 @@ fn run_case_with_records(
             return Err(Stop::Fail(format!(
                 "ran where the rig stopped: {}",
                 r["error"]
-            )))
+            )));
         }
         // a hand-written case: its expected values
         _ => &e["expected"],
@@ -2229,6 +2270,35 @@ fn a_discarded_face_offset_preserves_the_retained_box() {
         &serde_json::json!({"body_count": 1, "volume_mm3": 30.0 * 20.0 * 12.0}),
         serde_json::json!({"body_count": 1, "volume_mm3": 6000.0}),
     );
+}
+
+#[test]
+fn transform_face_replay_uses_the_recorded_face_order_and_reach() {
+    session::set_thread_fixes(solidcore::kernel::UpstreamFixes::NAMES.iter().copied()).unwrap();
+    let body = Arc::new(solidcore_ops::make_box([0.0; 3], [10.0; 3]).unwrap());
+    let (_, mut order) = body.to_record().unwrap();
+    order.faces.rotate_left(1);
+    let pick = body
+        .face_at(&order, [5.0, 5.0, 10.0], 1e-6)
+        .unwrap()
+        .unwrap();
+    let input = Slot {
+        body,
+        order: Some(order),
+    };
+    let mut step = serde_json::json!({"op": "transform_face", "params": {
+        "face": {"kind": "face", "picked": [{"index": pick}], "points": [[5,5,10.25]], "tolerance": 0.5},
+        "translate": [2,0,0], "origin": [5,5,10], "axis": [0,0,1], "angle": 0
+    }});
+    let run = |step: &Value| call(step, &mut [input.clone()]);
+    let no_op = run(&step).unwrap().unwrap();
+    assert!(Arc::ptr_eq(&input.body, &no_op.body));
+    step["params"]["translate"] = serde_json::json!([0, 0, 2]);
+    let raised = run(&step).unwrap().unwrap();
+    assert!((raised.body.volume(VOLUME_ACCURACY).unwrap() - 1200.0).abs() < 1.2e-6);
+    assert!((input.body.volume(VOLUME_ACCURACY).unwrap() - 1000.0).abs() < 1e-6);
+    step["params"]["face"]["tolerance"] = serde_json::json!(0.125);
+    assert!(matches!(run(&step), Err(Stop::Fail(why)) if why.contains("outside pick tolerance")));
 }
 
 #[test]
@@ -3310,6 +3380,7 @@ fn a_pre_edit_copy_failure_cannot_count_as_the_edits_refusal() {
         "transform",
         "shell",
         "offset_faces",
+        "transform_face",
         "thicken",
         "chamfer_sides",
         "stitch",
@@ -3620,7 +3691,7 @@ fn draft_replay_preserves_faces_order_parameters_and_operand() {
         (false, 0.0, -1.0),
     ] {
         let angle = sign * std::f64::consts::PI / 18.0;
-        let tangent = angle.tan();
+        let tangent = det::tan(angle);
         let volume = 24000.0 - 70.0 * tangent * (200.0 - 20.0 * neutral_z)
             + tangent * tangent * (8000.0 / 3.0 - 400.0 * neutral_z + 20.0 * neutral_z * neutral_z);
         let mut input = input.clone();
@@ -4553,6 +4624,22 @@ fn replay_entry(entry: &Path, e: &Value) -> Value {
         "expected": expected,
         "note": note,
     })
+}
+
+/// #655 / #710: the tangent bore seam's two chamfers (the corpus case
+/// `fillets/14283-chamfer-tangent-bore-edges`, #20026) build and grade. Their rails share the
+/// seam's end vertices, which is what sets them apart from the square-to-circle loft's creases:
+/// a trace start rule that misses the seam refuses the case with "Corner Edge Computation
+/// Failure". The whole corpus is slow and ignored; this one case is not.
+#[test]
+fn the_tangent_bore_seam_chamfers_still_build() {
+    session::set_thread_fixes(solidcraft_fixes::solidcraft_fix_names()).unwrap();
+    let entry = corpus().join("fillets/14283-chamfer-tangent-bore-edges.json");
+    let text = std::fs::read_to_string(&entry).unwrap();
+    let e: Value = serde_json::from_str(&text).unwrap();
+    if let Err(stop) = run_case(&entry, &e) {
+        panic!("the bore seam case is refused: {stop:?}");
+    }
 }
 
 /// `KERNEL_CASES_ENTRY`: one entry from outside the corpus, replayed against its failure code

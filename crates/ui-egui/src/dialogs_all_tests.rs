@@ -2315,6 +2315,50 @@ fn offset_face_dialog_accepts_a_curved_display_triangle_hit() {
 }
 
 #[test]
+fn transform_face_accepts_a_curved_display_pick_and_disables_ok_for_invalid_fields() {
+    let mut h = Harness::new();
+    h.app.run("solid.cylinder", json!({"radius":10,"height":20,"body_name":"Cylinder"})).unwrap();
+    h.app.start("solid.transform_face");
+    h.frames(3);
+    assert_eq!(scenario::count_of("dialog:ok:enabled"), Some(0.0), "a face is required");
+    let state = crate::open_meshing::session_world(&h.app.session);
+    let body = state.body("Cylinder").unwrap();
+    let index = body.body.face_at_point(Vec3::new(10.0, 0.0, 10.0)).unwrap().unwrap();
+    let mesh = body.mesh();
+    let triangle = mesh.triangles.iter().zip(&mesh.tri_face).find_map(|(t, f)| if *f as usize == index { mesh.tri(t) } else { None }).unwrap();
+    let point = Vec3::from(annular_samples::triangle_centroid(triangle.map(|p| [p.x, p.y, p.z])));
+    assert_eq!(body.body.face_at_point(point).unwrap(), None);
+    let d = h.app.dialog.as_mut().unwrap();
+    d.pick(&h.app.session, Sel::Face { body: "Cylinder".into(), index, point });
+    h.frames(3);
+    assert_eq!(scenario::count_of("dialog:ok:enabled"), Some(1.0), "a curved pick and explicit zero motion are valid");
+    let base = h.app.dialog.as_ref().unwrap().clone();
+    let cmds = apply_commands(&h.app, &base).unwrap();
+    assert_eq!(cmds[0].1["body"], "Cylinder");
+    assert!(cmds[0].1.get("origin").is_none(), "the default pivot follows the picked face");
+    h.app.session.preview(&cmds).unwrap();
+    for invalid in ["empty length", "angle dimension", "zero axis", "pivot length"] {
+        let mut d = base.clone();
+        let Kind::TransformFace { translate, angle, axis, custom_axis, explicit_pivot, origin } = &mut d.kind else { panic!("expected face form") };
+        match invalid {
+            "empty length" => translate[1].clear(),
+            "angle dimension" => *angle = "5 mm".into(),
+            "zero axis" => {
+                *axis = 3;
+                *custom_axis = ["0"; 3].map(String::from);
+            }
+            _ => {
+                *explicit_pivot = true;
+                origin[0] = "bad_length".into();
+            }
+        }
+        h.app.dialog = Some(d);
+        h.frames(3);
+        assert_eq!(scenario::count_of("dialog:ok:enabled"), Some(0.0), "{invalid}");
+    }
+}
+
+#[test]
 fn draft_rejects_faces_from_different_bodies() {
     let h = Harness::new();
     let mut d = Dialog::for_command(&h.app, "solid.draft").unwrap();
@@ -4495,4 +4539,70 @@ fn editing_a_coil_plane_then_clearing_profile_keeps_the_explicit_axis() {
         assert_eq!(coil_plane_coordinates(&h, &p["base"]), [20.0, 10.0, -20.0]);
     }
     assert_eq!(h.app.session.doc.to_json(), authored);
+}
+
+#[test]
+fn editing_parameter_tapped_holes_keeps_automatic_and_explicit_drills() {
+    for explicit in [false, true] {
+        let mut h = Harness::new();
+        h.app.run("parameters.add", json!({"name":"size_name","expression":"M5","unit":"text"})).unwrap();
+        h.app.run("solid.box", json!({"length":20,"width":20,"height":10})).unwrap();
+        let mut p = json!({"position":[10,10,10],"thread":"size_name","depth":8});
+        if explicit {
+            p["diameter"] = json!("4.2 mm");
+        }
+        h.app.run("solid.hole", p).unwrap();
+        let id = h.app.session.doc.features.last().unwrap().id;
+        h.app.run("parameters.change", json!({"name":"size_name","expression":"M6"})).unwrap();
+        let mut d = for_feature(&h.app, id, None).unwrap();
+        if let Kind::Hole { depth, opts, .. } = &mut d.kind {
+            assert_eq!(opts.drill.is_some(), explicit);
+            *depth = "7 mm".into();
+        } else {
+            panic!("expected Hole dialog");
+        }
+        for commands in [preview_commands(&h.app, &d).unwrap(), apply_commands(&h.app, &d).unwrap()] {
+            assert_eq!(commands[0].0, "timeline.redefine");
+            let p = &commands[0].1["params"];
+            assert_eq!(p["thread"], "size_name");
+            assert_eq!(p.get("diameter").is_some(), explicit);
+            if explicit {
+                assert_eq!(p["diameter"], "4.2 mm");
+            }
+        }
+    }
+}
+
+#[test]
+fn an_applied_parameter_hole_edit_keeps_following_the_automatic_drill() {
+    for source in ["size_name", "size_name + ''"] {
+        let mut h = Harness::new();
+        h.app.run("parameters.add", json!({"name":"size_name","expression":"M5","unit":"text"})).unwrap();
+        h.app.run("solid.box", json!({"length":20,"width":20,"height":10})).unwrap();
+        h.app.run("solid.hole", json!({"position":[10,10,10],"thread":source,"depth":8})).unwrap();
+        let id = h.app.session.doc.features.last().unwrap().id;
+        let mut d = for_feature(&h.app, id, None).unwrap();
+        let Kind::Hole { depth, .. } = &mut d.kind else { panic!("expected Hole") };
+        *depth = "7 mm".into();
+        for (cmd, p) in apply_commands(&h.app, &d).unwrap() {
+            assert_eq!(p["params"]["thread"], source);
+            assert!(p["params"].get("diameter").is_none());
+            h.app.run(&cmd, p).unwrap();
+        }
+        h.app.run("parameters.change", json!({"name":"size_name","expression":"M6"})).unwrap();
+        let saved = &h.app.session.doc.feature(id).unwrap().kind;
+        assert!(matches!(saved, solidcraft_engine::doc::FeatureKind::Hole { auto_thread_diameter: true, thread: Some(t), .. } if t == source));
+        let state = crate::open_meshing::session_world(&h.app.session);
+        let drill = solidcraft_engine::doc::parse_tapped_thread("M6").unwrap().tap_drill;
+        let wall =
+            solidcraft_engine::kernel::cylinder_face_at(&state.bodies[0].body, solidcore_record::Vec3::new(10.0 + drill / 2.0, 10.0, 6.0)).unwrap();
+        assert!(wall.internal && (2.0 * wall.radius - drill).abs() < 1e-8);
+        // The diagram derives the same drill, while the command retains the expression.
+        let d = for_feature(&h.app, id, None).unwrap();
+        let Kind::Hole { diameter, opts, .. } = &d.kind else { panic!("expected Hole") };
+        assert_eq!(crate::dialogs_hole::bore_diameter(&h.app.session.doc, diameter, opts, &|_, _| None), Some(drill));
+        h.app.session.doc_mut().set_text_param("size_name", "unknown_size", None).unwrap();
+        let error = preview_commands(&h.app, &d).unwrap_err();
+        assert!(error.contains("unknown tapped thread `unknown_size`"), "{error}");
+    }
 }

@@ -573,6 +573,15 @@ pub(crate) fn hovered_body(app: &SolveApp) -> Option<&str> {
     }
 }
 
+/// The face to show through the model while the user considers its row.
+pub(crate) fn hovered_face(app: &SolveApp) -> Option<(&str, usize)> {
+    let popup = active_popup(app).filter(|p| p.include_hidden)?;
+    match &popup.rows.get(popup.hovered?)?.sel {
+        Sel::Face { body, index, .. } => Some((body, *index)),
+        _ => None,
+    }
+}
+
 /// While the list is open, the hovered row is what the viewport lights up.
 pub fn hover_override(app: &mut SolveApp) {
     let Some(popup) = active_popup(app) else { return };

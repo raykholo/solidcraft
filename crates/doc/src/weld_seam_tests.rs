@@ -35,7 +35,7 @@ fn close(got: f64, want: f64, what: &str) {
 }
 
 fn seam(path: Vec<SeamPiece>, look: SeamLook) -> SeamWeld {
-    SeamWeld { start: [0.0; 3], path, normal: [0.0, 0.0, 1.0], thicknesses: vec![T_L, T_U], width: W, look }
+    SeamWeld { start: [0.0; 3], path, normal: [0.0, 0.0, 1.0], thicknesses: vec![T_L, T_U], width: W, look, room: f64::INFINITY }
 }
 
 fn band(path: Vec<SeamPiece>) -> SeamWeld {
@@ -221,6 +221,7 @@ fn a_seam_drawn_on_top_gives_the_frame_the_sheets_and_the_moved_path() {
         thicknesses: s.sheets.iter().map(|x| x.thickness).collect(),
         width: W,
         look: SeamLook::Band,
+        room: s.room,
     };
     for piece in seam_weld(&weld).unwrap().pieces {
         let bb = piece.body.exact_bounds().unwrap();
@@ -249,6 +250,35 @@ fn a_path_passing_a_face_edge_is_refused_with_the_width_that_fits() {
     };
     assert_eq!(width, W);
     assert!((fits - 3.0).abs() < 1e-9, "fits {fits}");
+}
+
+/// The notch of the test above: a seam of 2.9, whose band (1.45 from the path) fits 1.5 from the
+/// notch, is taken; its edge zone is drawn to the notch, 1.5, not to 1.05 × 1.45, so it stays on
+/// the face.
+#[test]
+fn an_edge_zone_near_a_face_edge_is_drawn_only_as_far_as_the_room() {
+    let lower = sheet(0.0, 1.5);
+    let plate = sheet(1.5, 1.0);
+    let notch = block([-2.0, 1.5, 1.0], [4.0, 30.0, 2.0]);
+    let upper = solidcraft_kernel::boolean(&plate, &notch, BoolOp::Cut).unwrap().unwrap();
+    let start = [-15.0, 0.0, 0.0];
+    let s = seam_site(&[&lower, &upper], 0, face_at(&lower, start), start, &[SeamPiece::Line { to: [15.0, 0.0, 0.0] }], 2.9).unwrap();
+    assert!((s.room - 1.5).abs() < 1e-6, "room {}", s.room);
+    let weld = SeamWeld {
+        start: s.start,
+        path: s.path,
+        normal: s.normal,
+        thicknesses: s.sheets.iter().map(|x| x.thickness).collect(),
+        width: 2.9,
+        look: SeamLook::Band,
+        room: s.room,
+    };
+    let pieces = seam_weld(&weld).unwrap().pieces;
+    assert!(pieces.iter().any(|p| p.zone == SpotZone::Edge), "{pieces:?}");
+    for p in &pieces {
+        let bb = p.body.exact_bounds().unwrap();
+        assert!(bb.max.y <= 1.5 + 1e-6 && bb.min.y >= -1.5 - 1e-6, "{:?} {:?}", p.zone, bb);
+    }
 }
 
 /// An arc of radius 2 drawn on the top is tighter than the edge zone (2.625): refused at the site,

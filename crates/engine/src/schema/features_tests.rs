@@ -1378,6 +1378,7 @@ fn circular_pattern_schema_and_the_key_check_agree() {
             "axis",
             "bodies",
             "body_name",
+            "body_name_template",
             "body_names",
             "components",
             "count",
@@ -1510,6 +1511,7 @@ fn pattern_schemas_and_the_key_check_agree() {
             "alignment2",
             "bodies",
             "body_name",
+            "body_name_template",
             "body_names",
             "components",
             "copy_at_end1",
@@ -1539,6 +1541,7 @@ fn pattern_schemas_and_the_key_check_agree() {
         &[
             "bodies",
             "body_name",
+            "body_name_template",
             "body_names",
             "components",
             "count",

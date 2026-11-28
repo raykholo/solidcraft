@@ -167,6 +167,38 @@ fn holes_main_saved_on_a_sheets_numbered_faces_open_on_those_faces() {
     assert!(rel(volume(&mut s), want) < 1e-6, "{} vs {want}", volume(&mut s));
 }
 
+/// A fillet main saved on edges between faces of a sheet feature, each by its number among the
+/// faces the feature made (#6974's `F3:face:7|F3:face:8`), rounds the edges its saved points lie
+/// on: a sheet feature names its faces after what made each now, and numbers none. `saved_by_main`
+/// without its hems: the edge flange's two top corners, through its thickness at x = 0 and 100, z
+/// = 20, rounded 8: the base 5800, the bend 75π and the leg 1800, less 2 · 8² · (1 − π/4) · 1. A
+/// name whose point lies on no edge between the flange's faces (the base's back corner) asks for
+/// it again.
+#[test]
+fn a_fillet_main_saved_on_a_flanges_numbered_faces_rounds_those_edges() {
+    let mut design = saved_by_main();
+    let fillet = |id: u64, name: &str, edges: &[(&str, [f64; 3])]| {
+        json!({
+            "id": id, "name": name, "suppressed": false, "type": "fillet", "param_names": [format!("d{id}")], "radius": "8 mm",
+            "edge_names": edges.iter().map(|(n, _)| *n).collect::<Vec<_>>(), "edges": edges.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
+        })
+    };
+    if let Some(features) = design["features"].as_array_mut() {
+        features.retain(|f| f["type"] != "sheet_hem");
+        features.extend([
+            fillet(6, "Fillet1", &[("F3:face:7|F3:face:8", [0.0, 0.5, 20.0]), ("F3:face:8|F3:face:9", [100.0, 0.5, 20.0])]),
+            fillet(7, "Fillet2", &[("F3:face:1|F3:face:2", [100.0, 60.0, 0.5])]),
+        ]);
+    }
+    design["next_id"] = json!(8);
+    let doc = solidcraft_doc::Document::from_json(&design.to_string()).unwrap();
+    let mut s = Session::new(doc);
+    let errors: Vec<_> = s.model.results.iter().filter_map(|r| r.error.as_ref().map(|e| (&r.name, e))).collect();
+    assert!(errors.len() == 1 && errors[0].0 == "Fillet2" && errors[0].1.contains("`F3:face:1|F3:face:2`"), "{errors:?}");
+    let want = 5800.0 + 1800.0 + 75.0 * PI - 2.0 * 64.0 * (1.0 - PI / 4.0);
+    assert!(rel(volume(&mut s), want) < 1e-6, "{} vs {want}", volume(&mut s));
+}
+
 /// A part main mirrored once its flange and hem were on (`kc/3353-mirrored-sheet-body-keeps-its-
 /// flat-pattern`) rebuilds both copies whole: the flange's and the hem's edges were picked on the
 /// one sheet there was before the mirror (format pending sheet-edge-names). Mirrored in YZ, the

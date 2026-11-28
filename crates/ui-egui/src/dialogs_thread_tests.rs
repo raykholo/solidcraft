@@ -1052,3 +1052,24 @@ fn an_offset_typed_in_an_inch_design_is_inches() {
     type_in(&mut h, "Offset", "0.1");
     assert_eq!(params(&h)["offset"], "0.1 in");
 }
+
+#[test]
+fn thread_dialog_checks_evaluated_sizes_and_sends_the_original_expression() {
+    for source in ["size_name", "size_name + ''"] {
+        let mut h = shaft();
+        h.app.run("parameters.add", json!({"name":"size_name","expression":"M8","unit":"text"})).unwrap();
+        let d = h.app.dialog.as_mut().unwrap();
+        let Kind::Thread { designation, suggested, .. } = &mut d.kind else { panic!("expected Thread") };
+        *designation = source.into();
+        *suggested = None;
+        for commands in [
+            crate::dialogs::preview_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap(),
+            apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap(),
+        ] {
+            assert_eq!(commands[0].1["designation"], source);
+        }
+        h.app.run("parameters.change", json!({"name":"size_name","expression":"unknown_size"})).unwrap();
+        let error = apply_commands(&h.app, h.app.dialog.as_ref().unwrap()).unwrap_err();
+        assert!(error.contains("unknown metric thread `unknown_size`"), "{error}");
+    }
+}

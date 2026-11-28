@@ -1107,6 +1107,39 @@ mod native {
         assert!(s.execute("plugin.preview", &json!({"x": 1})).is_err(), "it takes no parameters");
     }
 
+    #[test]
+    fn plugin_selection_reaches_the_session_without_a_design_edit() {
+        let f = Fixture::new("call $box");
+        let mut manifest = manifest();
+        manifest["runtime"]["commands"] = json!(["select.set"]);
+        std::fs::write(f.0.join("sample/plugin.json"), manifest.to_string()).unwrap();
+        // Forward the entry's JSON argument to select.set and return the command's reply.
+        let source = component_template()
+            .replace("solid.box", "select.set")
+            .replace("      call $box\n      call $box\n", "      i32.const 512 i32.const 10 local.get 2 local.get 3 i32.const 0 call $run\n");
+        std::fs::write(f.0.join("sample/plugin.wasm"), wat::parse_str(source).unwrap()).unwrap();
+
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4,"body_name":"Block"})).unwrap();
+        let approval = s.execute("plugin.inspect", &json!({"path":f.path()})).unwrap()["approval"].clone();
+        let args = |items: Value| json!({"path":f.path(),"approval":approval,"entry":"make","params":{"items":items}});
+        let token = s.design_token();
+        let history = s.undo.len();
+        let pick = args(json!([{"type":"body","name":"Block"}]));
+        assert_eq!(s.execute("plugin.run", &pick).unwrap()["result"]["selected"], 1);
+        assert_eq!(s.selection, vec![crate::Sel::Body { name: "Block".into() }]);
+
+        // Select All can hold every body with an empty list of named picks.
+        s.clear_selection();
+        s.selection_all_bodies = true;
+        let prepared = s.scratch().compute_commands(&[("plugin.run".into(), args(json!([])))], None).unwrap();
+        s.accept_commands(prepared).unwrap();
+        assert!(!s.all_bodies_selected());
+        assert!(s.selection.is_empty());
+        assert_eq!(s.design_token(), token);
+        assert_eq!(s.undo.len(), history);
+    }
+
     /// A 0.41 plugin runs as before, alone and with a background shader added.
     #[test]
     fn a_commands_plugin_from_041_installs_and_runs_unchanged_beside_shaders() {
@@ -3044,6 +3077,38 @@ mod native {
         assert_eq!(replies[0].1["result"], now, "{replies:?}");
         assert_eq!(s.doc.features.len(), 2);
         assert_eq!((s.plugin_state.caller_design.as_ref(), s.source_path.as_deref()), (None, None));
+    }
+
+    #[test]
+    fn document_close_in_a_plugin_run_needs_the_doc_grant() {
+        assert_eq!(command_group("document.close"), Some("doc"));
+        let f = Fixture::new("call $box");
+        let command = "document.close";
+        let source = component_template();
+        let arguments = r#"{\22length\22:2,\22width\22:3,\22height\22:4}"#;
+        assert!(source.contains(arguments));
+        let source = source
+            .replace("\"solid.box\"", &format!("\"{command}\""))
+            .replace(
+                "i32.const 9\n      i32.const 1024\n      i32.const 33",
+                &format!("i32.const {}\n      i32.const 1024\n      i32.const 2", command.len()),
+            )
+            .replace(arguments, "{}");
+        std::fs::write(f.0.join("sample/plugin.wasm"), wat::parse_str(&source).unwrap()).unwrap();
+        let mut m = manifest();
+        m["runtime"]["commands"] = json!([command]);
+        let missing_group = parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").unwrap_err().to_string();
+        assert!(missing_group.contains("needs \"doc\" in runtime.permissions.command_groups"), "{missing_group}");
+        m["runtime"]["permissions"] = json!({"command_groups":["doc"]});
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let file = f.0.join("Saved.sc").to_string_lossy().into_owned();
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        s.execute("file.save_as", &json!({"path": file})).unwrap();
+        let id_before = s.document_id.clone();
+        let error = f.run(&mut s).unwrap_err();
+        assert!(matches!(error.host_error(), Some(HostError::PermissionDenied { permission }) if permission.contains("`doc`")), "{error}");
+        assert_eq!((s.document_id.as_str(), s.path.as_deref(), s.doc.features.len()), (id_before.as_str(), Some(file.as_str()), 1));
     }
 
     /// `plugin.check` finds what Install and a call would refuse, with a fix for each, and runs
@@ -5560,6 +5625,75 @@ fn background(px: ScPixel) -> vec4<f32> { return sc.top; }
         assert!(done.recv_timeout(std::time::Duration::from_secs(60)).is_ok(), "the waiting write runs once the lock is free");
         assert!(worker.join().unwrap().is_ok());
         assert!(dir.join("gears").join("plugin.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// #23591: a rename or a removal refused because a file in the folder is open for a moment is
+    /// tried again, and gives up after the set number of attempts; any other error is returned at once.
+    #[test]
+    fn a_refused_rename_is_tried_again_while_a_file_is_held() {
+        use crate::plugin::install::retry_while_held;
+        let held = |e: &std::io::Error| e.raw_os_error() == Some(5);
+        let pause = std::time::Duration::from_millis(1);
+        let mut refusals = 2;
+        let mut calls = 0;
+        let result = retry_while_held(
+            || {
+                calls += 1;
+                if refusals > 0 {
+                    refusals -= 1;
+                    Err(std::io::Error::from_raw_os_error(5))
+                } else {
+                    Ok(())
+                }
+            },
+            held,
+            40,
+            pause,
+        );
+        assert!(result.is_ok() && calls == 3, "two refusals, then success: {result:?} after {calls} calls");
+        let mut calls = 0;
+        let result = retry_while_held(
+            || {
+                calls += 1;
+                Err(std::io::Error::from_raw_os_error(5))
+            },
+            held,
+            4,
+            pause,
+        );
+        assert!(result.is_err() && calls == 4, "gives up after four attempts: {calls}");
+        let mut calls = 0;
+        let result = retry_while_held(
+            || {
+                calls += 1;
+                Err(std::io::Error::new(std::io::ErrorKind::NotFound, "gone"))
+            },
+            held,
+            40,
+            pause,
+        );
+        assert!(result.is_err() && calls == 1, "another error is not tried again: {calls}");
+    }
+
+    /// #23591, on Windows: replacing an installed plugin while another thread holds one of its files
+    /// open (as the app's plugin-folder watcher does for a moment) waits for the file and succeeds,
+    /// instead of failing with "Access is denied (os error 5)".
+    #[cfg(windows)]
+    #[test]
+    fn replacing_a_plugin_waits_for_a_file_held_open_in_its_folder() {
+        let (_s, root) = session("replace-held");
+        let dir = root.join("plugins");
+        crate::plugin::install::install(&unpack(&gears("0.1.0")).unwrap(), &dir, false).unwrap();
+        let file = std::fs::File::open(dir.join("gears").join("plugin.json")).unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            drop(file);
+        });
+        let replaced = crate::plugin::install::install(&unpack(&gears("0.2.0")).unwrap(), &dir, true);
+        releaser.join().unwrap();
+        assert!(replaced.is_ok(), "{replaced:?}");
+        assert_eq!(read_package(&dir.join("gears").to_string_lossy()).unwrap().manifest.version, "0.2.0");
         let _ = std::fs::remove_dir_all(root);
     }
 

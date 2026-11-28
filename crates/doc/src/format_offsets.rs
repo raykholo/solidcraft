@@ -599,6 +599,7 @@ mod tests {
                             symmetric_offset: false,
                             through_all: false,
                             second_follows_first: false,
+                            through_all_to_corner: false,
                             taper: None,
                             taper2: None,
                             corner: Default::default(),

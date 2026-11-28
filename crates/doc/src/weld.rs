@@ -9,6 +9,14 @@ pub const PICK_KINDS: &[&str] = &["line", "groove", "point", "hole", "ring", "ar
 pub const SIZE_KEYS: &[&str] = &["a", "z", "z1", "z2", "h", "s", "d", "w", "t", "l", "e", "n"];
 pub const SYMBOL_STANDARDS: &[&str] = &["iso2553_2019_a", "iso2553_2019_b", "aws_a2_4_2020"];
 pub const GROOVES: &[&str] = &["square", "v", "bevel", "u", "j", "y", "hy", "x", "k"];
+/// ISO 6947:2019 main welding positions.
+pub const POSITIONS: &[&str] = &["PA", "PB", "PC", "PD", "PE", "PF", "PG", "PH", "PJ", "PK"];
+/// Quality-level standards, each with levels B, C and D; saved as e.g. `ISO 10042-C`.
+pub const QUALITY_STANDARDS: &[&str] = &["ISO 5817", "ISO 10042", "ISO 13919-1", "ISO 13919-2"];
+pub const NDT_METHODS: &[&str] = &["VT", "PT", "MT", "UT", "RT"];
+/// A label shown in place of W<n>.
+pub const MAX_LABEL_BYTES: usize = 16;
+const MAX_NUMBER: u32 = 1_000_000;
 /// Size names belonging to the chosen type.
 pub fn size_keys(weld_type: &str) -> &'static [&'static str] {
     match weld_type {
@@ -70,6 +78,14 @@ impl WeldPick {
         Ok(())
     }
 }
+/// Non-destructive testing: each method's extent in per cent of the weld, and a free note.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WeldNdt {
+    pub methods: BTreeMap<String, f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
 /// Values evaluated at creation: millimetres except count and density (kg/m³).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -106,6 +122,23 @@ pub struct WeldSettings {
     pub reference_plane: String,
     pub density: Option<f64>,
     pub overlap: Option<f64>,
+    /// ISO 6947 position, one of [`POSITIONS`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+    /// Quality level, `<one of QUALITY_STANDARDS>-<B|C|D>`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<String>,
+    /// Welding procedure specification reference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wps: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ndt: Option<WeldNdt>,
+    /// Free text for the symbol's tail.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tail_text: Option<String>,
+    /// Filler metal designation, e.g. `ISO 14341-A G 3Si1`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filler: Option<String>,
 }
 impl Default for WeldSettings {
     fn default() -> Self {
@@ -142,6 +175,12 @@ impl Default for WeldSettings {
             reference_plane: "sketch".into(),
             density: None,
             overlap: None,
+            position: None,
+            quality: None,
+            wps: None,
+            ndt: None,
+            tail_text: None,
+            filler: None,
         }
     }
 }
@@ -263,8 +302,29 @@ impl WeldSettings {
         if self.root_gap.is_some_and(|v| !v.is_finite() || !(0.0..=MAX_DIMENSION_MM).contains(&v)) {
             return Err("root gap must be finite and between 0 and 100000 mm".into());
         }
-        if self.process.as_ref().is_some_and(|p| !(1..=3).contains(&p.len()) || !p.bytes().all(|b| b.is_ascii_digit())) {
-            return Err("process must be 1-3 ASCII digits".into());
+        if self.process.as_deref().is_some_and(|p| !process_valid(p)) {
+            return Err("process must be ISO 4063 numbers of 1-3 digits, each with an optional variant (131-D), joined by + for a hybrid".into());
+        }
+        if self.position.as_deref().is_some_and(|p| !POSITIONS.contains(&p)) {
+            return Err("unknown welding position".into());
+        }
+        if self
+            .quality
+            .as_deref()
+            .is_some_and(|q| !q.rsplit_once('-').is_some_and(|(std, level)| QUALITY_STANDARDS.contains(&std) && ["B", "C", "D"].contains(&level)))
+        {
+            return Err("quality must be a known standard and level, e.g. ISO 5817-C".into());
+        }
+        for (name, value, max) in [("wps", &self.wps, 64), ("tail_text", &self.tail_text, 256), ("filler", &self.filler, 128)] {
+            plain(name, value.as_deref(), max)?;
+        }
+        if let Some(ndt) = &self.ndt {
+            plain("ndt note", ndt.note.as_deref(), 256)?;
+            if (ndt.methods.is_empty() && ndt.note.is_none())
+                || ndt.methods.iter().any(|(m, e)| !NDT_METHODS.contains(&m.as_str()) || !e.is_finite() || *e <= 0. || *e > 100.)
+            {
+                return Err("ndt needs a method or a note; methods VT, PT, MT, UT, RT with an extent above 0 and at most 100 %".into());
+            }
         }
         if let Some(spans) = &self.spans {
             spans.validate()?;
@@ -275,6 +335,27 @@ impl WeldSettings {
         Ok(())
     }
 }
+/// ISO 4063:2023 forms: `135`, a group `13`, a variant `131-D`, a hybrid `522+15`.
+// shortcut: a variant is 1-3 capital letters, not checked against ISO 4063:2023's own list (paywalled); narrow once it is read.
+pub fn process_valid(p: &str) -> bool {
+    let digits = |n: &str| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit());
+    p.len() <= 32
+        && p.split('+').all(|part| match part.split_once('-') {
+            Some((n, v)) => digits(n) && (1..=3).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_uppercase()),
+            None => digits(part),
+        })
+}
+fn plain(name: &str, text: Option<&str>, max: usize) -> Result<(), String> {
+    if text.is_some_and(|t| t.trim().is_empty() || t.len() > max || !solidcraft_geom::plain_text::is_plain_line(t)) {
+        return Err(format!("{name} must be one plain line of at most {max} bytes"));
+    }
+    Ok(())
+}
+fn label_valid(label: &str) -> bool {
+    // A label like "W12" would read as another weld's number; spaces round it would hide that ("W3 ").
+    let number_like = label.strip_prefix('W').is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    plain("label", Some(label), MAX_LABEL_BYTES).is_ok() && label.trim() == label && !number_like
+}
 fn dimension(v: f64) -> bool {
     v.is_finite() && (MIN_DIMENSION_MM..=MAX_DIMENSION_MM).contains(&v)
 }
@@ -283,6 +364,9 @@ fn dimension(v: f64) -> bool {
 pub struct WeldRecord {
     pub id: u64,
     pub number: u32,
+    /// Shown in place of W<number> when set (Q210); the number stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub settings: WeldSettings,
     pub symbol: Option<Weld>,
 }
@@ -291,6 +375,8 @@ pub struct WeldRecord {
 struct WrittenRecord {
     id: u64,
     number: u32,
+    #[serde(default)]
+    label: Option<String>,
     settings: WeldSettings,
     #[serde(default)]
     symbol: Option<Weld>,
@@ -298,15 +384,52 @@ struct WrittenRecord {
 impl TryFrom<WrittenRecord> for WeldRecord {
     type Error = String;
     fn try_from(r: WrittenRecord) -> Result<Self, String> {
-        if r.id == 0 || r.id > crate::MAX_FEATURE_ID || r.number == 0 || r.number > 1_000_000 {
+        if r.id == 0 || r.id > crate::MAX_FEATURE_ID || r.number == 0 || r.number > MAX_NUMBER || r.label.as_deref().is_some_and(|l| !label_valid(l))
+        {
             return Err("invalid weld identity".into());
         }
         r.settings.validate()?;
         if let Some(symbol) = &r.symbol {
             symbol.validate().map_err(|e| e.to_string())?;
         }
-        Ok(Self { id: r.id, number: r.number, settings: r.settings, symbol: r.symbol })
+        Ok(Self { id: r.id, number: r.number, label: r.label, settings: r.settings, symbol: r.symbol })
     }
+}
+impl WeldRecord {
+    /// What the table, the map and drawings show: the label, else W<number>.
+    pub fn name(&self) -> String {
+        self.label.clone().unwrap_or_else(|| format!("W{}", self.number))
+    }
+}
+/// The number a new weld gets: one past the highest; None past the limit.
+pub fn next_number(welds: &[WeldRecord]) -> Option<u32> {
+    welds.iter().map(|w| w.number).max().unwrap_or(0).checked_add(1).filter(|n| *n <= MAX_NUMBER)
+}
+/// W1..Wn in creation order (ids grow with creation); labels stay.
+pub fn renumber(welds: &mut [WeldRecord]) {
+    let mut order: Vec<usize> = (0..welds.len()).collect();
+    order.sort_by_key(|&i| welds[i].id);
+    for (n, i) in (1..).zip(order) {
+        welds[i].number = n;
+    }
+}
+/// The number typed for weld `id` (W7 typed as W12); refused when another weld has it.
+pub fn set_number(welds: &mut [WeldRecord], id: u64, number: u32) -> Result<(), String> {
+    if !(1..=MAX_NUMBER).contains(&number) || welds.iter().any(|w| w.id != id && w.number == number) {
+        return Err(format!("W{number} is taken or out of range"));
+    }
+    welds.iter_mut().find(|w| w.id == id).ok_or("weld does not exist")?.number = number;
+    Ok(())
+}
+/// A label shown in place of W<n> for weld `id`, or None for W<n> again; unique among the welds.
+pub fn set_label(welds: &mut [WeldRecord], id: u64, label: Option<String>) -> Result<(), String> {
+    if let Some(l) = &label
+        && (!label_valid(l) || welds.iter().any(|w| w.id != id && w.label.as_ref() == Some(l)))
+    {
+        return Err(format!("label must be one plain line of at most {MAX_LABEL_BYTES} bytes, not W<number>, and unique"));
+    }
+    welds.iter_mut().find(|w| w.id == id).ok_or("weld does not exist")?.label = label;
+    Ok(())
 }
 /// Stream the list with a cap rather than allocating an unbounded saved list first.
 pub(crate) fn deserialize_records<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<WeldRecord>, D::Error> {
@@ -320,8 +443,13 @@ pub(crate) fn deserialize_records<'de, D: serde::Deserializer<'de>>(d: D) -> Res
             let mut records = Vec::new();
             let mut ids = BTreeSet::new();
             let mut numbers = BTreeSet::new();
+            let mut labels = BTreeSet::new();
             while let Some(record) = seq.next_element::<WeldRecord>()? {
-                if records.len() >= MAX_WELDS || !ids.insert(record.id) || !numbers.insert(record.number) {
+                if records.len() >= MAX_WELDS
+                    || !ids.insert(record.id)
+                    || !numbers.insert(record.number)
+                    || record.label.as_ref().is_some_and(|l| !labels.insert(l.clone()))
+                {
                     return Err(serde::de::Error::custom("too many welds or repeated weld identity"));
                 }
                 records.push(record);
