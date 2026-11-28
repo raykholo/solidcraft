@@ -2062,7 +2062,11 @@ pub struct ThreadParams {
     /// ISO 965-1 tolerance class kept in the callout ("M8-6g" on a shaft, "M8-6H" in a hole); unified
     /// "1/4-20 UNC-2A", "#10-32 UNF"; trapezoidal "Tr20x4", "Tr40x14(P7)"; buttress "S20x4"; acme
     /// "1/2-10 ACME"; buttress_asme "2.5-8 BUTT"; bspp "G 1/2"; rp "Rp 1/2"; bspt "R 1/2"
-    /// (external) or "Rc 1/2" (internal); npt "1/2-14 NPT"; custom "C10x1.5x90" (major diameter x
+    /// (external) or "Rc 1/2" (internal); npt "1/2-14 NPT". Blank text is the same as left out.
+    /// Also accepts a text parameter name or a text expression, as in sketch.text
+    /// (`size_name` or `'M' + number(size, 0)`). Literal designations take precedence.
+    /// The expression is saved and evaluated on every rebuild, including configuration changes.
+    /// An unknown evaluated designation is refused with its evaluated text.
     /// pitch x included angle, mm and degrees, 20° to 90°). Blank text is the same as left out.
     /// Default: the standard size that fits the face: a shaft by its major diameter, a hole by its
     /// nominal diameter (a 12 mm hole is M12), else the size whose tap drill it is.

@@ -666,10 +666,39 @@ fn blend_failure(
         // a failure the kernel states in words says what the session noted of the step too
         Err(e) => (session_failure(s, &e).unwrap_or_else(|| status(e)), None),
     };
+    let error = narrowed(s, error);
     (
         crate::session::noted_as(kind, operation, class, error),
         edge,
     )
+}
+
+/// Not upstream (#16404): a failure that gives no other reason (an unsupported corner or step,
+/// a step of the executive failing, a bare status) where the corners step found a face beside a blended edge closing to a point
+/// is that face: no blend of any size fits there. A refusal that names its own reason (a blend
+/// too large, no room, a setback too short, or the picked chain's Mixed corner) keeps it.
+fn narrowed(s: &FilletSession<'_>, error: Error) -> Error {
+    // The picked chain's zero-width cusp (#22151) takes precedence over a face
+    // narrowing noted at another endpoint (#16404). Keep its reason and location;
+    // generic unsupported corners (including the hole-rim chamfer) still use the
+    // face diagnosis below. The corner check has already run in create_corners.
+    if matches!(&error, Error::CornerUnsupported { .. })
+        && s.error_info().comment == solidcore::blend::blend_corner::mixed::MIXED_ROUNDS_NOT_BUILT
+    {
+        return error;
+    }
+    match (s.narrowing_vertex(), &error) {
+        (
+            Some(p),
+            Error::Status(..)
+            | Error::BlendFailed { .. }
+            | Error::Unsupported(..)
+            | Error::CornerUnsupported { .. },
+        ) => Error::FaceClosesToPoint {
+            at: Some([p.x, p.y, p.z]),
+        },
+        _ => error,
+    }
 }
 
 /// The refusal of a swept turn the corners step noted at its vertex (the blend corner's
@@ -1639,6 +1668,40 @@ fn roll_over(
             lead.push(to);
             lead_sizes.push(size);
         }
+    }
+    // A cusp's end face split along a line through the cusp, its two pieces on one surface (a
+    // boss joined onto a plate leaves its cone in two halves; #23441), gives the corner a
+    // fourth edge, where the first pass leaves the convex round's end in an extra piece and
+    // the second pass's corner beside it does not compute. The pieces are one face: the splits
+    // at the cusps are taken out first (only an edge between two pieces of one surface comes
+    // out), so each cusp is the corner of three edges. A ledge's corner is left as it is.
+    let vertex_order = b.vertex_list().to_vec();
+    let fresh_vertices = fresh.vertex_list().to_vec();
+    let mut splits = Vec::new();
+    for r in roll_overs.iter().filter(|r| r.kind == RollOverKind::Cusp) {
+        let at = vertex_order.iter().position(|&v| v == r.vertex);
+        if let Some(&v) = at.and_then(|i| fresh_vertices.get(i)) {
+            for e in vertex::edges(&fresh, v, None)? {
+                if !again.contains(&e) && !splits.contains(&e) {
+                    splits.push(e);
+                }
+            }
+        }
+    }
+    if !splits.is_empty() {
+        let keep: Vec<EdgeId> = fresh
+            .edge_list()
+            .iter()
+            .copied()
+            .filter(|e| !splits.contains(e))
+            .collect();
+        solidcore::topology::brep::p5::remove_splits_of_one_sweep(
+            k,
+            &mut fresh,
+            Some(&keep),
+            Some(&fresh_vertices),
+        )?;
+        fresh.refresh_cached_topology();
     }
     let first = match pass_or_refuse(
         k,
