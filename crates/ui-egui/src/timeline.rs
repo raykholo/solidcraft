@@ -373,7 +373,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Dome { .. } => "dome",
         FeatureKind::Draft { .. } => "draft",
         FeatureKind::Split { .. } => "split",
-        FeatureKind::Move { .. } => "move",
+        FeatureKind::Move { .. } | FeatureKind::TransformFace { .. } => "move",
         FeatureKind::CapturePosition { .. } => "capture",
         FeatureKind::Import { .. } | FeatureKind::MeshImport { .. } | FeatureKind::MeshConvert { .. } => "import",
         FeatureKind::MeshReduce { .. } => "mesh_reduce",
@@ -2030,6 +2030,7 @@ mod tests {
     fn a_path_pattern_keeps_its_path_icon_in_history() {
         use solidcraft_engine::doc::{FeatureKind, PatternKind};
         let feature = FeatureKind::Pattern {
+            body_names: None,
             features: Vec::new(),
             bodies: Vec::new(),
             placements: Vec::new(),

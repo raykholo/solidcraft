@@ -64,7 +64,69 @@ solidcraft-cli mcp          # finds the running app; headless when none runs (--
 # A fixed port, or a second app: name it.
 solidcraft --control 7878 &
 solidcraft-cli mcp --connect 127.0.0.1:7878
+
+# Local Streamable HTTP server: multiple local clients share one warm headless session
+# (for example a large .sc assembly kept hot in RAM, optionally with --render-gpu).
+solidcraft-cli mcp --http 127.0.0.1:8765 --http-info-file ~/.cache/solidcraft-mcp.json --in assembly.sc --render-gpu
 ```
+
+### Streamable HTTP (`--http`)
+
+`solidcraft-cli mcp --http <addr>` serves the standard MCP Streamable HTTP transport on `/mcp` so
+multiple local MCP clients (Claude Code sessions, Codex, Python scripts) can share **one**
+persistent warm SolidCraft session in RAM without reloading a large `.sc` assembly per client:
+
+```sh
+# Fixed loopback port + generated bearer token written to an info file
+# (stderr logs the ready URL and info-file path; generated tokens are never printed to stderr).
+solidcraft-cli mcp --http 127.0.0.1:8765 --http-info-file ~/.cache/solidcraft-mcp.json --in assembly.sc --render-gpu
+
+# Ephemeral loopback port + connection metadata file:
+# writes {"url": "http://127.0.0.1:<port>/mcp", "token": "...", "pid": ...}.
+solidcraft-cli mcp --http 127.0.0.1:0 --http-info-file ~/.cache/solidcraft-mcp.json --in assembly.sc
+
+# Explicit bearer token from a file or environment variable (no --http-info-file required;
+# preferred over command-line arguments).
+solidcraft-cli mcp --http 127.0.0.1:8765 --http-token-file ~/.config/solidcraft/mcp.token --in assembly.sc
+SOLIDCRAFT_MCP_TOKEN="..." solidcraft-cli mcp --http 127.0.0.1:8765 --in assembly.sc
+```
+
+Security model:
+
+- **Loopback only:** `--http` accepts only loopback bind addresses (`127.0.0.1:PORT`,
+  `127.0.0.1:0`, `[::1]:PORT`, or `localhost:PORT`). Non-loopback addresses (`0.0.0.0`, `[::]`,
+  LAN IPs) are refused at startup.
+- **Mandatory Bearer authentication:** every HTTP request must carry `Authorization: Bearer <token>`
+  (verified in constant time; missing or wrong tokens receive `401 Unauthorized`). Pass
+  `--http-token-file` or `SOLIDCRAFT_MCP_TOKEN` to supply a token explicitly; otherwise the server
+  generates a random 32-byte hex token from OS entropy and requires `--http-info-file` to write
+  `url`, `token` and `pid`. Generated tokens are never printed to stderr (MCP clients often record a
+  server's stderr in log files); stderr prints only the ready URL and the info-file path. On Unix
+  the info file is created with owner-only permissions (`0600`); on Windows it does not get an
+  owner-only ACL (it inherits its parent directory's permissions), so on shared Windows machines
+  place `--http-info-file` inside a user-private directory (for example under `%LOCALAPPDATA%` or
+  `%USERPROFILE%`).
+- **DNS rebinding protection:** requests with a non-loopback `Host` or `Origin` header are refused
+  with `403 Forbidden`.
+- **File scope:** `--allow-path`, `--require-allow-path` and `--allow-any-path` apply identically
+  to stdio mode.
+
+Endpoints and multi-client serialization:
+
+- `POST /mcp` accepts JSON-RPC requests and notifications (up to 16 MiB). `initialize` creates a
+  new per-client `Mcp-Session-Id` returned in the response header; subsequent requests must send
+  that `Mcp-Session-Id`. Requests return `200 OK` (`application/json`, or `text/event-stream` when
+  `Accept` requests SSE only); notifications return `202 Accepted`.
+- `DELETE /mcp` with `Mcp-Session-Id` closes that client's MCP session (`204 No Content`) without
+  shutting down the shared SolidCraft server or disrupting other connected clients.
+- `GET /mcp` returns `405 Method Not Allowed` (`Allow: POST, DELETE`) because this server does not
+  push unsolicited server-initiated SSE streams.
+- **Serialized shared session & atomic `batch` guidance:** all connected clients share the same
+  in-memory design session, and concurrent HTTP requests are dispatched serially in strict FIFO
+  order so the session is never corrupted. When multiple clients edit the same design, wrap
+  multi-step edits (such as sketch creation, geometry, `sketch.finish` and `solid.extrude`) in a
+  single atomic `batch` (default `rollback: true`) so another client's request cannot interleave
+  mid-sequence, and check `document.revision` when coordinating reads and writes across clients.
 
 `execute` `view.pick` with `rays: [{origin, dir}…]` answers in every session, headless too:
 for each world ray, the body, face index, world `point`, outward `normal` and `depth` where it
@@ -314,6 +376,34 @@ solidcraft-cli mcp --connect 127.0.0.1:7878 --compact
 SOLIDCRAFT_MCP_COMPACT=1 solidcraft-cli mcp --connect 127.0.0.1:7878
 ```
 
+### Core tools
+
+`solidcraft-cli mcp` lists eight tools: `find_commands` and `call_command`, which reach every
+command, and `batch`, `measure`, `inspect_design`, `body_topology`, `skill_reference` and
+`pending`. Every other tool (`execute`, `list_commands`, `save`, `screenshot`, ...) still answers
+when a client calls it by name, and `--all-tools` (or `SOLIDCRAFT_MCP_ALL_TOOLS=1`) lists them all,
+with the instructions that speak of them. An agent pays for the tool list and the instructions on
+every request, and most of the tools it never calls. Measured with Claude Sonnet 5.5 in Claude Code,
+the core listing and its instructions cost about 6,800 tokens against 18,900 for the full one.
+
+```sh
+solidcraft-cli mcp --all-tools
+```
+
+- `find_commands {query, limit?, detail?}` ranks the commands by the query's words (in the id
+  most, then the label, the toolbar tab and panel, the parameter notes) and gives the best five
+  (`limit`, at most 25): `{matches: [{id, label, planned?, input, types, doc}], total}`. `input` is
+  the command's parameters as a signature read from its schema, such as
+  `{height: LengthExpr, length: LengthExpr, width: LengthExpr, corner?: PointExpr3, ...}` (`?` is
+  optional, `a|b` the choices, `T[]` a list), and `types` spells out each named type once
+  (`"LengthExpr": "num | str"`). `doc` is the first 400 characters of the parameter notes, all of
+  them with `detail: true`.
+- `call_command {id, params?}` checks `params` against the command's schema, as
+  `--param-check strict` does, and refuses a mismatch naming the field, without running anything.
+  Otherwise it runs the command as `execute` does with `verbose: false`. It is a `batch` step too
+  (`{"command": "call_command", "params": {"id", "params"}}`). It goes through the same path as
+  `execute`: the same folders, the same in-app permission prompts.
+
 ### Structured results
 
 `solidcraft-cli mcp --structured` is for programs that call the tools, such as a Python client,
@@ -353,11 +443,11 @@ saying they need the desktop app. Confined clients cannot start persistent `them
 ### Tool annotations
 
 Each tool says what it may do, for clients that ask before running tools (or auto-approve on
-these hints). `list_commands`, `describe_command`, `inspect_design`, `measure`, `body_topology`,
+these hints). `list_commands`, `describe_command`, `find_commands`, `inspect_design`, `measure`, `body_topology`,
 `skill_reference`, `crash_reports`, `pending` and `running` are read-only. `set_parameter`, `undo` and `redo`
 change the design undoably, and so does `check_parameters` (it changes the design and puts it back:
 not read-only, not destructive). `new_design` replaces it (destructive). `documents` and `quit_app` are also destructive because forced closes can discard unsaved work.
-`preferences` and `agent_cursor` change app settings (not read-only, not destructive). `execute`, `batch`, `open`, `save`, `export`,
+`preferences` and `agent_cursor` change app settings (not read-only, not destructive). `execute`, `call_command`, `batch`, `open`, `save`, `export`,
 `screenshot` (whose `path` writes a file) and `compare_picture` (which reads the reference picture) can read,
 write, overwrite or delete files: they are
 not read-only, `destructiveHint` and `openWorldHint` are true.
@@ -498,6 +588,8 @@ The `skill_reference` tool returns all six skills from the copies built into Sol
 | `version` | none | The SolidCraft build answering the call: `{version, commit, mode}`. Connected sessions report the app's version and commit with `mode: "app"`; headless sessions report their own build with `mode: "headless"`. `commit` is `"unknown"` when unavailable, including builds without Git. This reads metadata without opening Help or returning diagnostics. Call it on its own, outside a batch. |
 | `list_commands` | `filter?`, `prefix?`, `panel?`, `compact?`, `fields?`, `limit?`, `offset?` | The command catalog: id, label, tab/panel, shortcut, parameter docs, enabled now. `filter` matches id, label, tab and panel. `prefix` keeps the ids that start with it (`"sketch."`) and `panel` the commands of one whole toolbar panel or tab (`"Modify"`), both ignoring case. `compact: true` keeps only `id` and `label` of each entry, about an eighth of the size; `fields` keeps the keys it lists instead. `limit` and `offset` page the matches, and the reply becomes `{commands, total, offset, next_offset}` (`next_offset` is null on the last page). With none of these the reply is the whole catalog, about 350 KB. |
 | `describe_command` | `id` | One command's parameter docs (`params`) and, for commands with a typed contract (every new command, and more of the older ones as they are converted), the JSON Schemas (2020-12) of its parameters (`input`) and of a successful result (`output`); `null` for the others. The same as `execute` `engine.describe {command}`. |
+| `find_commands` | `query`, `limit?` (default 5, at most 25), `detail?` | The commands that best match the query's words, each with its parameters as a short signature (see [Core tools](#core-tools)). |
+| `call_command` | `id`, `params?` | Run any command, its params checked against its schema first; a mismatch is refused naming the field and nothing runs. |
 | `execute` | `command`, `params?`, `verbose?` (default true), `expect?` | Run any command with JSON parameters (`list_commands` shows them). Failures leave the design unchanged. A feature command replies with the feature (`feature`, `name`), every body (`bodies`) and the bodies it created, changed and removed (`created_bodies`, `changed_bodies`, `removed_bodies`). `verbose: false` uses the same compact reply as `batch`. `expect` checks the design after the command, as it does for `batch` (see below). |
 | `batch` | `commands: [{command, params}]` or `path` (a script file, see below), `rollback?` (default true), `dry_run?` (default false), `verbose?` (default true), `timings?`, `profile?`, `coalesce_parameters?` (default false), `expect?` | Run steps in order, stop at the first error and undo the completed steps. The reply names the failing step (`failed.index`, `failed.command`, `failed.error`), every result before it, `rolled_back` (true only when a rollback was asked for and the design is where the batch started: its completed steps were undone, or nothing ran; false when `rollback: false` or when the design could not go back), `undone`, `applied` (the indices of the steps whose changes are in the design) and `not_run` (the steps never sent). With `dry_run: true`, every step runs normally (so `measure`, `inspect.clearance`, `inspect.interference` and other inspection steps see the simulated edits, and `expect` checks the simulated result before rollback) and then all document, model and undo/redo history changes are unconditionally rolled back via `edit.checkpoint` / `edit.restore_checkpoint`, leaving zero undo entry behind and adding `dry_run: true` and `rolled_back: true` to the reply (works both headless and bridged to the desktop app). Disk-writing and external commands (`save`, `export`, `file.save*`, `file.export*`, `file.send_to_slicer`, `file.open_in_easyprint`, `render.start`/`render.export`, `plugin.*`, `parameters.export`/`timeline.export_script`/`assembly.bom` with a `path`, and similar), application layout commands (`panel.*`/`layout.*`), `edit.restore_checkpoint` and `rollback: false` are refused before any step runs. If the checkpoint cannot be restored after a dry run, the call fails loudly with `dry_run: true`, `rolled_back: false` and `restore_error`. A step may name a tool instead of a command, with that tool's arguments as `params`: `set_parameter` (runs `parameters.change`; `value` or `expression`), `list_commands` (`engine.commands`, narrowed by its arguments as the tool narrows it), `describe_command` (`engine.describe`), `execute` (`{command, params}`), `measure` (`summary: true` summarised as the tool summarises it), `compare_picture` (`inspect.compare_picture`, numbers only: no overlay PNG), `inspect_design` (`document.inspect` with its `measure`, `timeline` and `bodies`: each sketch as its counts, not its full contents, and no joints), `undo`, `redo`, `export`, `save`, `open`, `new_design` and `crash_reports`. `screenshot`, `body_topology` (use `model.edges` and `model.faces`), `batch`, `check_parameters`, `pending`, `running` and `skill_reference` can't be steps, nor can `component.edit_in_place` and `component.finish_edit`, however a step names them. Run those two commands on their own. A desktop rollback batch stays within one design tab. It refuses `document.activate`, `view.next_tab`, `view.previous_tab`, `file.import`, `doc.open` (including the `open` tool with or without `new_tab: true`), and `file.new` with `new_tab: true` (including the `new_design` tool) before any steps run. Run these commands separately or use `rollback: false` to keep completed steps. A headless session or an app that receives the whole batch checks for missing or unknown command IDs before the first step (#5853). The MCP server also checks IDs before sending desktop steps one by one with rollback enabled. With `rollback: false` on that path, a command the app does not recognize stops the batch at its turn, and earlier steps stay applied. With `--param-check strict`, parameters that break a command's contract also fail preflight. A bridged server checks those contracts before it sends the batch. `verbose: false` keeps the reply small in large designs: feature steps leave out the full body list (`created_bodies`, `changed_bodies`, `removed_bodies` stay) and sketch steps the ids they repeat outside `created`. Bridged to an app that has `engine.batch`, the whole batch is one control request (one frame of the app). Older apps, and apps showing the agent cursor, get the steps one by one. `timings: true` adds `timings: [{index, command, ms}]` for every step run, the failing one included, and `total_ms`. `profile: true` also adds each step's `profile: {boolean_ms, tessellate_ms, other_ms}`, its time in kernel booleans, in tessellation and the rest. Steps are timed where they run: in the app when bridged. An app without `engine.batch` is timed step by step, without `profile`. `coalesce_parameters: true` sets each run of consecutive plain parameter edits (`parameters.change` or `set_parameter` with a name and a value, or `changes`) together, so the design rebuilds once per run instead of once per edit. Steps between runs see the design up to date. Each step keeps its own result (`coalesced`: the run's length), and the run is one undo step. The run skips the states between its edits, so an edit refused on its own can go through with the run's later ones. A refused run goes step by step, naming the refused step. |
 
@@ -646,13 +738,13 @@ volume, mass and body count; check `ok` and `diagnostics` before applying any ca
 Apply the selected values separately with `parameters.change {changes}` if you intend to
 edit the design. Use `describe_command` for the input and output schemas.
 
-### Resources, prompts, and completions
+### Resources, subscriptions, prompts, and completions
 
-In addition to tools, the MCP server exposes read-only resources, resource templates, workflow prompts, and argument completions:
+In addition to tools, the MCP server exposes read-only resources, resource templates, subscriptions, workflow prompts, and argument completions:
 
 - **Static resources** (`resources/list`):
-  - `solidcraft://design` — full `document.inspect` JSON with measurements.
-  - `solidcraft://commands` — the complete engine command catalog as JSON.
+  - `solidcraft://design` (`application/json`) — full `document.inspect` JSON with measurements.
+  - `solidcraft://commands` (`application/json`) — the complete engine command catalog as JSON.
 - **Resource templates** (`resources/templates/list`) for targeted reads without dumping the whole design:
   - `solidcraft://body/{name}` — geometry, physical properties, and component of one body.
   - `solidcraft://sketch/{name}` — plane, DOF, curves, points, constraints, and profiles of one sketch (by name or feature id).
@@ -666,6 +758,46 @@ In addition to tools, the MCP server exposes read-only resources, resource templ
   - `diagnose-feature` (`feature?`) — inspect failing or warning timeline features and apply a minimal fix.
   - `assembly-clearance` (`occurrences?`, `joint?`) — verify grounding, static clearances, and motion interference.
 - **Autocompletion** (`completion/complete`): completes template variables (body names, sketch names, feature ids/names, command ids, skill names and files) and prompt arguments (including prioritizing failing or warning features first for `diagnose-feature`).
+
+#### Resource subscriptions
+
+The server advertises `"resources": {"subscribe": true, "listChanged": true}` in its `initialize` capabilities so clients can follow changes with `resources/subscribe` and `resources/unsubscribe`:
+
+- **`resources/subscribe`** (`{"uri": "solidcraft://design"}`) registers the URI for the current
+  session and returns `{}`. Re-subscribing an already subscribed URI is idempotent. Missing or
+  non-string/empty `uri` values fail with JSON-RPC `-32602` (`Invalid params`); unknown URIs fail
+  with `-32002` (`Resource not found`). Each session allows at most 256 concurrent subscriptions
+  (exceeding the limit returns `-32602`).
+- **`resources/unsubscribe`** (`{"uri": "solidcraft://design"}`) removes the URI from the session's
+  subscriptions and returns `{}` (idempotent for known URIs that are not currently subscribed;
+  `-32602` for missing/invalid `uri`, `-32002` for unknown URIs).
+- **`notifications/resources/list_changed`** (`{"jsonrpc":"2.0","method":"notifications/resources/list_changed"}`)
+  is emitted when the active design identity changes (`new_design`, `open`, or switching tabs) or
+  when the set of bodies, sketches, or features changes (for example after `execute`, `batch`,
+  `undo`, or `redo`).
+- **`notifications/resources/updated`** (`{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"solidcraft://design"}}`)
+  is emitted for each subscribed design resource affected by a revision change (including parameter
+  edits that keep the same bodies and features). Static resources unaffected by design edits, such
+  as `solidcraft://commands`, do not receive spurious `updated` notifications on design edits.
+- **No spurious notifications:** read-only calls (`inspect_design`, `measure`, `body_topology`,
+  `list_commands`, `describe_command`, `version`, `running`, `pending`, `skill_reference`,
+  `crash_reports`), failed edits, rolled-back batches, and `check_parameters` leave the design
+  revision unchanged and emit neither notification.
+- **Live desktop changes (`--connect`):** once initialized or subscribed, `solidcraft-cli mcp`
+  also observes `document.revision` on the connected desktop app while idle, so edits made directly
+  in the SolidCraft window or by the built-in Assistant emit `notifications/resources/list_changed`
+  and `notifications/resources/updated` without waiting for the next MCP tool call.
+
+```text
+→ {"jsonrpc":"2.0","id":1,"method":"resources/subscribe","params":{"uri":"solidcraft://design"}}
+← {"jsonrpc":"2.0","id":1,"result":{}}
+→ {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"execute","arguments":{"command":"solid.box","params":{"length":10,"width":10,"height":10}}}}
+← {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"..."}]}}
+← {"jsonrpc":"2.0","method":"notifications/resources/list_changed"}
+← {"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"solidcraft://design"}}
+→ {"jsonrpc":"2.0","id":3,"method":"resources/unsubscribe","params":{"uri":"solidcraft://design"}}
+← {"jsonrpc":"2.0","id":3,"result":{}}
+```
 
 Errors: an unknown tool or arguments that don't match the tool's schema are JSON-RPC
 `-32602` errors (an unknown argument's error lists the tool's arguments); an engine failure

@@ -46,6 +46,7 @@ use solidcore::topology::{edgeuse, face};
 use solidcore::SolidError;
 use solidcore::{Brep, Kernel};
 
+use solidcore::math::det;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
@@ -66,13 +67,13 @@ impl Meridian {
                 r: cr,
                 z: cz,
                 radius,
-            } => ((r - cr).hypot(z - cz) - radius).abs(),
+            } => (det::hypot(r - cr, z - cz) - radius).abs(),
             Self::Polygon(rz) => {
                 let mut best = f64::INFINITY;
                 for (&(ax, az), &(bx, bz)) in rz.iter().zip(rz.iter().cycle().skip(1)) {
                     let (dx, dz) = (bx - ax, bz - az);
                     let t = (((r - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0);
-                    best = best.min((r - ax - t * dx).hypot(z - az - t * dz));
+                    best = best.min(det::hypot(r - ax - t * dx, z - az - t * dz));
                 }
                 best
             }
@@ -156,8 +157,8 @@ fn screw_deviation(
                                 let uu = u[0] + (u[1] - u[0]) * f64::from(a) / 4.0;
                                 let vv = v[0] + (v[1] - v[0]) * f64::from(c) / 4.0;
                                 let q = surface.evaluate_point(k, Point2::new(uu, vv)).unwrap();
-                                let r = q.x.hypot(q.y);
-                                let mut theta = q.y.atan2(q.x);
+                                let r = det::hypot(q.x, q.y);
+                                let mut theta = det::atan2(q.y, q.x);
                                 if theta < 0.0 {
                                     theta += 2.0 * PI;
                                 }
@@ -203,7 +204,7 @@ fn coil() -> Meridian {
 /// The groove of an M10x1.5 thread (ISO 68-1).
 fn m10_groove(p: f64) -> Meridian {
     let h = p * 3f64.sqrt() / 2.0;
-    let slope = (PI / 6.0).tan();
+    let slope = det::tan(PI / 6.0);
     let r0 = 5.0 - 5.0 * h / 8.0;
     let w0 = p / 8.0;
     let r1 = 5.0 + 0.05 * p;
@@ -357,8 +358,8 @@ fn issue_22577_a_thread_of_202_turns_builds() {
     // its outer end, turn for turn.
     let (area, centroid) = (0.5 * 1.0 * 1.3, (7.2 + 8.5 + 8.5) / 3.0);
     let expected = area * 2.0 * PI * centroid * turns;
-    let flank = 0.5f64.hypot(1.3);
-    let helix = (2.0 * PI * 8.5).hypot(p) * turns;
+    let flank = det::hypot(0.5f64, 1.3);
+    let helix = det::hypot(2.0 * PI * 8.5, p) * turns;
     let bound = tol * (1.0 + 2.0 * flank) * helix;
     let v = volume(&k, &mut b);
     assert!(
@@ -447,8 +448,8 @@ fn walls(b: &Brep) -> Vec<Surface> {
 fn screw_point(p: Point3, offset: f64, theta: f64, pitch: f64) -> Point3 {
     let (x, y) = (p.x + offset, p.y);
     Point3::new(
-        x * theta.cos() - y * theta.sin(),
-        x * theta.sin() + y * theta.cos(),
+        x * det::cos(theta) - y * det::sin(theta),
+        x * det::sin(theta) + y * det::cos(theta),
         p.z + pitch * theta / (2.0 * PI),
     )
 }
@@ -456,7 +457,7 @@ fn screw_point(p: Point3, offset: f64, theta: f64, pitch: f64) -> Point3 {
 /// The angle the net's arcs turn to at `v` on the span `[v0, v1]` of half angle `half`.
 fn arc_angle(v0: f64, v1: f64, half: f64, v: f64) -> f64 {
     let s = 2.0 * (v - v0) / (v1 - v0) - 1.0;
-    0.5 * (v0 + v1) + 2.0 * ((0.5 * half).tan() * s).atan()
+    0.5 * (v0 + v1) + 2.0 * det::atan(det::tan(0.5 * half) * s)
 }
 
 /// The face's `(u, v)` of the definition's `(w, t)`, through its map.
@@ -666,7 +667,7 @@ fn a_joined_flanks_trims_along_its_half_turns_are_proved_without_bisecting() {
     let tol = p * 1e-4;
     // (the M100x6 groove as `m10_groove` takes ISO 68-1's, at radius 50)
     let h = p * 3f64.sqrt() / 2.0;
-    let slope = (PI / 6.0).tan();
+    let slope = det::tan(PI / 6.0);
     let r0 = 50.0 - 5.0 * h / 8.0;
     let w0 = p / 8.0;
     let r1 = 50.0 + 0.05 * p;
@@ -846,10 +847,10 @@ fn issue_2572_tapered_thread_walls_carry_their_law() {
         // the wall strays past what its lift alone could make it (the rational lift's
         // largest error on a span of its half angle): the law's error is real, and the
         // bound holds it
-        let tau = (0.5 * c.half).tan();
-        let kk = 2.0 * (1.0 + tau * tau) * tau.atan() / tau;
+        let tau = det::tan(0.5 * c.half);
+        let kk = 2.0 * (1.0 + tau * tau) * det::atan(tau) / tau;
         let x = ((kk - 2.0) / (kk + 2.0)).sqrt();
-        let lift = p / (2.0 * PI) * (kk * x / (1.0 + x * x) - 2.0 * x.atan());
+        let lift = p / (2.0 * PI) * (kk * x / (1.0 + x * x) - 2.0 * det::atan(x));
         assert!(
             c.farthest > 2.0 * lift,
             "strays {}, the lift {lift}",
@@ -1121,4 +1122,97 @@ fn issue_22930_a_cylinder_pieces_path_trims_are_proved_at_once() {
     }
     // (two cylinders, an edge along each side of each of their six half-turn pieces)
     assert!(proved >= 24, "{proved} cylinder piece trims");
+}
+
+// ---- tangency-labs/solidcore#3446: a drop onto a wall finds no saddle ---------------------
+
+/// tangency-labs/solidcore#3446: the coil of SolidCraft's helical groove cut from a shaft's
+/// end face, a circle of radius 1 about (10, 0, 30) in the plane z = 30, carried 6 turns at
+/// pitch 3 down the axis (-z through (0, 0, 30)). Every point of the circle lies on the
+/// wall: the wall's first station is the profile itself (`sweep::screw`, "a point at turn 0
+/// is the point itself"), so a point's drop onto the wall is that point, up to the drop's
+/// convergence; the B-rep holds an edge on the circle on the wall only within the wall's
+/// zone tolerance, so the drop must land within it. Near the circle's
+/// inner point (9, 0, 30), where its tangent runs almost along the screw motion (the wall's
+/// partials there 3° apart), the distance from a point of the circle has a saddle about
+/// 0.0137 away, which the drop returned: its Newton step converged to it, and the check
+/// measured the cut's edge on the circle that far off the wall. The points are those the
+/// check's gap function samples on the cut's edge, the circle's inner arc between its
+/// crossings with radius 10 at parameters 0.2587536620883 and 0.7412463379116 (21 even
+/// steps; the 12th, next to the inner point at 0.5, dropped to the saddle), and the steps
+/// between them; each is dropped without a guess and seeded with the previous point's
+/// foot, as the gap function does.
+#[test]
+fn issue_3446_a_point_of_a_walls_start_station_drops_onto_it() {
+    use solidcore::curve::arc::ArcDefinition;
+    use solidcore::curve::path::PathPiece;
+    use solidcore::surface::surface::p4::NoObject;
+    use solidcore::surface::surface::p5::DropPointOptions;
+    let mut k = Kernel::default();
+    let arc = PathPiece::of_arc(
+        &k,
+        &ArcDefinition {
+            centre: Point3::new(10.0, 0.0, 30.0),
+            axis: Z,
+            reference: Vec3::X,
+            radius: 1.0,
+            start: 0.0,
+            end: 2.0 * PI,
+        },
+    )
+    .unwrap();
+    let circle = arc.curve().clone();
+    let (pitch, turns) = (3.0, 6.0);
+    let b = screw_sweep(
+        &mut k,
+        std::slice::from_ref(&circle),
+        Point3::new(0.0, 0.0, 30.0),
+        -Z,
+        pitch,
+        turns,
+        pitch * 1e-4,
+    )
+    .unwrap();
+    let wall = p1::faces(&b, None)
+        .unwrap()
+        .into_iter()
+        .find(|&f| {
+            let s = face::p2::surface(&b, f).unwrap().unwrap();
+            matches!(s.kind(), SurfaceKind::BSpline(_))
+        })
+        .unwrap();
+    let s = face::p2::surface(&b, wall).unwrap().unwrap();
+    let domain = face::p2::uv_domain(&b, wall).unwrap();
+    let zone = face::p2::tolerance(&b, wall).unwrap();
+    let (first, last) = (0.258_753_662_088_38, 0.741_246_337_911_62);
+    for n in [20_u32, 40] {
+        let mut guess = None;
+        for i in 0..=n {
+            let t = first + (last - first) * f64::from(i) / f64::from(n);
+            let p = circle.evaluate_point(&k, t).unwrap();
+            for (seed, opts) in [
+                ("no guess", DropPointOptions::default()),
+                (
+                    "the previous foot",
+                    DropPointOptions {
+                        guess_uv: guess,
+                        ..Default::default()
+                    },
+                ),
+            ] {
+                let d = s.drop_point::<NoObject>(&k, p, &domain, &opts).unwrap();
+                assert!(d.success, "t {t}, {seed}");
+                let foot = s.evaluate_point(&k, d.result_uv).unwrap();
+                assert!(
+                    d.gap <= zone && (foot - p).length() <= zone,
+                    "t {t}, {seed}: dropped to {:?}, {} off",
+                    d.result_uv,
+                    d.gap
+                );
+                if seed == "the previous foot" {
+                    guess = Some(d.result_uv);
+                }
+            }
+        }
+    }
 }

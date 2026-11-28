@@ -625,6 +625,45 @@ impl PrimitiveCreation {
         angle_deg: f64,
         options: RepeatedSweepOptions,
     ) -> Result<()> {
+        self.partial_rotational_sweep(a, brep, curves, axis_base, axis, angle_deg, options, None)
+    }
+
+    /// [`Self::create_partial_rotational_sweep`] with the path arc's radius as the
+    /// omitted-corner scale. Only a closed path of lines and arcs calls this.
+    pub(crate) fn create_partial_rotational_sweep_at_scale(
+        &mut self,
+        a: &mut impl PrimitiveAccess,
+        brep: BrepId,
+        curves: &mut Vec<Option<Curve>>,
+        axis_base: Point3,
+        axis: Vec3,
+        angle_deg: f64,
+        options: RepeatedSweepOptions,
+        feature_scale: f64,
+    ) -> Result<()> {
+        self.partial_rotational_sweep(
+            a,
+            brep,
+            curves,
+            axis_base,
+            axis,
+            angle_deg,
+            options,
+            Some(feature_scale),
+        )
+    }
+
+    fn partial_rotational_sweep(
+        &mut self,
+        a: &mut impl PrimitiveAccess,
+        brep: BrepId,
+        curves: &mut Vec<Option<Curve>>,
+        axis_base: Point3,
+        axis: Vec3,
+        angle_deg: f64,
+        options: RepeatedSweepOptions,
+        corner_scale: Option<f64>,
+    ) -> Result<()> {
         self.init_entity_maps();
         let region = target(self, brep)?;
         let previous = a.kernel(brep)?.context.doing_boolean();
@@ -709,7 +748,12 @@ impl PrimitiveCreation {
                 }
             }
             // Not upstream (WR-448, #545): analytic side faces (with `make_analytics`, the default)
-            let rotation = RotationalSweepGeometry::new(axis_base, axis, angle_deg, tolerance);
+            let mut rotation = RotationalSweepGeometry::new(axis_base, axis, angle_deg, tolerance);
+            // A closed line-and-arc path: the band is the arc's own zone. Unset, on-axis
+            // tests stay on `tolerance`.
+            if let Some(scale) = corner_scale {
+                rotation.set_omitted_corner_scale(scale);
+            }
             let geometry = SweepGeometry::Rotation(rotation);
             let mut sweep = TopologySweep {
                 repetitions: options.repetitions,
@@ -1078,12 +1122,12 @@ mod tests {
         }
 
         let e = 0.4_f64.to_radians();
-        let tilted = Vec3::new(e.sin(), 0.0, e.cos());
+        let tilted = Vec3::new(det::sin(e), 0.0, det::cos(e));
         let mut body = create_rotational_sweep(&mut k, &curves, origin, tilted, 90.0, true)
             .unwrap_or_else(|e| panic!("axis tilted 0.4 degrees: {e}"));
         assert!(crate::topology::brep::p2::is_manifold_solid(&body).unwrap());
         // signed: an inward-facing solid fails too
-        let want = 2.0 * std::f64::consts::PI * e.sin();
+        let want = 2.0 * std::f64::consts::PI * det::sin(e);
         let volume = brep_volume_default(&k, &mut body, 1e-8).unwrap();
         assert!(
             (volume - want).abs() < 1e-6 * want,

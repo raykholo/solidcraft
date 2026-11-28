@@ -1331,6 +1331,10 @@ pub enum FeatureKind {
     /// along a path). The copied features are named by id (#1134). Component copies are named by
     /// component id; the occurrence ids they make are kept so a count change keeps survivors (#12116).
     Pattern {
+        /// Optional template for copy names; the original keeps its name. The saved key
+        /// differs from the feature's legacy list of pinned body names.
+        #[serde(default, rename = "body_name_template", skip_serializing_if = "Option::is_none")]
+        body_names: Option<String>,
         features: Vec<FeatureId>,
         pattern: PatternKind,
         /// Copy these bodies (as new bodies) instead of replaying features.
@@ -1638,12 +1642,22 @@ pub enum FeatureKind {
         /// the tool's body (#13303). Each cuts the pieces it crosses.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_bodies: Vec<BodyName>,
-        /// A straight line of this sketch as the tool (#1552): the plane through it along the
-        /// sketch's normal, which follows the sketch.
+        /// Curves of this sketch as the tool (#1552), which follow the sketch: one straight line
+        /// splits as the plane through it along the sketch's normal; any other curve, or the
+        /// chain `line` and `curves` join into, is swept along the normal through the body, its
+        /// open ends continued past it, and cuts as that sheet.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sketch: Option<SketchId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         line: Option<String>,
+        /// More curves of `sketch`, joined end to end with `line` into one chain (#7492).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        curves: Vec<String>,
+        /// With sketch curves: an open chain's ends run on along their tangents past the body (the
+        /// default, and one straight line is its plane), or, false, the curves cut as drawn and are
+        /// refused where they do not cut the body through.
+        #[serde(default = "yes", skip_serializing_if = "is_yes")]
+        extend: bool,
     },
     /// A construction axis (CONSTRUCT axes).
     ConstructionAxis {
@@ -1694,6 +1708,21 @@ pub enum FeatureKind {
         distance: Expr,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         body: Option<BodyName>,
+    },
+    /// Rotate one face's supporting surface about its pivot, then translate it and retrim its neighbours.
+    TransformFace {
+        face: FacePick,
+        body: BodyName,
+        #[walk(length = ["X distance", "Y distance", "Z distance"])]
+        translate: [Expr; 3],
+        rotate_axis: Dir,
+        /// Without an explicit pivot, turn about the resolved face pick.
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "opt_point_expr")]
+        #[walk(placement)]
+        origin: Option<PointExpr>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(angle = "Angle")]
+        angle: Option<Expr>,
     },
     /// Remove faces (at the given points) and heal the gap from the neighbouring planes, as when
     /// a fillet, chamfer, hole or boss is taken off. A picked face brings the rest of its surface
@@ -2385,6 +2414,12 @@ pub enum FeatureKind {
         /// Corner choices for these flanges, identified by their named source rims.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         corners: Vec<crate::CornerJoinParams>,
+        /// How far each bend is moved out past where `position` puts it, away from the panel it
+        /// stands on (toward it where negative); the panel grows by the same strip. None is no
+        /// offset. Walked last, so the inputs before it keep their names.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(length = "Offset")]
+        offset: Option<Expr>,
     },
     /// A corner shared by two bends, saved by their source-edge identities.
     SheetCornerJoin {
@@ -3507,7 +3542,10 @@ pub enum FilletStyle {
 /// A fillet radius too large for the geometry around its edges: refused (`Exact`, the default),
 /// reduced to the largest that works for all of them (`Reduce`), or tapered along each edge it
 /// doesn't fit to the room there, down to zero where a face closes to a point (`Taper`); a
-/// warning says what was done.
+/// warning says what was done. `KeepEdge` is for a concave round taller than the wall it rises
+/// on: it ends on the wall's top edge, tangent to the floor only, so the top face and its edge
+/// stay as they are, instead of carrying the wall's plane on and growing the top face to meet
+/// the round; every other edge is rounded as usual.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FilletFit {
@@ -3515,6 +3553,7 @@ pub enum FilletFit {
     Exact,
     Reduce,
     Taper,
+    KeepEdge,
 }
 
 impl FilletFit {
@@ -4408,6 +4447,7 @@ impl FeatureKind {
             FeatureKind::Move { .. } => "MoveFeature",
             FeatureKind::Scale { .. } => "ScaleFeature",
             FeatureKind::OffsetFace { .. } => "OffsetFacesFeature",
+            FeatureKind::TransformFace { .. } => "TransformFaceFeature",
             FeatureKind::DeleteFace { .. } => "DeleteFaceFeature",
             FeatureKind::SurfaceOffset { .. } => "OffsetSurfaceFeature",
             FeatureKind::SurfaceMidsurface { .. } => "MidsurfaceFeature",
@@ -4511,6 +4551,7 @@ impl FeatureKind {
             FeatureKind::SplitFace { .. } => "split_face",
             FeatureKind::Scale { .. } => "scale",
             FeatureKind::OffsetFace { .. } => "offset_face",
+            FeatureKind::TransformFace { .. } => "transform_face",
             FeatureKind::DeleteFace { .. } => "delete_face",
             FeatureKind::BoundingSolid { .. } => "bounding_solid",
             FeatureKind::Pipe { .. } => "pipe",
@@ -4614,6 +4655,7 @@ impl FeatureKind {
             "MoveFeature" => "move",
             "ScaleFeature" => "scale",
             "OffsetFacesFeature" => "offset_face",
+            "TransformFaceFeature" => "transform_face",
             "DeleteFaceFeature" => "delete_face",
             "OffsetSurfaceFeature" => "surface_offset",
             "MidsurfaceFeature" => "surface_midsurface",
@@ -4717,6 +4759,7 @@ impl FeatureKind {
             FeatureKind::Move { .. } => "Move",
             FeatureKind::Scale { .. } => "Scale",
             FeatureKind::OffsetFace { .. } => "OffsetFace",
+            FeatureKind::TransformFace { .. } => "TransformFace",
             FeatureKind::DeleteFace { .. } => "DeleteFace",
             FeatureKind::SurfaceOffset { .. } => "OffsetSurface",
             FeatureKind::SurfaceMidsurface { .. } => "Midsurface",
@@ -5803,7 +5846,12 @@ impl Document {
         // Borrowed names: every command that changes the design asks, and most rename nothing.
         fn names(d: &Document) -> std::collections::BTreeSet<&str> {
             let stored = d.params.iter().map(|p| p.name.as_str()).chain(d.text_params.iter().map(|p| p.name.as_str()));
-            stored.chain(d.features.iter().flat_map(|f| f.param_names.iter().map(String::as_str))).collect()
+            let feature_inputs = d.features.iter().flat_map(|f| f.param_names.iter().map(String::as_str));
+            let driven = d.features.iter().flat_map(|f| match &f.kind {
+                FeatureKind::Sketch { sketch, .. } => sketch.driven_dimension_params().into_iter().map(String::as_str).collect::<Vec<_>>(),
+                _ => Vec::new(),
+            });
+            stored.chain(feature_inputs).chain(driven).collect()
         }
         let (before, after) = (names(previous), names(self));
         let mut gone = before.difference(&after);
@@ -6780,6 +6828,9 @@ impl Document {
         if comment.is_some_and(|c| c.len() > 4096) {
             return Err(DocError::Invalid("comment too long".into()));
         }
+        if self.is_driven_param(name) {
+            return Err(DocError::Invalid(format!("`{name}` is a read-only driven dimension parameter and cannot be edited")));
+        }
         if self.features.iter().any(|f| f.param_names.iter().any(|n| n == name)) {
             return Err(DocError::Invalid(format!("`{name}` is a feature's parameter")));
         }
@@ -6815,6 +6866,7 @@ impl Document {
         if let Some(e) = errors.get(name) {
             return Err(DocError::Expr(e.clone()));
         }
+        next.check_driven_timeline()?;
         *self = next;
         Ok(())
     }
@@ -7019,7 +7071,7 @@ impl Document {
         self.apply_equation_values(vals, sk)?;
         self.apply_pattern_values(vals, sk)?;
         for c in &mut sk.constraints {
-            if let Some(p) = &c.param {
+            if let (Some(p), false) = (&c.param, c.driven) {
                 let kind = if c.kind.is_angle() { Kind::Angle } else { Kind::Length };
                 let v = vals.get(p).copied().ok_or_else(|| DocError::Unknown(format!("parameter `{p}`")))?.to_kind(kind)?;
                 c.kind.set_value(v);

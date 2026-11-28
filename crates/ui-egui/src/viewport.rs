@@ -3643,10 +3643,16 @@ pub(crate) fn refresh_sketch_scene(app: &mut SolveApp, proj: &Proj) {
 fn refresh_sketch_scene_with_key(app: &mut SolveApp, proj: &Proj, model_key: u64, ctx: Option<&egui::Context>) {
     refresh_wireframe(app, proj, model_key);
     let (sk, coarse) = sketch_scene_keys(app, proj, model_key);
+    let hold = &mut app.viewport.sketch_hold;
     if sk == app.viewport.sketch_key {
+        // Also when the camera has come back to the held scene's view: it is this view's own again,
+        // and the rest timer notes the move back.
+        if let Some(ctx) = ctx {
+            hold.rest.wait(sk, ctx.input(|i| i.time) * 1000.0);
+        }
+        hold.stale = false;
         return;
     }
-    let hold = &mut app.viewport.sketch_hold;
     if let Some(ctx) = ctx
         && coarse.is_some()
         && coarse == hold.coarse
@@ -5055,6 +5061,7 @@ fn pick_cached_with(app: &mut SolveApp, proj: &Proj, pos: Pos2, feedback: Option
     app.viewport.woken_centre.hash(&mut h);
     crate::sketch3d::drawing(app).hash(&mut h);
     app.dialog.as_ref().and_then(|d| d.active_input()).map(|i| i.accept).hash(&mut h);
+    crate::snap_wake::pivot_face(app).is_some().hash(&mut h);
     crate::hole_place::snapping(app).hash(&mut h);
     crate::drag_snap::suppressed().hash(&mut h);
     app.session.visibility.hidden_bodies.hash(&mut h);
@@ -5300,6 +5307,11 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, options: PickOptions<'_>) -
     // Select Other and tool picks share the same visible-image boundary as ordinary picks.
     if crate::render_workspace::active(app) && !app.preferences.render_legacy_image_defaults && !proj.rect.contains(pos) {
         return Some(Vec::new());
+    }
+    // These are deliberate screen-space handles, not candidates on the body under the pointer.
+    // A nearby edge, or material in front of a centre, must not steal the click.
+    if crate::snap_wake::pivot_face(app).is_some() {
+        return Some(crate::snap_wake::hits(app, proj, pos).into_iter().map(|(_, hit, _)| hit).collect());
     }
     let s = &app.session;
     // A joint drag drawn by moving its bodies shows them where the world it began on has them,
@@ -9144,6 +9156,11 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
     // An appearance swatch uses this frame's hover as its drop target.
     let swatch_released =
         ui.input(|i| i.pointer.any_released()) && egui::DragAndDrop::has_payload_of_type::<solidcraft_engine::doc::appearance::Look>(ui.ctx());
+    let picking_pivot = crate::snap_wake::pivot_face(app).is_some();
+    if picking_pivot {
+        // This input knows its face before hover testing and needs no hover to show its handles.
+        crate::snap_wake::update(app, &[], false, None);
+    }
     // Where the pick under the pointer runs: nowhere while something else owns the pointer. An
     // empty `hits` means empty space only where it ran (`picked`).
     let picked = hover.filter(|_| {
@@ -9180,16 +9197,18 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
     let cand = stable_alignment_hover(app, &proj, hover.filter(|_| inside && !navigating), cand);
     // The view moved under a still pointer: the highlight under it stays on the face it
     // was on instead of going off (#2130). It is picked again when the gesture ends.
-    if !(hover_frozen && inside) {
+    if picking_pivot || !(hover_frozen && inside) {
         app.viewport.hover = cand.as_ref().map(|c| c.0.clone());
     }
     wake_centre(app, &hits, hover, &proj);
 
-    let keep = crate::tool_modifiers::keep_snap_points(crate::tool_modifiers::Held::new(
-        ui.input(|i| i.modifiers),
-        crate::tool_modifiers::Platform::of(ui.ctx()),
-    ));
-    crate::snap_wake::update(app, &hits, keep, hover.filter(|_| inside).map(|p| (&proj, p)));
+    if !picking_pivot {
+        let keep = crate::tool_modifiers::keep_snap_points(crate::tool_modifiers::Held::new(
+            ui.input(|i| i.modifiers),
+            crate::tool_modifiers::Platform::of(ui.ctx()),
+        ));
+        crate::snap_wake::update(app, &hits, keep, hover.filter(|_| inside).map(|p| (&proj, p)));
+    }
     // Select Other: a press held still opens the list of everything under it; while the list is
     // open its row under the pointer is what lights up. A mode lit in the navigation bar or a
     // held Space owns drags, not a still press, so only a navigation that has started cancels
@@ -22838,10 +22857,12 @@ mod grid_plane_tests {
         let ctx = egui::Context::default();
         let frame = |app: &mut SolveApp, time: f64| {
             let input = egui::RawInput { time: Some(time), ..Default::default() };
-            drop(ctx.run_ui(input, |ui| {
+            ctx.run_ui(input, |ui| {
                 let proj = projection(app, rect);
                 refresh_sketch_scene_with_key(app, &proj, scene_key(app), Some(ui.ctx()));
-            }));
+            })
+            .textures_delta
+            .clear();
             app.viewport.sketch_scenes_built
         };
         assert_eq!(frame(&mut app, 0.0), 1, "built for the first view");
@@ -22855,6 +22876,16 @@ mod grid_plane_tests {
         assert_eq!(frame(&mut app, 0.1), 1, "a view resting for less than a moment too");
         assert_eq!(frame(&mut app, 0.033 + REFINE_STILL_MS / 1000.0 + 0.01), 2, "the rested view has its own scene");
         assert!(!sketch_scene_held(&app));
+        let rested = app.cam;
+        app.viewport.sketch_hold.build_ms = 100.0;
+        app.cam.yaw += 0.1;
+        assert_eq!(frame(&mut app, 0.26), 2, "moving away keeps the slow scene");
+        assert!(sketch_scene_held(&app));
+        app.cam = rested;
+        assert_eq!(frame(&mut app, 0.28), 2, "back exactly at the held view, nothing to build");
+        assert!(!sketch_scene_held(&app), "the scene on screen is this view's own again");
+        let rest = &app.viewport.sketch_hold.rest;
+        assert_eq!((rest.camera, rest.moved_at), (app.viewport.sketch_key, 280.0), "the rest timer notes the move back");
         app.viewport.sketch_hold.build_ms = 100.0;
         app.cam.distance *= 0.5;
         assert_eq!(frame(&mut app, 0.5), 3, "zooming in past a step samples the curves finer at once");
