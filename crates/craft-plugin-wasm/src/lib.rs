@@ -39,6 +39,13 @@ pub fn set_compile_cache_dir(dir: Option<PathBuf>) -> bool {
     }
 }
 
+/// Synchronously warm every execution configuration of a component. Returns true for an
+/// existing cache hit, false when code was written. Runs no guest code.
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn precompile(manifest: &Manifest, component: &[u8], options: RuntimeOptions) -> Result<bool> {
+    native::precompile(manifest, component, options)
+}
+
 /// Runs with an owned host because Wasmtime store data must be `'static`.
 /// Returns the host on success and failure, after committing or rolling back.
 pub fn run<H: PluginHost + 'static>(host: H, manifest: &Manifest, component: &[u8], entry: &str, params: &Value) -> (H, Result<Value>) {

@@ -1807,3 +1807,16 @@ reads and writes its files' bytes through the `storage` interface (`plugin.wit`)
   than the data). The data is saved back byte for byte. Nothing is downloaded, installed or run.
   `storage.list` lists every plugin that keeps data in the open design, with its `status`
   (`ready`, `migrate`, `missing`, `disabled` or `older`) and size.
+
+
+## Precompile for repeated CLI imports
+
+Run `solidcraft-cli plugin precompile <plugin>` with an installed plugin's name or id
+before repeated CLI or headless calls. We compile its component with Cranelift into
+the per-user plugin cache and wait until the cache is written, without running plugin
+code. Later calls load that code. The command reports whether it wrote code or found
+it already cached, and refuses if no writable cache folder is configured.
+The desktop app fills this cache in the background by itself; existing call behavior
+does not change. Scripts and control clients can use `plugin.precompile` with
+`{"plugin":"id"}`, returning `plugin`, `version`, `cached` (`already` or
+`written`) and elapsed `seconds`.

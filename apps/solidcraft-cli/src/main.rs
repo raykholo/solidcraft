@@ -118,7 +118,8 @@ macro_rules! define_plugin_usage {
         /// `test`'s lines: what `plugin test --help` prints.
         const USAGE_PLUGIN_TEST: &str = $test;
         /// Both operations' lines: what `plugin --help` and the top-level usage print.
-        const USAGE_PLUGIN: &str = concat!($check, $test);
+        const USAGE_PLUGIN: &str =
+            concat!($check, $test, "  solidcraft-cli plugin precompile <plugin>    compile an installed plugin into the disk cache\n");
     };
 }
 define_plugin_usage!(
@@ -473,6 +474,7 @@ fn command_usage(cmd: &str, args: &[String]) -> String {
 fn plugin_usage(operation: Option<&str>) -> String {
     match operation {
         Some("check") => format!("usage:\n{USAGE_PLUGIN_CHECK}"),
+        Some("precompile") => "usage: solidcraft-cli plugin precompile <plugin>\n".into(),
         Some("test") => format!("usage:\n{USAGE_PLUGIN_TEST}"),
         _ => format!("usage:\n{USAGE_PLUGIN}"),
     }

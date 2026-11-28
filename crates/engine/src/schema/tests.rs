@@ -1445,3 +1445,10 @@ fn step_and_component_link_schema_keys_and_replies() {
         assert_eq!(s.doc.to_json(), before);
     }
 }
+
+#[test]
+fn precompile_schema_keys() {
+    use crate::schema::plugin::{PrecompileParams, PrecompileResult};
+    assert_keys(crate::schema::input_schema_for::<PrecompileParams>(), &["plugin"]);
+    assert_keys(crate::schema::output_schema_for::<PrecompileResult>(), &["cached", "plugin", "seconds", "version"]);
+}

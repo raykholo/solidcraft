@@ -3073,3 +3073,21 @@ fn a_component_needing_multi_memory_is_refused_plainly() {
     let error = compile_with(&bytes, 512 * 1024, Tier::Optimized).err().map(|e| e.to_string()).unwrap_or_default();
     assert!(error.contains("multi-memory"), "{error}");
 }
+
+#[test]
+fn precompile_writes_marker_and_fresh_compile_uses_cached_cranelift() {
+    let (root, disk) = with_disk_cache();
+    let component = importer_component();
+    let manifest = importer_manifest(false);
+    assert!(!precompile(&manifest, &component, RuntimeOptions::default()).unwrap());
+    let runtime = manifest.runtime.as_ref().unwrap();
+    let stack = stack_bytes(&runtime.limits, RuntimeOptions::default(), true).unwrap();
+    let misses = disk.cache_misses();
+    let (engine, _, tier) = compile_fresh(&component, stack, Some(disk.clone())).unwrap();
+    assert_eq!(tier, Tier::Optimized);
+    assert!(optimized_marker(&disk, &engine, &component).unwrap().is_file());
+    assert_eq!(disk.cache_misses(), misses);
+    assert!(disk.cache_hits() > 0);
+    assert!(precompile(&manifest, &component, RuntimeOptions::default()).unwrap());
+    let _ = std::fs::remove_dir_all(root.parent().unwrap());
+}

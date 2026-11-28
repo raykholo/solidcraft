@@ -445,3 +445,10 @@ fn plugin_test_approves_requested_fuel_by_default_and_accepts_explicit_fuel_gran
     let output = cli(&["plugin", "test", &path]);
     assert!(output.status.success(), "{}\n{}", text(&output.stdout), text(&output.stderr));
 }
+
+#[test]
+fn precompile_refuses_unknown_plugin() {
+    let output = cli(&["plugin", "precompile", "missing-precompile-plugin"]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("plugin"));
+}

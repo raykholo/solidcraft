@@ -1661,6 +1661,50 @@ fn compile_fresh_reporting(
     }
 }
 
+/// Foreground cache warming uses the same stack and engine configuration as execution.
+pub(super) fn precompile(manifest: &Manifest, bytes: &[u8], options: RuntimeOptions) -> Result<bool> {
+    let runtime = manifest.runtime.as_ref().ok_or_else(|| component_error("no executable runtime"))?;
+    runtime.validate()?;
+    if bytes.is_empty() || bytes.len() > runtime.max_component_bytes() {
+        return Err(component_error("missing or oversized component"));
+    }
+    let disk = cache().disk().ok_or_else(|| component_error("no plugin compile cache folder configured or writable"))?;
+    let mut stacks = Vec::new();
+    for entry in &runtime.entries {
+        let large = matches!(entry.kind, craft_plugin::EntryKind::Importer | craft_plugin::EntryKind::Exporter);
+        let stack = stack_bytes(&runtime.limits, options, large)?;
+        if !stacks.contains(&stack) {
+            stacks.push(stack);
+        }
+    }
+    // Panel and dialog hooks execute on the ordinary command stack too.
+    if runtime.ui.is_some() || stacks.is_empty() {
+        let stack = stack_bytes(&runtime.limits, options, false)?;
+        if !stacks.contains(&stack) {
+            stacks.push(stack);
+        }
+    }
+    let mut already = true;
+    for stack in stacks {
+        already &= precompile_stack(bytes, stack, &disk)?;
+    }
+    Ok(already)
+}
+
+fn precompile_stack(bytes: &[u8], stack: usize, disk: &wasmtime::Cache) -> Result<bool> {
+    let engine = engine_for(stack, Tier::Optimized, true, Some(disk.clone()))?;
+    let marker = optimized_marker(disk, &engine, bytes).ok_or_else(|| component_error("no plugin compile cache folder configured"))?;
+    let hits = disk.cache_hits();
+    let misses = disk.cache_misses();
+    let marked = marker.is_file();
+    // Explicit foreground action: parallel compilation is allowed, unlike background optimization.
+    let _ = optimize_and_cache(bytes, stack, true, Some(disk))?;
+    if !marker.is_file() || disk.cache_hits() == hits && disk.cache_misses() == misses {
+        return Err(component_error("could not write plugin compile cache"));
+    }
+    Ok(marked && disk.cache_hits() > hits)
+}
+
 /// Compiles with Cranelift into the disk cache, and notes that the cache now holds these bytes'
 /// code so the next session reads it instead of starting with Winch.
 fn optimize_and_cache(bytes: &[u8], stack_bytes: usize, parallel: bool, disk: Option<&wasmtime::Cache>) -> Result<(Engine, Component)> {

@@ -1,0 +1,26 @@
+{
+  "en": {
+    "cmd.plugin.precompile": "Precompile Plugin"
+  },
+  "ar": {
+    "cmd.plugin.precompile": "ترجمة الإضافة مسبقًا"
+  },
+  "de": {
+    "cmd.plugin.precompile": "Plugin vorkompilieren"
+  },
+  "he": {
+    "cmd.plugin.precompile": "הידור מוקדם של תוסף"
+  },
+  "ja": {
+    "cmd.plugin.precompile": "プラグインを事前コンパイル"
+  },
+  "ko": {
+    "cmd.plugin.precompile": "플러그인 미리 컴파일"
+  },
+  "vi": {
+    "cmd.plugin.precompile": "Biên dịch trước plugin"
+  },
+  "zh": {
+    "cmd.plugin.precompile": "预编译插件"
+  }
+}

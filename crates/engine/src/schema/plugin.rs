@@ -605,3 +605,22 @@ pub struct CheckResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PrecompileParams {
+    pub plugin: String,
+}
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheStatus {
+    Already,
+    Written,
+}
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct PrecompileResult {
+    pub plugin: String,
+    pub version: String,
+    pub cached: CacheStatus,
+    pub seconds: f64,
+}

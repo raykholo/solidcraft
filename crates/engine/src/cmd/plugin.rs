@@ -38,6 +38,9 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("plugin.list", "List Plugins", checked!("plugin.list", list)).icon("inspect").noundo().doc_only()
         .contract(&TypedContract::<ListParams>::new()).output(output_schema_for::<ListResult>)
         .params("List inspected and installed plugin manifests, namespaced entries, declared effects and input schemas; no plugin code runs"),
+    CommandSpec::new("plugin.precompile", "Precompile Plugin", checked!("plugin.precompile", precompile)).noundo().doc_only()
+        .contract(&TypedContract::<crate::schema::plugin::PrecompileParams>::new()).output(output_schema_for::<crate::schema::plugin::PrecompileResult>)
+        .params("plugin: name or id of an installed plugin; synchronously compile into the plugin cache without executing guest code"),
     CommandSpec::new("plugin.preview", "Plugin Preview", checked!("plugin.preview", preview)).icon("inspect").noundo().read_only()
         .contract(&TypedContract::<PreviewParams>::new()).output(output_schema_for::<PreviewResult>)
         .params("No parameters. For a plugin's own code: preview is true while a plugin dialog's live preview runs the entry on a scratch design that is thrown away, so the entry can leave out detail the preview does not need (small holes, fastener models); false in a run whose result is kept. Needs no command group"),
@@ -426,5 +429,44 @@ fn remove(_s: &mut Session, p: &Value) -> Result<Value> {
     {
         let _ = p;
         Err(bad("plugin.remove", "plugin management is desktop only"))
+    }
+}
+
+fn precompile(s: &mut Session, p: &Value) -> Result<Value> {
+    let p: crate::schema::plugin::PrecompileParams = serde_json::from_value(p.clone()).map_err(|e| bad("plugin.precompile", e.to_string()))?;
+    #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        let start = std::time::Instant::now();
+        let root = s.plugin_state.plugins_dir().ok_or_else(|| bad("plugin.precompile", "no plugins folder configured"))?;
+        let folders = std::fs::read_dir(root).map_err(|_| bad("plugin.precompile", "unknown installed plugin"))?;
+        let mut found = None;
+        for folder in folders.flatten().take(1024) {
+            let path = folder.path().to_string_lossy().into_owned();
+            if !plugin::is_installed_folder(s, &path) {
+                continue;
+            }
+            if let Ok(package) = plugin::with_installed(s, &path, || plugin::read_package(&path))
+                && (package.manifest.id == p.plugin || package.manifest.name == p.plugin)
+            {
+                if found.is_some() {
+                    return Err(bad("plugin.precompile", "ambiguous plugin name; use its id"));
+                }
+                found = Some(package);
+            }
+        }
+        let package = found.ok_or_else(|| bad("plugin.precompile", "unknown installed plugin"))?;
+        let already = craft_plugin_wasm::precompile(&package.manifest, &package.component, craft_plugin_wasm::RuntimeOptions::default())?;
+        serde_json::to_value(crate::schema::plugin::PrecompileResult {
+            plugin: package.manifest.id,
+            version: package.manifest.version,
+            cached: if already { crate::schema::plugin::CacheStatus::Already } else { crate::schema::plugin::CacheStatus::Written },
+            seconds: start.elapsed().as_secs_f64(),
+        })
+        .map_err(|e| bad("plugin.precompile", e.to_string()))
+    }
+    #[cfg(not(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    {
+        let _ = (s, p);
+        Err(bad("plugin.precompile", "plugin precompilation requires the plugins feature and a native x86-64 or AArch64 build"))
     }
 }

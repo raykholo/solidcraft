@@ -25,9 +25,12 @@ const TOLERANCE: f64 = 1e-6;
 
 pub fn run(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("precompile") => precompile(&args[1..]),
         Some("check") => check(&args[1..]),
         Some("test") => test(&args[1..]),
-        Some(other) => Err(format!("plugin: unknown action `{other}`; use plugin check or plugin test\n{}", crate::plugin_usage(None))),
+        Some(other) => {
+            Err(format!("plugin: unknown action `{other}`; use plugin check, plugin test or plugin precompile\n{}", crate::plugin_usage(None)))
+        }
         None => Err(crate::plugin_usage(None)),
     }
 }
@@ -652,4 +655,20 @@ fn contains(actual: &Value, expected: &Value, tolerance: f64, at: &str) -> Resul
         _ if actual == expected => Ok(()),
         _ => Err(format!("{at} is {actual}, and the test expects {expected}")),
     }
+}
+
+fn precompile(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 || args.first().is_some_and(|arg| arg.starts_with('-')) {
+        return Err("usage: solidcraft-cli plugin precompile <plugin>".into());
+    }
+    let mut session = Session::default();
+    let report = session.execute("plugin.precompile", &json!({"plugin": args.first()})).map_err(|e| e.to_string())?;
+    let plugin = report["plugin"].as_str().unwrap_or_default();
+    let version = report["version"].as_str().unwrap_or_default();
+    if report["cached"] == "already" {
+        println!("{plugin} {version} already in the cache");
+    } else {
+        println!("Compiled {plugin} {version} into the plugin cache in {:.2} s", report["seconds"].as_f64().unwrap_or_default());
+    }
+    Ok(())
 }

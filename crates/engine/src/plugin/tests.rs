@@ -6683,3 +6683,13 @@ fn a_body_a_plugin_run_hides_stays_hidden_beside_one_hidden_meanwhile() {
     live.execute("edit.redo", &json!({})).unwrap();
     assert_eq!(shown(&live), [false, false, true]);
 }
+
+#[test]
+fn precompile_refuses_unknown_plugin() {
+    let mut s = Session::default();
+    let error = s.execute("plugin.precompile", &json!({"plugin":"missing-precompile-plugin"})).unwrap_err();
+    #[cfg(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    assert!(error.to_string().contains("unknown installed plugin") || error.to_string().contains("no plugins folder"), "{error}");
+    #[cfg(not(all(feature = "plugins", any(target_arch = "x86_64", target_arch = "aarch64"))))]
+    assert!(error.to_string().contains("requires the plugins feature"), "{error}");
+}
