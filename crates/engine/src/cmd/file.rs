@@ -3656,8 +3656,9 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let exact_brep = usd_flag("exact_brep")?;
     // STEP and IGES: SolidCraft's own writer unless `writer: cadmpeg` asks for cadmpeg's.
     let writer = crate::schema::file::export_writer(p.get("writer"), format).map_err(|e| bad(cmd, e))?;
+    // Refused before URDF, MJCF and SDF go their own way, so none writes its file unlaid.
+    let lay = lay_on_print_faces(p, cmd, format)?;
     if writer == Some(crate::schema::file::ExportWriter::Cadmpeg) {
-        lay_on_print_faces(p, cmd, format)?;
         mesh_parts(s, p, cmd, format)?;
         return export_cadmpeg(s, cmd, path, &string_list(cmd, p, "bodies")?, mesh_quality(p, cmd)?, format, CadmpegChoices::default());
     }
@@ -3679,7 +3680,6 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let quality = mesh_quality(p, cmd)?;
     let parts = mesh_parts(s, p, cmd, format)?;
     let bodies = string_list(cmd, p, "bodies")?;
-    let lay = lay_on_print_faces(p, cmd, format)?;
     if face_solids {
         return export_face_solids(s, path, &bodies, quality, lay);
     }

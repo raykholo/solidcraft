@@ -62,7 +62,7 @@ impl ComeForward {
     }
 
     /// Every frame: ask once the taskbar menu is gone, and again while the focus is taken back.
-    pub fn tick(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+    pub fn tick(&mut self, ctx: &egui::Context, window: &dyn raw_window_handle::HasWindowHandle) {
         if self.window.is_none() {
             return;
         }
@@ -70,7 +70,7 @@ impl ComeForward {
         // The app may be idle: a frame to look again.
         match self.step(Instant::now(), focused) {
             Step::Ask => {
-                bring(ctx, frame, minimized);
+                bring(ctx, window, minimized);
                 ctx.request_repaint_after(AGAIN_AFTER);
             }
             Step::Wait(after) => ctx.request_repaint_after(after),
@@ -118,9 +118,9 @@ impl ComeForward {
 }
 
 /// Ask for the focus once.
-fn bring(ctx: &egui::Context, frame: &eframe::Frame, minimized: Option<bool>) {
+fn bring(ctx: &egui::Context, window: &dyn raw_window_handle::HasWindowHandle, minimized: Option<bool>) {
     #[cfg(all(unix, not(target_os = "macos")))]
-    let raised = match x11_activate(frame) {
+    let raised = match x11_activate(window) {
         Ok(sent) => sent,
         Err(e) => {
             log::warn!("bringing the window forward through X11: {e}");
@@ -129,7 +129,7 @@ fn bring(ctx: &egui::Context, frame: &eframe::Frame, minimized: Option<bool>) {
     };
     #[cfg(not(all(unix, not(target_os = "macos"))))]
     let raised = {
-        let _ = frame;
+        let _ = window;
         false
     };
     for c in commands(minimized, raised) {
@@ -155,12 +155,12 @@ fn commands(minimized: Option<bool>, raised: bool) -> Vec<egui::ViewportCommand>
 /// Ask the X11 window manager to activate the window as a user action. `Ok(false)`: the window
 /// isn't an X11 window (native Wayland).
 #[cfg(all(unix, not(target_os = "macos")))]
-fn x11_activate(frame: &eframe::Frame) -> Result<bool, String> {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+fn x11_activate(window: &dyn raw_window_handle::HasWindowHandle) -> Result<bool, String> {
+    use raw_window_handle::RawWindowHandle;
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{ClientMessageEvent, ConnectionExt, EventMask};
 
-    let handle = frame.window_handle().map_err(|e| e.to_string())?;
+    let handle = window.window_handle().map_err(|e| e.to_string())?;
     let window = match handle.as_raw() {
         RawWindowHandle::Xlib(h) => u32::try_from(h.window).map_err(|e| e.to_string())?,
         RawWindowHandle::Xcb(h) => h.window.get(),

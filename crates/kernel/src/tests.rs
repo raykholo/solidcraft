@@ -1231,6 +1231,87 @@ fn chamfer_top_loop_mitres() {
     assert_eq!(m.merged.faces, 10);
 }
 
+/// #655: chamfers of the square-to-circle loft (`loft_and_sweep`, tests/oracle/17-loft) stay
+/// accepted. The action-matrix baseline records every `edge.chamfer` of that body as passing.
+/// Each edge is chamfered alone at the matrix distance
+/// `round3((min(own length, lengths of the edges that share an endpoint) * 0.1).max(0.01))`
+/// (`apps/solidcraft-cli/tests/action_matrix.rs`), the length being the display polyline.
+///
+/// The square's side is 40, and the creases that meet it are longer (`√(2500 − 400√2)`, from a
+/// corner `(±20, ±20, 0)` to the circle point in that direction `(±10/√2, ±10/√2, 40)`), so a
+/// bottom edge's distance is 4. Each top edge is a quarter of the radius-10 circle. The display
+/// mesh bisects that quarter until a chord sags at most the body's size / 1000 (the box diagonal
+/// `40√3`) and turns at most 20°: eight chords, `160 sin(π/32)`. A tenth of that rounds to 1.568,
+/// and a crease meets that arc, so it takes 1.568 too. The side faces are ruled, so the chamfer
+/// has no closed volume: one valid lump, strictly less than the loft, is the whole check.
+#[test]
+fn chamfer_square_to_circle_loft() {
+    let sq = Loop2::polygon(&[Vec2::new(-20.0, -20.0), Vec2::new(20.0, -20.0), Vec2::new(20.0, 20.0), Vec2::new(-20.0, 20.0)]);
+    let body = loft(&[(Plane::XY, sq), (Plane::XY.offset(40.0), Loop2::circle(Vec2::ZERO, 10.0))]).unwrap();
+    let loft_volume = measure(&body).unwrap().volume;
+    assert!(rel(loft_volume, 35080.725116) < 1e-6, "{loft_volume}");
+
+    // Same `round3` as the action matrix.
+    let round3 = |x: f64| {
+        let r = (x * 1000.0).round() / 1000.0;
+        if r == 0.0 { 0.0 } else { r }
+    };
+    let side = 40.0;
+    let quarter = 10.0 * std::f64::consts::FRAC_PI_2;
+    let inset = 20.0 - 5.0 * std::f64::consts::SQRT_2;
+    let crease_len = (2.0 * inset * inset + side * side).sqrt();
+    // Eight equal chords of the quarter: bisection stops at 11.25°, where the sag
+    // `10 (1 − cos(π/32))` is under `40√3 / 1000` and the turn is under 20°.
+    let chords = 8.0 * 20.0 * (std::f64::consts::PI / 32.0).sin();
+    assert!(crease_len > side && side > quarter && quarter > chords, "crease {crease_len}, arc {quarter}, chords {chords}");
+    let bottom_d = round3((side * 0.1).max(0.01));
+    let top_d = round3((chords * 0.1).max(0.01));
+    assert!((bottom_d - 4.0).abs() < 1e-12 && (top_d - 1.568).abs() < 1e-12, "{bottom_d} {top_d}");
+
+    let on_circle = 5.0 * std::f64::consts::SQRT_2;
+    let crease_mid = |x: f64, y: f64| Vec3::new((x + x.signum() * on_circle) * 0.5, (y + y.signum() * on_circle) * 0.5, 20.0);
+    // Bottoms, then the quarter-circle edges, then the creases (the matrix chamfers each alone).
+    let edges = [
+        (Vec3::new(0.0, -20.0, 0.0), bottom_d),
+        (Vec3::new(20.0, 0.0, 0.0), bottom_d),
+        (Vec3::new(0.0, 20.0, 0.0), bottom_d),
+        (Vec3::new(-20.0, 0.0, 0.0), bottom_d),
+        (Vec3::new(10.0, 0.0, 40.0), top_d),
+        (Vec3::new(0.0, 10.0, 40.0), top_d),
+        (Vec3::new(-10.0, 0.0, 40.0), top_d),
+        (Vec3::new(0.0, -10.0, 40.0), top_d),
+        (crease_mid(-20.0, 20.0), top_d),
+        (crease_mid(20.0, 20.0), top_d),
+        (crease_mid(20.0, -20.0), top_d),
+        (crease_mid(-20.0, -20.0), top_d),
+    ];
+    for (point, distance) in edges {
+        let made = chamfer(&body, &[point], distance).unwrap_or_else(|e| panic!("{point:?} at {distance}: {e}"));
+        assert!(made.validity().is_empty(), "{point:?} at {distance}: {:?}", made.validity());
+        assert_eq!(made.lumps().unwrap_or_else(|e| panic!("{point:?}: {e}")).len(), 1, "{point:?}");
+        let volume = measure(&made).unwrap().volume;
+        assert!(volume < loft_volume, "{point:?} at {distance}: {volume} is not below {loft_volume}");
+    }
+}
+
+/// #655: the four creases of that loft, chamfered together at the same 1.568 mm, stay
+/// accepted. Each ends on-vertex at a different point of the circle, so each trace
+/// still starts at its tip. Two edges that meet at one point are the tangent bore
+/// seam (`fillets/14283-chamfer-tangent-bore-edges`), which starts at the regular end.
+#[test]
+fn chamfer_square_to_circle_loft_creases_together() {
+    let sq = Loop2::polygon(&[Vec2::new(-20.0, -20.0), Vec2::new(20.0, -20.0), Vec2::new(20.0, 20.0), Vec2::new(-20.0, 20.0)]);
+    let body = loft(&[(Plane::XY, sq), (Plane::XY.offset(40.0), Loop2::circle(Vec2::ZERO, 10.0))]).unwrap();
+    let on_circle = 5.0 * std::f64::consts::SQRT_2;
+    let crease_mid = |x: f64, y: f64| Vec3::new((x + x.signum() * on_circle) * 0.5, (y + y.signum() * on_circle) * 0.5, 20.0);
+    let edges = [crease_mid(-20.0, 20.0), crease_mid(20.0, 20.0), crease_mid(20.0, -20.0), crease_mid(-20.0, -20.0)];
+    let made = chamfer(&body, &edges, 1.568).unwrap_or_else(|e| panic!("{e}"));
+    assert!(made.validity().is_empty(), "{:?}", made.validity());
+    assert_eq!(made.lumps().unwrap_or_else(|e| panic!("{e}")).len(), 1);
+    let volume = measure(&made).unwrap().volume;
+    assert!(volume < measure(&body).unwrap().volume, "{volume}");
+}
+
 #[test]
 fn chamfer_sloped_basin_rim() {
     let slab = box_solid(Vec3::ZERO, Vec3::new(100.0, 60.0, 30.0)).unwrap();

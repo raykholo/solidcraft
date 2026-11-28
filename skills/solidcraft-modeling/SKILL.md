@@ -67,6 +67,13 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
 ## Finish
 `export {path}` writes `.step` for CAD, `.3mf`/`.stl` for printing, or `.urdf` (an assembly with joints, for robot simulators). `save {path}` writes `.sc` (`.solidcraft` files from earlier releases still open).
 
+**3D printing.** A body is exported as it lies in the model, so a part modelled standing up reaches the slicer standing up. For each body to print:
+1. Mark the flat face it prints on: `body.print_face {"body":"Body1","point":[x,y,z]}`, a point on that face.
+2. Check the marks: `body.print_faces` returns `all_set: true` when every body has one, and `lost` for a mark whose face a change removed.
+3. Export through `execute`, since the `export` tool does not pass the option: `execute {"command":"file.export","params":{"path":"part.3mf","lay_on_print_faces":true}}` (STL and 3MF only). `file.send_to_slicer` lays the bodies on their print faces without it.
+
+Each body is then written lying on its print face at Z = 0, also after later design changes. The export's `print_faces` lists the bodies it laid, and its `warnings` name each body that was written as it lies.
+
 ## Red flags
 
 | Thought | Do instead |

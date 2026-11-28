@@ -5946,10 +5946,12 @@ impl FaceConstructionAccess<FilletObject> for SessionObjects<'_> {
                     return Ok(());
                 }
                 // The fork's (smlib 41a39ec): an End at a smooth vertex's patch is its cap
-                // (SmBlendCorner::CreateEndPatchOfEnd)
-                if corner.blend.is_some_and(|blend| {
-                    blend.is_end() && blend.end == crate::blend::blend_corner::BlendEnd::AtSmooth
-                }) {
+                // (SmBlendCorner::CreateEndPatchOfEnd); so is a capped End's whose rail never
+                // reaches its side edge
+                if corner
+                    .blend
+                    .is_some_and(crate::blend::blend_corner::BlendCorner::has_end_cap)
+                {
                     let mut no_note = |_: &FilletCorner| {};
                     let built = {
                         let mut env = CornerPatchEnv {
@@ -8694,13 +8696,42 @@ impl SessionObjects<'_> {
         let corner = corners
             .get_mut(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
-        corner.make_nx2_corner_topology(crate::blend::fillet_corner::topology::Nx2TopologyEnv {
-            k,
-            target,
-            pseudo,
-            corner: id,
-            solvers,
-        })
+        let vertex = corner.vertex;
+        let location = match vertex {
+            Some(v) => crate::topology::vertex::point(target, v).ok(),
+            None => None,
+        };
+        let made = corner.make_nx2_corner_topology(
+            crate::blend::fillet_corner::topology::Nx2TopologyEnv {
+                k,
+                target,
+                pseudo,
+                corner: id,
+                solvers,
+            },
+        );
+        // Not the fork's (#17600): two blends side by side round a vertex of four edges have
+        // no corner (only opposite ones are mitred); refused at the vertex with that reason
+        // (`CornerUnsupported`), which the executive keeps, rather than as a bare topology
+        // failure
+        if let Err(e) = &made {
+            if matches!(
+                e.blend_failure(),
+                Some(crate::error::blend::BlendFailure::CornerShapeNotBuilt(
+                    crate::error::blend::CornerShape::AdjacentBlendedEdges
+                ))
+            ) {
+                executive.error.note_vertex_error(
+                    vertex
+                        .map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),
+                    location,
+                    crate::blend::fillet_geom::p1::FilStatus::Failure,
+                    crate::blend::fillet_geom::p1::FilletErrorType::CornerUnsupported,
+                    Some(NX2_BLENDS_SIDE_BY_SIDE),
+                );
+            }
+        }
+        made
     }
     /// The support change's topology (#19089) with the solvers of its three rounds, as its
     /// classification found them.
@@ -8934,9 +8965,10 @@ impl SessionObjects<'_> {
     /// `FitMargin`, a thousand of that edge's tolerances, as the other open fits: at that
     /// radius the contact line only touches the edge), and the returned error the typed
     /// [`crate::error::blend::BlendFailure::NoRoom`]
-    /// ([`super::NoRoomReason::JoinRailMissesSideEdge`]) carrying that fit. Anything else
-    /// returns `error` as it is. Asked only after the failure, so it never refuses a Join
-    /// that builds.
+    /// ([`super::NoRoomReason::JoinRailMissesSideEdge`]) carrying that fit. When the missed
+    /// side edge is a closed round's seam on a perpendicular extrusion, the rail exceeds the
+    /// wall height, the closed fit bound. Asked only after the failure, so it never refuses
+    /// a Join that builds.
     ///
     /// # Errors
     /// Those of the side-edge check and of the topology queries.
@@ -8948,7 +8980,11 @@ impl SessionObjects<'_> {
         error: SolidError,
     ) -> Result<SolidError> {
         use crate::blend::fillet_corner::topology::join::JOIN_RAIL_MISSES_SIDE_EDGE;
+        use crate::blend::fillet_executive::NoRoomReason;
+        use crate::error::blend::BlendFailure;
         const OP_JOIN: &str = "SmBlendCorner::CalcCornerVertGeom";
+        const CLOSED_WALL_RAIL: &str =
+            "Fillet Error: the round's contact line on the wall lies past its cap rim";
         let Some(corner) = self.corners.get(id.0 as usize) else {
             return Ok(error);
         };
@@ -8966,21 +9002,60 @@ impl SessionObjects<'_> {
                 _ => None,
             });
         }
-        let Some(builds) = corner.join_rail_misses_side_edge(
-            k,
-            &mut *self.target,
-            &self.solvers,
-            &solver_eu_solvers,
-        )?
-        else {
-            return Ok(error);
-        };
         let Some(first) = corner
             .solver_eus
             .as_deref()
             .and_then(|eus| eus.first().copied())
         else {
             return Ok(error);
+        };
+        let closed_solver = match (
+            solver_eu_solvers.as_slice(),
+            error.root_cause().blend_failure(),
+        ) {
+            ([Some(id)], Some(BlendFailure::RailEndMissesSideEdge { edge: seam })) => self
+                .solvers
+                .get(id.0 as usize)
+                .and_then(Option::as_ref)
+                .map(|solver| (solver, *seam)),
+            _ => None,
+        };
+        let closed_fit = if let Some((solver, seam)) = closed_solver {
+            match fit_size::closed_wall_seam_fit(k, self.target, solver, seam) {
+                Ok(fit) => fit,
+                Err(e) if e.is_unported_or_cancelled() => return Err(e),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let (fit, reason, comment) = if let Some(height) = closed_fit {
+            (height, NoRoomReason::RailLeavesFace, CLOSED_WALL_RAIL)
+        } else {
+            let Some(builds) = corner.join_rail_misses_side_edge(
+                k,
+                self.target,
+                &self.solvers,
+                &solver_eu_solvers,
+            )?
+            else {
+                return Ok(error);
+            };
+            (
+                builds,
+                NoRoomReason::JoinRailMissesSideEdge,
+                JOIN_RAIL_MISSES_SIDE_EDGE,
+            )
+        };
+        let edge = crate::topology::edgeuse::p1::edge(self.target, first)?;
+        let fit = if reason == NoRoomReason::JoinRailMissesSideEdge {
+            let margin = match edge {
+                Some(e) => 1000.0 * crate::topology::edge::tolerance(self.target, e)?,
+                None => 0.0,
+            };
+            (fit - margin).max(0.0)
+        } else {
+            fit
         };
         let vertex = corner.filleted_vertex();
         let location = match vertex {
@@ -8992,16 +9067,9 @@ impl SessionObjects<'_> {
             location,
             crate::blend::fillet_geom::p1::FilStatus::Failure,
             crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
-            Some(JOIN_RAIL_MISSES_SIDE_EDGE),
+            Some(comment),
         );
-        executive.error.no_room =
-            Some(crate::blend::fillet_executive::NoRoomReason::JoinRailMissesSideEdge);
-        let edge = crate::topology::edgeuse::p1::edge(self.target, first)?;
-        let margin = match edge {
-            Some(e) => 1000.0 * crate::topology::edge::tolerance(self.target, e)?,
-            None => 0.0,
-        };
-        let fit = (builds - margin).max(0.0);
+        executive.error.no_room = Some(reason);
         let edge_object =
             edge.map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e)));
         executive.note_fit_radius(
@@ -9009,19 +9077,14 @@ impl SessionObjects<'_> {
             edge_object,
             crate::blend::fillet_executive::p3::FitKind::Radius,
         );
-        let mut failure = crate::error::Failure::new(
-            OP_JOIN,
-            crate::error::blend::BlendFailure::NoRoom(
-                crate::blend::fillet_executive::NoRoomReason::JoinRailMissesSideEdge,
-            ),
-        )
-        .with_fit(crate::error::Fit::new(
-            fit,
-            crate::error::FitMeasure::Radius,
-            edge_object
-                .as_ref()
-                .and_then(crate::error::TargetEdge::of_fillet_object),
-        ));
+        let mut failure = crate::error::Failure::new(OP_JOIN, BlendFailure::NoRoom(reason))
+            .with_fit(crate::error::Fit::new(
+                fit,
+                crate::error::FitMeasure::Radius,
+                edge_object
+                    .as_ref()
+                    .and_then(crate::error::TargetEdge::of_fillet_object),
+            ));
         if let Some(v) = vertex {
             failure = failure.at(EntityRef::Vertex(v));
         }
@@ -9349,6 +9412,9 @@ impl SessionObjects<'_> {
             .ok_or_else(|| invalid("corner is not live"))
     }
 }
+
+/// The Nx2 corner of four edges refused where its two blends are side by side (#17600).
+const NX2_BLENDS_SIDE_BY_SIDE: &str = "Fillet Error: two rounds side by side round a vertex of four edges would meet in a step there, a corner that is not built yet; round only one of the two edges";
 
 /// The Nx1 corner refused at a cusp (solidcraft#13156).
 const NX1_CUSP_SIDE_EDGE: &str = "Fillet Error: the blend's band runs off its face, which comes to a point at the vertex (a side edge leaves it along the blended edge)";
@@ -10325,6 +10391,65 @@ mod tests {
                         TorusCornerFillet::Built(true)
                     ),
                     "{which:?} at {near:?} r 0.1"
+                );
+            }
+        }
+    }
+
+    /// #20359: the x|torus + y|torus pair alone at a corner of the box cut by a torus (the
+    /// upright edge x|y left sharp). The rails are judged to fit their faces (their runs off
+    /// the torus face lie past the edges' ends), so no overflow is chosen; but the corner where
+    /// the two rounds meet, the ball touching the +x and +y faces and the torus, has its
+    /// contact on the torus at z = 0.5 - d*0.6/(0.6 - r) (d = sqrt((0.6 - r)^2 - (rho - 1)^2),
+    /// rho = sqrt(2)*(1 - r)), past the torus face's rim from r* = 0.0958289 up, while each
+    /// round's End lies where its rail crosses that rim: at 0.1 the End (ball centre
+    /// y = 0.90508) lies past the corner (y = 0.9), so the round has no length on the face. It
+    /// failed in the rails' trim (a reversed interval); it is refused as leaving its face,
+    /// naming r* less the fit margin (the size #20314's refusal names), and builds valid at
+    /// that size and below.
+    #[test]
+    fn two_rounds_meeting_past_their_shared_face_s_rim_are_refused_naming_where_the_corner_leaves_it(
+    ) {
+        use TorusCornerEdge::{XTorus, YTorus};
+        let r_star = 0.095_828_866_164_137_94;
+        let which = &[XTorus, YTorus][..];
+        for near in [Point3::new(1.0, 1.0, 0.0659), Point3::new(1.0, 1.0, 0.934)] {
+            let margins = torus_corner_edge_tolerances(near);
+            for radius in [0.1, 0.0959] {
+                let TorusCornerFillet::Refused(reason, fit) =
+                    round_torus_corner(near, which, radius)
+                else {
+                    panic!("{near:?} r {radius}: not refused");
+                };
+                assert_eq!(
+                    reason,
+                    Some(crate::blend::fillet_executive::NoRoomReason::RailLeavesFace),
+                    "{near:?} r {radius}"
+                );
+                let fit = fit.unwrap_or_else(|| panic!("{near:?} r {radius}: no size named"));
+                // open: r* less the fit margin (a thousand of the edge's tolerances), to the
+                // bisection's and the balls' solve accuracy
+                assert!(
+                    margins
+                        .iter()
+                        .any(|tol| (fit - (r_star - 1000.0 * tol)).abs() < 1e-6),
+                    "{near:?} r {radius}: fit {fit}, r* {r_star}"
+                );
+                assert!(
+                    matches!(
+                        round_torus_corner(near, which, fit),
+                        TorusCornerFillet::Built(true)
+                    ),
+                    "{near:?} at its fit {fit}"
+                );
+            }
+            for radius in [0.09, 0.095] {
+                assert!(
+                    matches!(
+                        round_torus_corner(near, which, radius),
+                        TorusCornerFillet::Built(true)
+                    ),
+                    "{near:?} r {radius}"
                 );
             }
         }

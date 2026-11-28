@@ -2500,7 +2500,7 @@ mod tests {
     fn new_sheet_view_menu_keeps_its_model_window_when_existing_sheets_are_elsewhere() {
         fn paint(h: &mut Harness, window: u32, events: Vec<egui::Event>) {
             let ctx = h.ctx.clone();
-            let output = crate::view_windows::with_strip(&mut h.app, Some(window), |app| {
+            let mut output = crate::view_windows::with_strip(&mut h.app, Some(window), |app| {
                 Ok(ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1600.0, 1000.0))),
@@ -2512,6 +2512,7 @@ mod tests {
                 ))
             })
             .unwrap();
+            output.textures_delta.clear();
             h.output = output.platform_output;
             h.shapes = output.shapes;
         }

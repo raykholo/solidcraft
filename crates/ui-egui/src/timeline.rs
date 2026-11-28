@@ -407,6 +407,7 @@ pub(crate) fn icon_of(k: &FeatureKind) -> &'static str {
         FeatureKind::Thicken { .. } => "surface_thicken",
         FeatureKind::SurfaceExtend { .. } => "surface_extend",
         FeatureKind::SurfaceTrim { .. } => "surface_trim",
+        FeatureKind::SurfaceFillet { .. } | FeatureKind::SurfaceChamfer { .. } => "surface_fillet",
         other => crate::workspace::feature_icon(other).unwrap_or("feature"),
     }
 }
@@ -2030,6 +2031,7 @@ mod tests {
     fn a_path_pattern_keeps_its_path_icon_in_history() {
         use solidcraft_engine::doc::{FeatureKind, PatternKind};
         let feature = FeatureKind::Pattern {
+            body_name_template: None,
             features: Vec::new(),
             bodies: Vec::new(),
             placements: Vec::new(),

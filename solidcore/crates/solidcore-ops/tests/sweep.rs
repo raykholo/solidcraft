@@ -627,6 +627,74 @@ fn screw_sweep_walls_cross_the_record_as_their_definitions() {
     assert!(rel(v0, v1) < 1e-12, "made {v0}, read back {v1}");
 }
 
+/// A square thread cut into a rod of its pitch circle's radius: each flank crosses the rod's
+/// cylinder at one profile parameter, so it meets the cylinder along exact helix edges, its trims
+/// on the flank straight lines (2 points) and its 3D curves the flank net's own rational iso
+/// curves. The volume is the rod's less the groove's part inside it, by Pappus's theorem for a
+/// screw motion: 0.2 x 0.4 of the tooth at centroid radius 4.1 over the turns.
+#[test]
+fn screw_sweep_meets_a_coaxial_cylinder_along_exact_helices() {
+    use solidcore_ops::boolean::{boolean, BooleanOp};
+    use solidcore_record::brep::{Curve2, Surface};
+    let tooth = polygon(&[
+        [4.0, 0.0, 0.5],
+        [4.4, 0.0, 0.5],
+        [4.4, 0.0, 0.9],
+        [4.0, 0.0, 0.9],
+    ]);
+    let options = ScrewSweepOptions {
+        law: None,
+        tolerance: 1e-5,
+        walls: ScrewWalls::Joined,
+    };
+    let (turns, pitch, height) = (3.0, 1.0, 6.0);
+    let groove = screw_sweep_with(&tooth, [0.0; 3], Z, pitch, turns, &options).unwrap();
+    let rod = solidcore_ops::make_cylinder([0.0; 3], 4.2, height).unwrap();
+    let cut = boolean(rod, groove, BooleanOp::Subtract).unwrap().unwrap();
+    let want = PI * 4.2 * 4.2 * height - 0.2 * 0.4 * TAU * 4.1 * turns;
+    let got = cut.volume(1e-9).unwrap();
+    assert!(rel(got, want) < 1e-7, "volume {got}, want {want}");
+    let (record, _) = cut.to_record().unwrap();
+    let mut straight = 0;
+    for f in record
+        .faces
+        .iter()
+        .filter(|f| matches!(f.surface, Surface::Sweep { .. }))
+    {
+        for l in &f.loops {
+            let solidcore_record::brep::Loop::Edges { edges } = l else {
+                continue;
+            };
+            for u in edges {
+                let points = match &u.pcurve {
+                    Curve2::Spline { points, .. } => points.len(),
+                    Curve2::RationalSpline { homogeneous, .. } => homogeneous.len(),
+                };
+                let on_rod = record.edges[u.edge as usize].uses.iter().any(|w| {
+                    matches!(
+                        record.faces[w.face as usize].surface,
+                        Surface::Cylinder { .. }
+                    )
+                });
+                let helix = matches!(
+                    record.edges[u.edge as usize]
+                        .nurbs
+                        .as_ref()
+                        .unwrap_or(&record.edges[u.edge as usize].curve),
+                    solidcore_record::brep::Curve::RationalSpline { .. }
+                );
+                if on_rod && points == 2 && helix {
+                    straight += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        straight >= 2,
+        "the flanks meet the rod along straight trims: {straight}"
+    );
+}
+
 /// #22577: a thread's V along a whole rod, pitch 1.25 at SolidCraft's tolerance (a
 /// ten-thousandth of the pitch). 1000 turns are within the turns' bound but take more spans
 /// than the kernel allows (eight a half turn at this tolerance), and the refusal is the
@@ -1916,6 +1984,42 @@ fn a_loft_s_hostile_ends_are_refused() {
     let beside = [square(0.0, 0.0, 10.0, 0.0), square(20.0, 0.0, 10.0, 0.0)];
     assert!(refused(&beside, [square_end(1.0), LoftEnd::Free]));
     assert!(refused(&beside, [LoftEnd::Free, square_end(1.0)]));
+}
+
+/// The side of its section's plane an apex rises to, `true` along the plane's normal: either
+/// side of the plane z = 5, and of the same plane turned over. An apex in the plane, within
+/// `APEX_OFF_PLANE` of it, or not finite is refused, and so is any apex of a plane whose axes
+/// are parallel.
+#[test]
+fn an_apex_rises_to_the_side_of_its_sections_plane_it_is_proved_on() {
+    use solidcore_ops::sweep::{apex_above, APEX_OFF_PLANE};
+    use solidcore_record::{Plane, Vec3};
+    let plane = Plane {
+        origin: Vec3::new(1.0, 2.0, 5.0),
+        ..Plane::XY
+    };
+    let over = Plane {
+        y: Vec3::new(0.0, -1.0, 0.0),
+        ..plane
+    };
+    assert_eq!(apex_above(&plane, Vec3::new(4.0, -3.0, 15.0)), Ok(true));
+    assert_eq!(apex_above(&plane, Vec3::new(4.0, -3.0, -15.0)), Ok(false));
+    assert_eq!(apex_above(&over, Vec3::new(4.0, -3.0, 15.0)), Ok(false));
+    for apex in [
+        Vec3::new(4.0, -3.0, 5.0),
+        Vec3::new(4.0, -3.0, 5.0 + APEX_OFF_PLANE / 2.0),
+        Vec3::new(4.0, -3.0, f64::NAN),
+    ] {
+        assert_eq!(apex_above(&plane, apex), Err(Error::Argument), "{apex:?}");
+    }
+    let flat = Plane {
+        y: Vec3::new(1.0, 0.0, 0.0),
+        ..plane
+    };
+    assert_eq!(
+        apex_above(&flat, Vec3::new(4.0, -3.0, 15.0)),
+        Err(Error::Argument)
+    );
 }
 
 /// A loft to a point through a station that bulges out (the base square again, half way up):

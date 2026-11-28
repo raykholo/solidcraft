@@ -5149,11 +5149,20 @@ pub(crate) fn pick_through(app: &SolveApp, proj: &Proj, pos: Pos2) -> Vec<Hit> {
     if !pos.x.is_finite() || !pos.y.is_finite() || !proj.rect.contains(pos) {
         return Vec::new();
     }
+    // Single-hole placement offers snap points and the face under them.
+    let probe_inner_faces = !crate::hole_place::placing(app);
     let mut out = Vec::new();
     for (x, y) in [(0.0, 0.0), (6.0, 0.0), (-6.0, 0.0), (0.0, 6.0), (0.0, -6.0), (4.0, 4.0), (-4.0, 4.0), (4.0, -4.0), (-4.0, -4.0)] {
-        for hit in pick_hits(app, proj, pos + vec2(x, y), PickOptions { all: true, include_midpoints: true, through: true, ..PickOptions::default() })
-            .unwrap_or_default()
-        {
+        // Only the ray under the pointer probes the inside of solids. The eight neighbours
+        // keep the normal pick tolerance for edges, points and small nearby profiles.
+        let options = PickOptions {
+            all: true,
+            include_midpoints: true,
+            through: true,
+            inner_faces: probe_inner_faces && x == 0.0 && y == 0.0,
+            ..PickOptions::default()
+        };
+        for hit in pick_hits(app, proj, pos + vec2(x, y), options).unwrap_or_default() {
             if !out.iter().any(|previous| same_target(previous, &hit)) {
                 out.push(hit);
             }
@@ -5263,6 +5272,7 @@ struct PickOptions<'a> {
     all: bool,
     include_midpoints: bool,
     through: bool,
+    inner_faces: bool,
     feedback: Option<&'a egui::Context>,
     #[cfg(test)]
     linear_bodies: bool,
@@ -5601,6 +5611,28 @@ fn pick_hits(app: &SolveApp, proj: &Proj, pos: Pos2, options: PickOptions<'_>) -
                 None => continue,
                 Some(t0) if !all && bestf.as_ref().is_some_and(|(bt, _)| t0 > *bt) => continue,
                 _ => {}
+            }
+        }
+        // Exact bodies in the interaction state already include occurrence placement. Only a
+        // still-open Move preview can put the displayed solid in a further frame.
+        if options.inner_faces && !b.body.is_mesh() {
+            let motion = carry(b);
+            let ray = motion.as_ref().map_or(Some((o, d)), |m| local_ray(m, o, d));
+            if let Some((origin, direction)) = ray
+                && let Ok(crossings) = b.body.face_hits_by_ray([origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z])
+            {
+                for crossing in crossings {
+                    let t = crossing.distance;
+                    let point = motion.as_ref().map_or(crossing.point, |m| solidcraft_kernel::affine::apply_point(m, crossing.point)).into();
+                    if kept(point) {
+                        let hit = Hit::Face { body: b.name.clone(), index: crossing.face, point };
+                        if bestf.as_ref().is_none_or(|(depth, _)| t < *depth) {
+                            bestf = Some((t, hit.clone()));
+                        }
+                        faces.offer(t, hit);
+                    }
+                }
+                continue;
             }
         }
         // A placed part is picked in its own frame, from its shared mesh and index: the ray is
@@ -7352,6 +7384,7 @@ fn highlight_geometry_key_with(app: &SolveApp, model_key: u64, selected: &[Sel])
     app.viewport.hover_feature.hash(&mut h);
     app.viewport.hover_bodies.hash(&mut h);
     crate::select_other::hovered_body(app).hash(&mut h);
+    crate::select_other::hovered_face(app).hash(&mut h);
     app.viewport.hover_plane.hash(&mut h);
     app.viewport.hover_origin.hash(&mut h);
     app.preferences.browser_hover_shows_origin.hash(&mut h);
@@ -8115,6 +8148,13 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
                 edge_lines(&mut sc, e, colours, 3.0, &edge_normals(&m, e));
             }
         }
+    }
+    // A face indicated by an explicit through-pick must be visible even behind an opaque wall.
+    if let Some((name, face)) = crate::select_other::hovered_face(app)
+        && let Some(body) = st.body(name)
+    {
+        let fill = sc.color(c4(t.hover_profile));
+        mesh_faces(&shown(body), |index| index as usize == face, |p, n| sc.xray_tri(p, n, fill));
     }
     // Reference widgets follow zoom; the often much larger world-space feedback does not.
     let hover_sketch = app

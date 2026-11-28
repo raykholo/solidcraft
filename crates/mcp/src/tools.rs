@@ -406,6 +406,7 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
                     "writer": {"type": "string", "enum": ["solidcraft", "cadmpeg"], "description": "STEP and IGES only: SolidCraft's own writer (default), or cadmpeg's, which writes STEP AP242 with the components and colours but no solid names, and IGES 5.3 with each body where the design shows it; refused for other formats"},
                     "quality": {"type": "string", "enum": ["standard", "fine", "finest"], "description": "stl, stla, obj, 3mf, glb, usd, 3dm, urdf and sdf: how closely the mesh follows curved faces, a chord tolerance of 2e-4, 5e-5 or 1e-5 of each body's size (default standard)"},
                     "chord": {"type": "number", "minimum": 0.001, "maximum": 1000, "description": "Instead of quality, for the same formats: one chord tolerance for every body, in mm; coarser gives fewer triangles (a simulator's limit on triangles per mesh file). Refused with quality"},
+                    "lay_on_print_faces": {"type": "boolean", "description": "stl, stla and 3mf: write each body that has a print face (body.print_face) laid on it, as a slicer export lays it; the reply's print_faces names the bodies laid (default false: as they lie in the design)"},
                     "mesh_prefix": string("urdf: put before each mesh file name (default: none, so relative to the .urdf)"),
                     "place_meshes": {"type": "boolean", "description": "urdf: write the meshes where mesh_prefix points, making its folder (default false: next to the .urdf)"},
                     "effort": {"type": "number", "description": "urdf: effort limit for joints with none saved, N or N m (default 1000)"},
@@ -1259,6 +1260,7 @@ fn dispatch(b: &mut dyn Backend, name: &str, a: &Map<String, Value>) -> Result<V
                     "writer",
                     "quality",
                     "chord",
+                    "lay_on_print_faces",
                     "mesh_prefix",
                     "place_meshes",
                     "effort",
@@ -1569,6 +1571,7 @@ fn batch_step(step: &Value) -> Result<(String, Value, Option<Narrow>), String> {
                     "writer",
                     "quality",
                     "chord",
+                    "lay_on_print_faces",
                     "mesh_prefix",
                     "place_meshes",
                     "effort",
@@ -2147,8 +2150,10 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>, dry_run: bool, expect:
                 Some(c)
                     if rollback
                         && b.has_ui()
-                        && (matches!(c, "view.next_tab" | "view.previous_tab" | "document.activate" | "doc.open" | "file.import")
-                            || (c == "file.new" && command_params.and_then(|p| p.get("new_tab")).and_then(Value::as_bool) == Some(true))) =>
+                        && (matches!(
+                            c,
+                            "view.next_tab" | "view.previous_tab" | "document.activate" | "document.close" | "doc.open" | "file.import"
+                        ) || (c == "file.new" && command_params.and_then(|p| p.get("new_tab")).and_then(Value::as_bool) == Some(true))) =>
                 {
                     Err(format!("`{c}` can change the active design tab: run it separately or use `rollback: false`"))
                 }

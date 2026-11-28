@@ -152,7 +152,9 @@ jobs:
   build:
     name: Build the CLI
     needs: plan
-    if: needs.plan.outputs.build == 'true'
+    # Explicit results, not an implicit success(): called from ci.yml, the caller's skipped `needs`
+    # (its pull request gate jobs, on a merge group) must not skip the rig.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.build == 'true' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 60
     outputs:
@@ -247,7 +249,7 @@ jobs:
   shard:
     name: Kernel rig (${{ matrix.group.name }})
     needs: [plan, build]
-    if: needs.plan.outputs.shards != '[]'
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.build.result == 'success' && needs.plan.outputs.shards != '[]' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
     strategy:

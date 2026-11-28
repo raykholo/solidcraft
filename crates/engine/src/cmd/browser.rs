@@ -1968,6 +1968,20 @@ pub(super) fn rename_one(s: &mut Session, cmd: &str, given: &str, name: &str) ->
     // are stored as `X`, `X`, `X` and built as `X`, `X (2)`, `X (3)`, so the stored names are set
     // to the numbered ones, or `X (3)` would turn into `X (2)` once the second solid is renamed.
     // Read the feature's own result so siblings removed by later features keep their names too.
+    // Check the producer, even when later operations have modified this copy.
+    if let Some(f) = s.doc.features.iter().find(|f| {
+        matches!(&f.kind, FeatureKind::Pattern { body_name_template: Some(_), .. })
+            && s.model.result(f.id).is_some_and(|r| r.state.bodies.iter().any(|b| b.feature == f.id && b.name == old))
+    }) && let FeatureKind::Pattern { body_name_template: Some(template), .. } = &f.kind
+    {
+        return Err(bad(
+            cmd,
+            format!(
+                "`{old}` is named by pattern `{}`'s body names template {template:?}; change the template or clear it to rename this copy",
+                f.name
+            ),
+        ));
+    }
     let fid = b.feature;
     let made = s.model.result(fid).map_or(&st.bodies, |r| &r.state.bodies);
     let siblings: Vec<String> = made.iter().filter(|x| x.feature == fid).map(|x| x.name.clone()).collect();

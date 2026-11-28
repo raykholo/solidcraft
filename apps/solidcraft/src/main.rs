@@ -62,9 +62,9 @@ use solidcraft_ui_egui::{Services, SolveApp};
 /// Windows: put the restored window back inside the monitor's work area if it is out of reach
 /// (a gone monitor, another scale, a taskbar edge). Sizes are in points, the work area in pixels.
 #[cfg(target_os = "windows")]
-fn fit_window_to_work_area(ctx: &egui::Context, frame: &eframe::Frame) {
+fn fit_window_to_work_area(ctx: &egui::Context, window: &dyn raw_window_handle::HasWindowHandle) {
     use window_fit::Area;
-    let Some((x, y, w, h)) = native_frame::work_area(frame) else { return };
+    let Some((x, y, w, h)) = native_frame::work_area(window) else { return };
     let (outer, inner, scale, maximized) = ctx.input(|i| {
         let v = i.viewport();
         (v.outer_rect, v.inner_rect, v.native_pixels_per_point, v.maximized.unwrap_or(false) || v.fullscreen.unwrap_or(false))
@@ -123,6 +123,8 @@ struct App {
     take_focus_unwanted: bool,
     /// Coming forward after a close that asks about unsaved designs.
     come_forward: come_forward::ComeForward,
+    /// The main window when our own runner runs it (`own_runner`); eframe's `Frame` has it otherwise.
+    native_window: Option<std::sync::Arc<winit::window::Window>>,
     /// The graphics device: lost, it can't draw again (`App::watch_device`, #4172).
     gpu: Option<LostWatch>,
     /// The designs whose unsaved changes closing couldn't keep for recovery
@@ -147,6 +149,8 @@ struct App {
     window_move: native_frame::WindowMove,
     /// After a lost device: the first frame stores it, since the setup's frames save nothing.
     clear_stored_background: bool,
+    /// A pass since the settings were last written had input that can change one (`write_settings`).
+    settings_input: bool,
     /// Brackets the touchpad's swipes (winit sends pixels only for it, #15353).
     #[cfg(target_os = "windows")]
     wheel_gestures: solidcraft_ui_egui::WebWheelGestures,
@@ -292,11 +296,14 @@ impl eframe::App for App {
             self.solve.apply_preferences(ctx);
             // Closed from the starting page: there is nothing to save yet, so the window closes,
             // and a close the user asked for is no failed start. One the app made itself (a lost
-            // device) still is.
+            // device) still is, unless memory ran out (#23651).
             if ctx.input(|i| i.viewport().close_requested())
                 && let Some(dir) = self.starting.take()
             {
-                startup::closed_while_starting(&dir, self.gpu.as_ref().is_none_or(|g| g.lost_at.is_none()));
+                startup::closed_while_starting(
+                    &dir,
+                    self.gpu.as_ref().is_none_or(|g| g.lost_at.is_none() || device_lost::is_out_of_memory(Some(&g.reason))),
+                );
             }
             if self.solve.ready_to_quit() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -320,7 +327,12 @@ impl eframe::App for App {
                 self.come_forward.start(std::time::Instant::now());
             }
         }
-        self.come_forward.tick(ctx, _frame);
+        // The field, not `window_handle`: `come_forward` is borrowed mutably beside it.
+        let window: &dyn raw_window_handle::HasWindowHandle = match &self.native_window {
+            Some(window) => window.as_ref(),
+            None => &*_frame,
+        };
+        self.come_forward.tick(ctx, window);
         #[cfg(target_os = "macos")]
         for f in if self.solve.file_picker_busy() { Vec::new() } else { open_documents::take() } {
             self.solve.open_chosen_file(&f);
@@ -422,9 +434,10 @@ impl eframe::App for App {
     /// A frame's UI: the starting page while the setup runs (in the saved language and fonts),
     /// then the app's, whose changed settings are written soon after (#8275).
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        if std::mem::take(&mut self.clear_stored_background)
+        if self.clear_stored_background
             && let Some(storage) = frame.storage_mut()
         {
+            self.clear_stored_background = false;
             clear_stored_background(storage);
         }
         // Logic-only control updates cannot present a frame or complete startup.
@@ -434,7 +447,12 @@ impl eframe::App for App {
             // Before the window is shown: its title bar must be within reach (window_fit.rs).
             #[cfg(target_os = "windows")]
             if self.window_frames == 1 {
-                fit_window_to_work_area(ctx, frame);
+                // eframe's `Frame`, or our own runner's window, whose `Frame` has none.
+                let window: &dyn raw_window_handle::HasWindowHandle = match &self.native_window {
+                    Some(window) => window.as_ref(),
+                    None => &*frame,
+                };
+                fit_window_to_work_area(ctx, window);
             }
             mark(if self.window_frames == 1 { "first frame begins" } else { "second frame begins (first presented)" });
             ctx.request_repaint();
@@ -526,12 +544,9 @@ impl eframe::App for App {
         if later {
             ui.ctx().request_repaint_after(self.prefs_writer.check_later(now));
         }
-        if self.prefs_writer.due(input, now)
-            && let Some(storage) = frame.storage_mut()
-            && let Ok(prefs) = self.prefs_for_storage(storage)
-            && let Some(wait) = self.prefs_writer.store(storage, prefs, now)
-        {
-            ui.ctx().request_repaint_after(wait);
+        self.settings_input |= input;
+        if let Some(storage) = frame.storage_mut() {
+            self.write_settings(ui.ctx(), storage, now);
         }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -550,9 +565,12 @@ impl eframe::App for App {
     /// The app is closing: work still running beside the window ends first, then the session.
     fn on_exit(&mut self) {
         // Closed from the start page before the 3D view was ready: as a close from the starting
-        // page, a close the user asked for is no failed start (#1210).
+        // page, a close the user asked for is no failed start (#1210), nor is an OOM loss (#23651).
         if let Some(dir) = self.starting.take() {
-            startup::closed_while_starting(&dir, self.gpu.as_ref().is_none_or(|g| g.lost_at.is_none()));
+            startup::closed_while_starting(
+                &dir,
+                self.gpu.as_ref().is_none_or(|g| g.lost_at.is_none() || device_lost::is_out_of_memory(Some(&g.reason))),
+            );
         }
         // A full-graphics launch closing normally did not fail (a lost device took the record).
         if self.gpu.as_ref().is_none_or(|g| g.lost_at.is_none())
@@ -607,7 +625,8 @@ impl Drop for App {
         if let Some(gpu) = &self.gpu
             && let Some(lost_at) = gpu.lost_at
         {
-            device_lost::restart(gpu.restart_on_software, lost_at, &gpu.reason, &self.unkept);
+            let software = device_lost::restart_on_software(gpu.after_loss, gpu.cpu_renderer, Some(&gpu.reason));
+            device_lost::restart(software, lost_at, &gpu.reason, &self.unkept);
             // The window's GPU surface is still to be dropped, and on a lost device that may
             // never return (#9044).
             device_lost::end();
@@ -699,8 +718,10 @@ fn graphics_restart_args(args: impl IntoIterator<Item = String>) -> Vec<String> 
 /// The window's graphics device, watched for its loss.
 struct LostWatch {
     lost: solidcraft_ui_egui::gpu::DeviceLost,
-    /// Where the next start runs once this device is lost ([`device_lost::restart_on_software`]).
-    restart_on_software: bool,
+    /// Whether this launch already followed a recent non-OOM device loss.
+    after_loss: bool,
+    /// Whether this launch runs on the software renderer.
+    cpu_renderer: bool,
     /// When the loss was seen: the app is closing to start again.
     lost_at: Option<u64>,
     /// Why, as wgpu said it: passed to the next start ([`device_lost::REASON_ENV`]).
@@ -708,6 +729,21 @@ struct LostWatch {
 }
 
 impl App {
+    /// Write a pass's settings changes to the settings file (#8275), as `ui` does with eframe's
+    /// `Frame::storage_mut`; our own window runner calls it with its file after each pass
+    /// (`own_runner`).
+    pub(crate) fn write_settings(&mut self, ctx: &egui::Context, storage: &mut dyn eframe::Storage, now: std::time::Instant) {
+        if std::mem::take(&mut self.clear_stored_background) {
+            clear_stored_background(storage);
+        }
+        let input = std::mem::take(&mut self.settings_input);
+        if self.prefs_writer.due(input, now)
+            && let Ok(prefs) = self.prefs_for_storage(storage)
+            && let Some(wait) = self.prefs_writer.store(storage, prefs, now)
+        {
+            ctx.request_repaint_after(wait);
+        }
+    }
     fn prefs_for_storage(&self, storage: &dyn eframe::Storage) -> Result<String, String> {
         self.solve.try_prefs().or_else(|reason| {
             log::warn!("Panel layout changes were not saved: {reason}");
@@ -722,6 +758,7 @@ impl App {
     fn watch_device(&mut self) {
         let Some(gpu) = self.gpu.as_mut().filter(|g| g.lost_at.is_none() && g.lost.is_lost()) else { return };
         let reason = gpu.lost.reason().unwrap_or_default();
+        let oom = device_lost::is_out_of_memory(Some(&reason));
         log::error!("graphics: the device was lost ({reason}); closing to start again");
         solidcraft_engine::note!("SolidCraft graphics: the device was lost ({reason}); starting again");
         // A report the next start offers, as it does a crash's, with this run's renderer and log
@@ -731,11 +768,14 @@ impl App {
         gpu.lost_at = Some(device_lost::now_secs());
         gpu.reason = reason;
         self.solve.quit_requested = true;
-        // A full-graphics launch that lost its device failed, even after it proved itself.
-        if let Some(path) = self.safe_graphics_record.take()
-            && let Err(reason) = startup::update_safe_graphics(&path, startup::SafeGraphics::lost_device)
-        {
-            log::warn!("graphics: safe graphics record not saved: {reason}");
+        // A full-graphics launch that lost its device to a driver reset failed, even after it
+        // proved itself. An out-of-memory loss is not a driver failure: clear the trial flag
+        // instead of forcing the next launch onto software rendering (#23651).
+        if let Some(path) = self.safe_graphics_record.take() {
+            let update = if oom { startup::SafeGraphics::closed_normally } else { startup::SafeGraphics::lost_device };
+            if let Err(reason) = startup::update_safe_graphics(&path, update) {
+                log::warn!("graphics: safe graphics record not saved: {reason}");
+            }
         }
     }
 
@@ -1760,23 +1800,27 @@ fn main() -> eframe::Result {
     let backend_note = backend_launch.note;
     // The launch before this one closed because its graphics device was lost (`App::watch_device`).
     let after_loss = device_lost::recent(std::env::var(device_lost::LOST_ENV).ok().as_deref(), device_lost::now_secs());
+    let loss_reason = after_loss.then(|| std::env::var(device_lost::REASON_ENV).ok()).flatten();
+    let loss_oom_flag = after_loss.then(|| std::env::var(device_lost::OOM_ENV).ok()).flatten();
+    let after_oom_loss = after_loss && device_lost::was_out_of_memory(loss_oom_flag.as_deref(), loss_reason.as_deref());
+    let after_driver_loss = after_loss && !after_oom_loss;
     // The launch before closed itself and couldn't keep every unsaved change (`App::on_exit`).
     let unkept = std::env::var(startup::UNKEPT_ENV).ok();
     if let Some(designs) = unkept.as_deref().filter(|u| !u.trim().is_empty()) {
         log::warn!("recovery: the last launch couldn't keep unsaved changes of {designs}");
     }
     if after_loss {
-        let reason = std::env::var(device_lost::REASON_ENV).ok();
-        if let Some(reason) = device_lost::reason(reason.as_deref()) {
+        if let Some(reason) = device_lost::reason(loss_reason.as_deref()) {
             log::warn!("graphics: the last launch lost its device ({reason})");
         }
-        notes.push(device_lost::note(cpu_renderer, reason.as_deref(), unkept.as_deref()));
+        notes.push(device_lost::note(cpu_renderer, after_oom_loss, loss_reason.as_deref(), unkept.as_deref()));
     }
     // Safe graphics mode: after a launch that failed to come up or lost its device, or when asked
     // for, this one starts on the plain path (`startup::SafeGraphics`). Decided and saved before
-    // any graphics device is created, so a launch that dies in the driver counts.
+    // any graphics device is created, so a launch that dies in the driver counts. An out-of-memory
+    // loss does not force safe graphics / software rendering (#23651).
     let tracked = control_port.is_none();
-    let previous_failed = failed_starts > 0 || after_loss;
+    let previous_failed = failed_starts > 0 || after_driver_loss;
     let safe_graphics = match backend_path_for_safe.as_ref() {
         Some(path) => match startup::update_safe_graphics(path, |record| record.begin(previous_failed, tracked, safe_mode)) {
             Ok(reason) => reason,
@@ -1923,7 +1967,16 @@ fn main() -> eframe::Result {
     #[cfg(not(all(unix, not(target_os = "macos"))))]
     let own_x11 = false;
     let own_wake = wake.clone();
-    let creator: eframe::AppCreator<'_> = Box::new(move |cc: &eframe::CreationContext<'_>| {
+    // `native_window`: the main window when our own runner made it, whose `CreationContext` has
+    // none (`own_runner`); eframe's `CreationContext` has it otherwise.
+    let make = move |cc: &eframe::CreationContext<'_>,
+                     native_window: Option<std::sync::Arc<winit::window::Window>>|
+          -> Result<App, Box<dyn std::error::Error + Send + Sync>> {
+        #[cfg(target_os = "windows")]
+        let creation_window: &dyn raw_window_handle::HasWindowHandle = match &native_window {
+            Some(window) => window.as_ref(),
+            None => cc,
+        };
         created_in_app.store(true, std::sync::atomic::Ordering::SeqCst);
         solidcraft_engine::crash::phase("app setup");
         mark("window and device ready");
@@ -1953,7 +2006,7 @@ fn main() -> eframe::Result {
         {
             // Windows: the taskbar button shows the mark even when slow first frames keep the
             // taskbar waiting for the window's icon.
-            if !native_frame::set_class_icon(cc) {
+            if !native_frame::set_class_icon(creation_window) {
                 solidcraft_engine::note!("SolidCraft window: no class icon; the taskbar may show a generic one");
             }
             // Every window that draws SolidCraft's title bar hands it to Windows: the main
@@ -1961,7 +2014,7 @@ fn main() -> eframe::Result {
             native_frame::register(&cc.egui_ctx);
             // The OS hit test offers the resize border, at the window's DPI, from the first
             // message (#1381).
-            app.native_resize_border = custom_titlebar && native_frame::install(cc);
+            app.native_resize_border = custom_titlebar && native_frame::install(creation_window);
             if custom_titlebar && !app.native_resize_border {
                 solidcraft_engine::note!("SolidCraft window: no native resize border; egui edge zones instead");
             }
@@ -2004,7 +2057,8 @@ fn main() -> eframe::Result {
         // pictures drawn on it look (`gpu::window_device`). egui draws 1x (`multisampling`).
         let gpu = cc.wgpu_render_state.as_ref().map(|rs| LostWatch {
             lost: solidcraft_ui_egui::gpu::watch_window(rs, 1).lost,
-            restart_on_software: device_lost::restart_on_software(after_loss, cpu_renderer),
+            after_loss: after_driver_loss,
+            cpu_renderer,
             lost_at: None,
             reason: String::new(),
         });
@@ -2207,10 +2261,11 @@ fn main() -> eframe::Result {
                 mark("app created");
                 solidcraft_engine::crash::phase("first frame");
             });
-        Ok(Box::new(App {
+        Ok(App {
             // Before `app` moves: the settings as read, already on disk.
             prefs_writer: PrefsWriter::read(app.prefs()),
             clear_stored_background: cleared_background,
+            settings_input: false,
             solve: app,
             setup,
             gpu_job: None,
@@ -2223,6 +2278,7 @@ fn main() -> eframe::Result {
             up: false,
             take_focus_unwanted: control_port.is_some(),
             come_forward: come_forward::ComeForward::default(),
+            native_window,
             gpu,
             unkept: Vec::new(),
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
@@ -2236,9 +2292,13 @@ fn main() -> eframe::Result {
             window_move,
             #[cfg(target_os = "windows")]
             wheel_gestures: solidcraft_ui_egui::WebWheelGestures::every_point_swipes(),
-        }))
-    });
-    let result = if own_runner { own_runner::run(options, creator, own_x11, &own_wake) } else { eframe::run_native("SolidCraft", options, creator) };
+        })
+    };
+    let result = if own_runner {
+        own_runner::run(options, make, own_x11, &own_wake)
+    } else {
+        eframe::run_native("SolidCraft", options, Box::new(move |cc| make(cc, None).map(|app| Box::new(app) as Box<dyn eframe::App>)))
+    };
     control_server::remove_token_file();
     single_instance::stop();
     match result {

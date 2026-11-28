@@ -879,6 +879,25 @@ mod tests {
         );
     }
 
+    /// #18204: a round beside a 0.8 mm chamfer on the neighbouring top edge, with a radius 1.5e-5 to
+    /// 2.5e-5 mm over the chamfer's size, is built and passes SMLib's check, like the radii just
+    /// under and just over that band; it failed with "Unable to map new Fillet Edge back to Edge
+    /// in Target Brep". Its volume is measured in solidcore's blend tests.
+    #[test]
+    fn a_round_a_hair_larger_than_the_chamfer_beside_it_is_built() {
+        let b = box_solid(Vec3::new(0.0, -4.15, 0.0), Vec3::new(33.0, 4.15, 9.7)).unwrap();
+        let c = imp::blend(&b, "chamfer", Kind::Chamfer, &[Vec3::new(33.0, 0.0, 9.7)], &[0.8]).unwrap();
+        for g in [1.3e-5, 1.5e-5, 1.8e-5, 2.0e-5, 2.5e-5, 3.0e-5] {
+            let r = imp::blend(&c, "fillet", Kind::Round(FilletTurn::Mitre), &[Vec3::new(16.5, 4.15, 9.7)], &[0.8 + g]);
+            let r = match r {
+                Ok(r) => r,
+                Err(e) => panic!("g {g}: {e}"),
+            };
+            assert_eq!(r.face_count(), 8, "g {g}");
+            assert!(matches!(crate::validity(&r).smlib, Some(crate::SmlibCheck::Valid)), "g {g}");
+        }
+    }
+
     #[test]
     fn options_smlib_cannot_build_are_refused() {
         assert!(unsupported("x").to_string().contains("not supported yet"));

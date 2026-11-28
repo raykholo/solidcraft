@@ -984,7 +984,9 @@ an ordered subset of that property's own `oneOf` constants, satisfying declarati
 conditions. The hook cannot add properties, change types, enable or reveal a declaratively
 unavailable field, or bypass the input schema. A malformed reply is ignored **whole** with a
 warning. Defaults and values must satisfy the field schema and the narrowed choices. Hints are
-at most 1024 bytes of printable text; input and reply are at most 1 MiB each.
+at most 1024 bytes of printable text; input and reply are at most 1 MiB each. A hint is drawn as
+a muted line under its field while the reply stands, and goes with a reply that leaves it out;
+the property's `description` stays the field's tooltip.
 
 Declarative conditions run first, then the validated patch, then the same input check used by
 programmatic calls. The hook never edits: it runs as a read entry, with no edit command or file
@@ -1147,7 +1149,7 @@ or link, nothing fetched from the network, `.png`, `.jpg` or `.jpeg`, colours ke
 with bigger limits: at most **512 KiB** and **1024 × 1024** decoded pixels. The host keeps each
 picture at most 512 pixels on a side, decodes each distinct file once when it loads the package,
 and caches its texture. The choice list shows the picture as a thumbnail beside the option, and a
-larger one of the highlighted option (the chosen one when none is highlighted). If an option names
+larger one of the highlighted option (the chosen one when none is highlighted). While a search is typed in the grid the larger picture steps aside, so the matching tiles show right under the search box, and the search box says just "Search" (for swatches alone it reads "Search finishes"). A grid tile shows up to two lines of the option's title; a longer title keeps its start and its end ("Vanne à bille FIP VEEIV … d32"). If an option names
 both, the picture is used, and if that picture is missing or refused, the swatch. A package may name at most 256 distinct swatches and pictures together.
 Decoded swatches and pictures share a budget of 128 MiB per package. When the total would exceed it, the host omits that entry, every later swatch and picture, and records a warning.
 A missing, corrupt, wrongly typed or oversized picture is omitted with a warning in `plugin check`

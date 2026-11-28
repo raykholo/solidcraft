@@ -352,9 +352,10 @@ const MAX_BATCH: usize = 10_000;
 /// bypass.
 const LOADS_A_FILE: [&str; 5] = ["doc.open", "file.insert_step", "file.insert_mesh", "pointcloud.insert", "pointcloud.reload"];
 
-/// Edit in Place, Finish Edit, the next or previous tab and Show Design go to another design's
-/// tab: a batch's rollback, or a script's later steps, would land in the wrong design.
-const SWITCHES_DESIGN: [&str; 5] = ["component.edit_in_place", "component.finish_edit", "view.next_tab", "view.previous_tab", "document.activate"];
+/// Edit in Place, Finish Edit, the next or previous tab, Show Design and Close design change the
+/// active design tab: a batch's rollback, or a script's later steps, would land in the wrong design.
+const SWITCHES_DESIGN: [&str; 6] =
+    ["component.edit_in_place", "component.finish_edit", "view.next_tab", "view.previous_tab", "document.activate", "document.close"];
 
 /// Commands that open a design in a tab of its own, and show it, when `new_tab` is true.
 const OPENS_A_TAB: [&str; 2] = ["file.new", "doc.open"];

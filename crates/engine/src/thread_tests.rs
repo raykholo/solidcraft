@@ -3266,3 +3266,52 @@ fn literal_thread_size_ignores_an_errored_parameter_with_the_same_name() {
     assert!(s.model.param_errors.contains_key("M8"));
     assert_eq!(s.model.state().threads[0].designation, "M8");
 }
+
+/// A cosmetic thread in a bore that a cross hole cut before it runs its asked length across the
+/// cross hole, as it does when the thread comes first (#23507): the cut splits the bore's wall
+/// into two coaxial faces, 0 to 10 - sqrt(3.675^2 - 2.1^2) = 6.984 mm and from 13.016 mm on.
+#[test]
+fn a_thread_through_an_earlier_cross_hole_keeps_its_length() {
+    let block = |s: &mut Session| {
+        run(s, "sketch.create", json!({"plane": "YZ", "name": "Section"}));
+        run(s, "sketch.line", json!({"points": [[-10, -10], [10, -10], [10, 10], [-10, 10]], "closed": true}));
+        run(s, "sketch.circle.center", json!({"center": [0, 0], "diameter": 4.2}));
+        run(s, "sketch.finish", json!({}));
+        run(s, "solid.extrude", json!({"distance": 30, "name": "Block", "body_name": "Block"}));
+    };
+    let cross = json!({"diameter": 7.35, "height": 100, "base": [10, -50, 0], "axis": "Y", "operation": "cut", "name": "CrossCut"});
+    for (extent, want) in [(json!({"extent": "length", "length": 15}), (0.0, 15.0)), (json!({}), (0.0, 30.0))] {
+        let mut thread = json!({"face": [0.5, 2.1, 0], "designation": "M5", "from": [0, 2.1, 0], "name": "Thread"});
+        thread.as_object_mut().unwrap().extend(extent.as_object().unwrap().clone());
+        let mut spans = Vec::new();
+        for cut_first in [false, true] {
+            let mut s = Session::default();
+            block(&mut s);
+            if cut_first {
+                run(&mut s, "solid.cylinder", cross.clone());
+            }
+            run(&mut s, "solid.thread", thread.clone());
+            if !cut_first {
+                run(&mut s, "solid.cylinder", cross.clone());
+            }
+            let st = s.model.state();
+            let t = &st.threads[0];
+            let (a, b) = (t.start.min(t.end), t.start.max(t.end));
+            let along = |v: f64| (t.axis_point + t.axis * v).x;
+            spans.push((along(a).min(along(b)), along(a).max(along(b))));
+        }
+        for (lo, hi) in spans {
+            assert!((lo - want.0).abs() < 1e-6 && (hi - want.1).abs() < 1e-6, "{thread}: thread spans x {lo}..{hi}, not {want:?}");
+        }
+    }
+    // Both pieces picked: one thread, the whole bore.
+    let mut s = Session::default();
+    block(&mut s);
+    run(&mut s, "solid.cylinder", cross);
+    let faces = json!([{"body": "Block", "point": [0.5, 2.1, 0]}, {"body": "Block", "point": [20, 2.1, 0]}]);
+    run(&mut s, "solid.thread", json!({"faces": faces, "designation": "M5"}));
+    let st = s.model.state();
+    assert_eq!(st.threads.len(), 1, "{:?}", st.threads);
+    let length = (st.threads[0].end - st.threads[0].start).abs();
+    assert!((length - 30.0).abs() < 1e-6, "{length}");
+}

@@ -229,7 +229,9 @@ fn find_edge(b: &ModelBody, m: &Mesh, k: usize, p: Vec3, name: Option<&str>, exa
 /// The flat face a referenced hole goes into (its index, a point on it and its outward normal):
 /// the one under `at` when it faces the drill, preferring a face the reference edges border when
 /// `at` lies in its plane (so a replayed hole whose opening sits over a shallow blind bore bottom
-/// still picks the outer wall, #23221), else the one the edges border that faces it most.
+/// still picks the outer wall, #23221), else, for a centre in a drilled opening, the flat face in
+/// its plane most square to the drill, then nearest (#23504), else the one the edges border that
+/// faces it most.
 fn flat_face(b: &ModelBody, m: &Mesh, at: Vec3, dir: Vec3, edges: &[(Vec3, Vec3, usize)]) -> Option<(usize, Vec3, Vec3)> {
     let size = b.body.size().max(1e-9);
     let tol = (size * 1e-4).max(1e-6);
@@ -261,7 +263,25 @@ fn flat_face(b: &ModelBody, m: &Mesh, at: Vec3, dir: Vec3, edges: &[(Vec3, Vec3,
     if let Some(hit) = coplanar {
         return Some(hit);
     }
-    at_face.or_else(|| shared.into_iter().min_by(by_drill))
+    // A hole already drilled (a mirror or pattern replaying it) has its centre in the opening,
+    // with no face under it: the face it was drilled into is a flat face in the centre's plane
+    // that faces the drill, whether or not the reference edges border it (#23504). The drill
+    // removed everything within its radius of the centre, so the faces left all lie that far or
+    // farther; of those, the one square to the drill wins over one at an angle that meets it
+    // along a line through the centre (a chamfer's hinge), then the nearest, by exact distance.
+    let drilled_into = || {
+        let near = b.body.faces_within(at, size).ok()?;
+        let square = |x: &(f64, (usize, Vec3, Vec3))| x.1.2.dot(dir);
+        near.into_iter()
+            .filter(|(f, _)| b.body.planar_face(*f).is_some_and(|pl| pl.height(at).abs() <= tol))
+            .filter_map(|(f, d)| plane(f).map(|hit| (d, hit)))
+            .min_by(|x, y| {
+                let (sx, sy) = (square(x), square(y));
+                if (sx - sy).abs() > 1e-9 { sx.total_cmp(&sy) } else { x.0.total_cmp(&y.0) }
+            })
+            .map(|(_, hit)| hit)
+    };
+    at_face.or_else(drilled_into).or_else(|| shared.into_iter().min_by(by_drill))
 }
 
 /// Which side of an edge (through `mid`, square to it in the plane along `across`) face `face`

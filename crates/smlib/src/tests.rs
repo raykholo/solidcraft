@@ -210,6 +210,7 @@ const ANSWERING: &[&str] = &[
     "history",
     "check",
     "check_local",
+    "face_flat_corners",
     "check_owned",
     "check_stitched",
     "make_cylinder",
@@ -365,6 +366,7 @@ fn every_entry_point_answers() {
     says("check", a.check(CheckLevel::All));
     says("check_stitched", a.check_stitched(CheckLevel::All));
     says("check_local", a.check_local(&[0], &[0], CheckLevel::All));
+    says("face_flat_corners", a.face_flat_corners(0));
     says("check_owned", a.try_clone().and_then(|c| c.check_owned(CheckLevel::All)));
     says("make_cylinder", Brep::make_cylinder([0.0; 3], 1.0, 1.0));
     says("make_sphere", Brep::make_sphere([0.0; 3], 1.0));

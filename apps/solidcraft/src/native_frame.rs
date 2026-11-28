@@ -74,7 +74,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SetClassLongW as SetClassLongPt
 
 /// The work area (the monitor without the taskbar) of the monitor nearest the window, in physical
 /// pixels: left, top, width, height.
-pub fn work_area(window: &impl HasWindowHandle) -> Option<(i32, i32, i32, i32)> {
+pub fn work_area(window: &dyn HasWindowHandle) -> Option<(i32, i32, i32, i32)> {
     let handle = window.window_handle().ok()?;
     let RawWindowHandle::Win32(w) = handle.as_raw() else { return None };
     let hwnd = w.hwnd.get() as HWND;
@@ -106,7 +106,7 @@ const ICON_RESOURCE: usize = 1;
 /// so the button showed Windows' generic icon for as long as the window was open.
 /// `false` if it isn't a Win32 window or the exe's icon doesn't load; SetClassLongPtrW's own
 /// failure can't be told from a class that had no icon (both return 0), so it isn't reported.
-pub fn set_class_icon(window: &impl HasWindowHandle) -> bool {
+pub fn set_class_icon(window: &dyn HasWindowHandle) -> bool {
     let Ok(handle) = window.window_handle() else { return false };
     let RawWindowHandle::Win32(w) = handle.as_raw() else { return false };
     let hwnd = w.hwnd.get() as HWND;
@@ -156,7 +156,7 @@ pub fn register(ctx: &egui::Context) {
 /// Answer the main window's hit test and DPI-size questions from now on. Call it on the thread
 /// that created the window (eframe's app creator), so the resize border is there from the first
 /// message. `false` if it isn't a Win32 window, or the procedure could not be put in place.
-pub fn install(window: &impl HasWindowHandle) -> bool {
+pub fn install(window: &dyn HasWindowHandle) -> bool {
     let Ok(handle) = window.window_handle() else { return false };
     let RawWindowHandle::Win32(w) = handle.as_raw() else { return false };
     attach(w.hwnd.get() as HWND)

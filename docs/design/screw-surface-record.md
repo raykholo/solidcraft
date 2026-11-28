@@ -1,7 +1,7 @@
 # Screw-swept surfaces in the body record
 
 Status: approved by the owner on 2026-11-27 ("threads faster and exact"). Kernel work, decided
-in solidcore. Linked from [kernel-layer.md §3](kernel-layer.md#3-the-body-exchange-format).
+in solidcore. Linked from [kernel-layer.md §3](kernel-layer.md#3-bodies-and-the-exchange-format).
 
 ## The problem
 

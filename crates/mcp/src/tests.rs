@@ -745,6 +745,31 @@ fn export_tool_passes_the_mesh_quality_and_chord() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `export` passes `lay_on_print_faces` to `file.export`, called directly and as a batch step
+/// (#23642): an agent had to use `execute` to export a part laid on its print face.
+#[test]
+fn export_tool_lays_bodies_on_their_print_faces() {
+    let mut s = server();
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 20, "width": 10, "height": 5, "body_name": "Block"}}));
+    tool(&mut s, "execute", json!({"command": "body.print_face", "params": {"body": "Block", "point": [20, 5, 2.5]}}));
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-print-face-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let at = |name: &str| dir.join(name).to_string_lossy().to_string();
+    let r = tool(&mut s, "export", json!({"path": at("laid.stl"), "lay_on_print_faces": true}));
+    assert_eq!(r["print_faces"], json!(["Block"]), "{r}");
+    let r = tool(&mut s, "batch", json!({"commands": [{"command": "export", "params": {"path": at("laid.3mf"), "lay_on_print_faces": true}}]}));
+    assert_eq!(r["completed"], 1, "{r}");
+    assert_eq!(r["results"][0]["print_faces"], json!(["Block"]), "a batch step lays it too: {r}");
+    // Without it the body is written as it lies, as before.
+    let r = tool(&mut s, "export", json!({"path": at("as-is.stl")}));
+    assert!(r.get("print_faces").is_none_or(|p| p.as_array().is_some_and(Vec::is_empty)), "{r}");
+    // file.export refuses it for a format that isn't printed.
+    let r = raw_tool(&mut s, "export", json!({"path": at("part.step"), "lay_on_print_faces": true}));
+    assert_eq!(r["result"]["isError"], json!(true), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `format` accepts every format the extension does: iges, igs and stp were refused (#11806).
 #[test]
 fn export_tool_format_argument_accepts_iges() {
@@ -3850,6 +3875,7 @@ fn bridged_rollback_batch_refuses_commands_that_can_switch_design_tabs() {
         (json!({"command": "open", "params": {"path": "another.sc", "new_tab": true}}), "doc.open"),
         (json!({"id": "file.import", "params": {"path": "another.part"}}), "file.import"),
         (json!({"command": "document.activate", "params": {"document_id": "another"}}), "document.activate"),
+        (json!({"command": "document.close", "params": {"document_id": "current"}}), "document.close"),
         (json!({"id": "file.new", "params": {"new_tab": true}}), "file.new"),
         (json!({"command": "new_design", "params": {"new_tab": true}}), "file.new"),
     ] {

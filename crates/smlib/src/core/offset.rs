@@ -418,9 +418,9 @@ pub(super) fn moved_faces(w: &mut Brep) -> solidcore::Result<bool> {
 
 /// `smlib_draft`: its checks, the solid check, the pick, then `draft_faces`: each picked face (a
 /// plane parallel to the pull) gets a copy of its plane turned by `angle` about its line on the
-/// neutral plane, and a cylinder or cone about the pull the cone solidcore's `draft_surface` gives
-/// (tangency-labs/smlib#27); `SmBrep::LocalOperation` extends or trims the faces around them to
-/// meet the tilted surfaces.
+/// neutral plane, a cylinder or cone about the pull the cone solidcore's `draft_surface` gives
+/// (tangency-labs/smlib#27), and the side of an extrusion along the pull its ruled wall (#22809);
+/// `SmBrep::LocalOperation` extends or trims the faces around them to meet the tilted surfaces.
 pub(crate) fn draft(
     body: &Body,
     points: &[[f64; 3]],
@@ -458,20 +458,18 @@ pub(crate) fn draft(
             };
             // A cylinder or cone about the pull drafted becomes the cone solidcore's draft gives
             // (`draft_surface`: its generators turned about its circle on the neutral plane),
+            // and the side of an extrusion along the pull its certified ruled wall (#22809), each
             // carrying its draft definition, so that the local operation knows it for a draft.
-            if let SurfaceKind::Cone(_) = surf.kind_with_nurb(k)? {
+            let SurfaceKind::Plane(plane) = surf.kind_with_nurb(k)? else {
                 let Ok(the_draft) = Draft::new(p3(neutral_origin), normal, along, angle) else {
                     return Ok(Err(Error::Argument));
                 };
                 match answer(draft_surface(k, &w, f, &the_draft))? {
-                    Some(Ok(cone)) => surfaces.push(cone),
+                    Some(Ok(drafted)) => surfaces.push(drafted),
                     Some(Err(r)) => return Ok(Err(cone_refused(r))),
                     None => return Ok(Err(Error::Unsupported)),
                 }
                 continue;
-            }
-            let SurfaceKind::Plane(plane) = surf.kind_with_nurb(k)? else {
-                return Ok(Err(cannot_draft("a drafted face is neither a plane nor a cone or cylinder")));
             };
             // The face's outward normal: the plane's, turned with the outer faceuse.
             let mut n = plane.position().z_axis();

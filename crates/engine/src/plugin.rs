@@ -406,6 +406,10 @@ pub fn command_group(id: &str) -> Option<&'static str> {
     if id == "plugin.preview" {
         return None;
     }
+    // Closing a design blanks the host session and drops its path, like `doc.new`.
+    if id == "document.close" {
+        return Some("doc");
+    }
     let family = id.split_once('.').map_or(id, |(family, _)| family);
     match family {
         "plugin" => Some("plugin"),

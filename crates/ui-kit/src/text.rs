@@ -35,6 +35,33 @@ pub fn ellipsize_middle(ui: &Ui, text: &str, font: egui::FontId, max_width: f32)
     best
 }
 
+/// Paint `text` in up to two lines across `rect`, from its top: wrapped at word breaks, and
+/// when two lines are not enough, the second is shortened in the middle so the end of the
+/// text (a size, a variant) stays visible (#23596).
+pub(crate) fn paint_two_lines(ui: &Ui, rect: egui::Rect, text: &str, font: egui::FontId, ink: egui::Color32) {
+    let width = rect.width().max(0.0);
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(font.clone(), ink));
+    job.wrap.max_width = width;
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let painter = ui.painter().with_clip_rect(ui.clip_rect().intersect(rect));
+    if galley.rows.len() <= 2 {
+        let at = egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top());
+        painter.galley(at, galley, ink);
+        return;
+    }
+    let first_chars = galley.rows.first().map_or(0, |row| row.glyphs.len());
+    let first: String = text.chars().take(first_chars).collect();
+    let rest: String = text.chars().skip(first_chars).collect();
+    let second = ellipsize_middle(ui, rest.trim_start(), font.clone(), width);
+    let mut y = rect.top();
+    for line in [first.trim_end(), second.as_str()] {
+        let line = painter.layout_no_wrap(line.to_owned(), font.clone(), ink);
+        let height = line.size().y;
+        painter.galley(egui::pos2(rect.center().x - line.size().x / 2.0, y), line, ink);
+        y += height;
+    }
+}
+
 /// Paint one pixel-aligned text run with the requested interface weight.
 /// Clipped, device-pixel-snapped weighted text. Tokens: `font_section_tracking; caller supplies font/ink tokens`.
 pub fn paint_text(ui: &Ui, rect: egui::Rect, text: &str, font: egui::FontId, ink: egui::Color32, spaced: bool) {

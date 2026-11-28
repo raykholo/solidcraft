@@ -1033,6 +1033,56 @@ fn the_top_moves_out() {
     assert!(rel(volume(&b), ABC + 2.0 * 600.0) < 1e-9);
 }
 
+/// #18301 (stress corpus S0561): a frustum r 25 at z = 0 to r 10 at z = 50 (its side falls
+/// 0.3 per mm), with a blind hole r 1.2 from z = 40 up through the top, its axis 6.5 out on
+/// +X (it reaches r 7.7). The top moved up 8 meets the extended side at r 25 - 0.3 * 58 = 7.6,
+/// inside the hole's reach: the extended hole wall leaves through the narrowing side from
+/// z0 = (25 - 7.7) / 0.3 = 57.67 up, and the hole opens into the side there. The body is the
+/// frustum r 25 to 7.6 over z 0 to 58 less the hole: the r 1.2 disc from z = 40 to z0, and above
+/// z0 the part of it inside the side's circle (`discs_overlap`).
+#[test]
+#[allow(clippy::disallowed_methods)] // closed-form oracle and face picks, not ops geometry
+fn a_cones_top_moved_up_past_a_holes_reach_opens_the_hole_through_the_side() {
+    all_fixes();
+    let cone = crate::make_cone([0.0; 3], 25.0, 10.0, 50.0).unwrap();
+    let hole = make_cylinder([6.5, 0.0, 40.0], 1.2, 10.0).unwrap();
+    let b = crate::boolean::boolean(cone, hole, crate::BooleanOp::Subtract)
+        .unwrap()
+        .unwrap();
+    let o = order(&b);
+    let top = face(&b, &o, |bx| {
+        (bx.min().z - 50.0).abs() < 1e-9 && (bx.max().z - 50.0).abs() < 1e-9
+    });
+    offset_faces(&b, &o, &[top], 8.0).unwrap();
+    let side = |z: f64| 25.0 - 0.3 * z;
+    let z0 = (25.0 - 7.7) / 0.3;
+    let frustum = PI * 58.0 / 3.0 * (25.0 * 25.0 + 25.0 * 7.6 + 7.6 * 7.6);
+    let hole =
+        PI * 1.2 * 1.2 * (z0 - 40.0) + integral(z0, 58.0, |z| discs_overlap(side(z), 1.2, 6.5));
+    let got = volume(&b);
+    assert!(
+        rel(got, frustum - hole) < 1e-9,
+        "{got} vs {}",
+        frustum - hole
+    );
+    // the hole's outermost line near the top is open to the outside; its axis is void, the
+    // material beside it solid
+    for (point, wanted) in [
+        ([7.65, 0.0, 57.9], crate::PointClass::Outside),
+        ([6.5, 0.0, 55.0], crate::PointClass::Outside),
+        ([6.5, 0.0, 39.0], crate::PointClass::Inside),
+        ([4.0, 0.0, 57.9], crate::PointClass::Inside),
+    ] {
+        assert_eq!(b.classify_point(point).unwrap(), wanted, "{point:?}");
+    }
+    assert!(b.is_manifold_solid().unwrap());
+    b.check_solid().unwrap();
+    let report = b.check(crate::CheckLevel::All).unwrap();
+    assert_eq!(report.failures, 0, "{}", report.text);
+    // the body records whole: no face, edge or vertex of it names one the cut deleted
+    b.to_record().unwrap();
+}
+
 // Definitions and certificates §5: at tens of mm, coordinates within this floor agree.
 const PART_SCALE_FLOOR_MM: f64 = 1e-10;
 
@@ -3535,6 +3585,114 @@ mod drafts {
         assert!(rel(volume(&c), v) < 1e-9, "{} {v}", volume(&c));
     }
 
+    /// 40 degrees, radians.
+    const FORTY: f64 = 0.698_131_700_797_731_8;
+
+    /// A closed outline in z = 0: the uniform periodic cubic B-spline on the control points
+    /// (30, 0), (20, 15), (0, 20), (-20, 15), (-30, 0), (-20, -15), (0, -20), (20, -15), as one
+    /// clamped cubic of its eight Bezier pieces (each piece's points the B-spline's 1-4-1 and
+    /// 2-1 averages, every inner knot triple), so the outline is one curve, curvature
+    /// continuous, and the prism has one side face.
+    fn spline_outline() -> Vec<crate::sweep::Curve> {
+        let p = [
+            [30.0, 0.0],
+            [20.0, 15.0],
+            [0.0, 20.0],
+            [-20.0, 15.0],
+            [-30.0, 0.0],
+            [-20.0, -15.0],
+            [0.0, -20.0],
+            [20.0, -15.0],
+        ];
+        let at = |i: usize| p[i % p.len()];
+        let mut points = Vec::new();
+        let mut knots = vec![0.0; 4];
+        for i in 0..p.len() {
+            let (a, b, c, d) = (at(i + p.len() - 1), at(i), at(i + 1), at(i + 2));
+            let mix = |w: [f64; 4]| {
+                let x = (w[0] * a[0] + w[1] * b[0] + w[2] * c[0] + w[3] * d[0]) / 6.0;
+                let y = (w[0] * a[1] + w[1] * b[1] + w[2] * c[1] + w[3] * d[1]) / 6.0;
+                [x, y, 0.0, 1.0]
+            };
+            if i == 0 {
+                points.push(mix([1.0, 4.0, 1.0, 0.0]));
+            }
+            points.push(mix([0.0, 4.0, 2.0, 0.0]));
+            points.push(mix([0.0, 2.0, 4.0, 0.0]));
+            points.push(mix([0.0, 1.0, 4.0, 1.0]));
+            let end = if i + 1 == p.len() { 4 } else { 3 };
+            knots.extend(std::iter::repeat_n((i + 1) as f64, end));
+        }
+        vec![crate::sweep::Curve::Nurbs {
+            degree: 3,
+            points,
+            knots,
+        }]
+    }
+
+    /// #22809: the side of the outline above extruded 20 up, drafted 3 degrees about its
+    /// bottom, leaning in (or out, at -3 degrees): the section at height z is the outline
+    /// moved in by d = z tan 3 degrees (out, for d < 0). Moved by d along the inward normal N,
+    /// a smooth closed curve C bounds A(d) = A0 - L d + pi d^2 (Green's theorem on C + d N,
+    /// N' = -k T, the total turning 2 pi), and d stays below the outline's least radius of
+    /// curvature, so the solid is V = A0 h -+ L t h^2 / 2 + pi t^2 h^3 / 3, A0 and L read off the
+    /// undrafted prism (its volume A0 h, its area 2 A0 + L h). Still three faces, and the same
+    /// through the body's record (the wall certified again as it is read).
+    #[test]
+    fn a_spline_sides_sections_move_in_by_their_height_times_the_draft() {
+        all_fixes();
+        let h = 20.0;
+        for sense in [1.0, -1.0] {
+            let b = crate::sweep::extrude(
+                &spline_outline(),
+                Z,
+                h,
+                0.0,
+                crate::sweep::DraftCorner::default(),
+                true,
+            )
+            .unwrap();
+            let a0 = volume(&b) / h;
+            let l = (b.area(1e-10).unwrap() - 2.0 * a0) / h;
+            let o = order(&b);
+            draft(&b, &o, &[curved(&b, &o)], [0.0; 3], Z, Z, sense * THREE).unwrap();
+            let t = sense * TAN_THREE;
+            let v = a0 * h - l * t * h * h / 2.0 + PI * t * t * h * h * h / 3.0;
+            assert!(rel(volume(&b), v) < 1e-7, "{sense}: {} {v}", volume(&b));
+            assert_eq!(b.counts().unwrap()[0], 3);
+            let (record, _) = b.to_record().unwrap();
+            let (back, _) = crate::Body::from_record(&record, false).unwrap();
+            assert!(rel(volume(&back), v) < 1e-7, "{sense}: {}", volume(&back));
+        }
+    }
+
+    /// The same side drafted 40 degrees in: 20 up, its sections move in by up to 16.8, past the
+    /// outline's least radius of curvature, 11.25 at (+-80/3, 0) (at the knot of the control point b =
+    /// (30, 0) between a, c = (20, -+15): the first derivative (c - a) / 2, the second a - 2b + c),
+    /// so the wall folds there.
+    /// Refused as such, the body left as it was.
+    #[test]
+    fn a_spline_side_drafted_past_its_tightest_curve_is_refused() {
+        all_fixes();
+        let b = crate::sweep::extrude(
+            &spline_outline(),
+            Z,
+            20.0,
+            0.0,
+            crate::sweep::DraftCorner::default(),
+            true,
+        )
+        .unwrap();
+        let before = volume(&b);
+        let o = order(&b);
+        let e = draft(&b, &o, &[curved(&b, &o)], [0.0; 3], Z, Z, FORTY).unwrap_err();
+        assert!(
+            matches!(e, Error::Unsupported(why) if why.contains("fold")),
+            "{e:?}"
+        );
+        assert_eq!(volume(&b), before);
+    }
+
     /// Acid-6's needle: R = 0.5, h = 1000, neutral at z = -1600, theta = 0.02 degrees.
     /// r(z) = R - (z + 1600) tan(theta), so the frustum volume is
     /// `pi h (R^2 + R r_top + r_top^2) / 3` = 364.684642297274456 mm^3;
@@ -4767,7 +4925,7 @@ fn a_ringed_countersinks_cone_moves_within_the_ring() {
 fn turned_pad(cx: f64, cy: f64, z: f64, side: f64) -> Body {
     let half = side / 2.0;
     let pad = make_box([cx - half, cy - half, z], [side, side, side]).unwrap();
-    let (s, c) = (PI / 4.0).sin_cos();
+    let (s, c) = det::sin_cos(PI / 4.0);
     pad.transform(&[
         [c, s, 0.0, 0.0],
         [-s, c, 0.0, 0.0],
@@ -4841,7 +4999,7 @@ fn a_pads_corner_on_its_faces_edge_shells_to_its_closed_form() {
                 25.0 - 2.0 * t
             };
             let inner = (4.8_f64 - 2.0 * t).max(0.0);
-            let want = 60000.0 + 4.8_f64.powi(3)
+            let want = 60000.0 + det::powi(4.8_f64, 3)
                 - (60.0 - 2.0 * t) * (40.0 - 2.0 * t) * high
                 - inner * inner * 4.8;
             shells_to(&b, &open, t, want, &format!("pad {gap} from the edge"));
@@ -4866,9 +5024,9 @@ fn a_pads_corner_on_a_cylinders_rim_shells_to_its_closed_form() {
             .unwrap()
             .unwrap();
         let t = 0.05;
-        let want = PI * 2.25 * 4.0 + 0.36_f64.powi(3)
-            - PI * 1.45_f64.powi(2) * 3.9
-            - 0.26_f64.powi(2) * 0.36;
+        let want = PI * 2.25 * 4.0 + det::powi(0.36_f64, 3)
+            - PI * det::powi(1.45_f64, 2) * 3.9
+            - det::powi(0.26_f64, 2) * 0.36;
         shells_to(&b, &[], t, want, &format!("peg pad {gap} from the rim"));
     }
 }

@@ -416,6 +416,25 @@ impl RuledMode {
     }
 }
 
+/// What a Surface Fillet does with the two surfaces it rounds between (#769).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilletTrim {
+    /// Both are cut back to the round and sewn to it: one body.
+    #[default]
+    Both,
+    /// The first is cut back and sewn to the round; the second is left as it was.
+    First,
+    /// Neither is changed: the round alone is made, a new surface body.
+    None,
+}
+
+impl FilletTrim {
+    pub fn is_default(&self) -> bool {
+        *self == FilletTrim::Both
+    }
+}
+
 /// How a ruled surface's strips meet at sharp corners of its edge chain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -489,6 +508,11 @@ pub struct Extent {
     /// Through all bodies in the direction(s) instead of `distance`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub through_all: bool,
+    /// A through-all join stops at the model's far corner along the extrude direction. Designs
+    /// saved before this carry no marker and keep the older reach (the far corner times 1.02 plus
+    /// 1 mm); new through-all extrudes save it (`format/pending/through-all-join-far-corner.rs`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub through_all_to_corner: bool,
     /// Two Sides as older builds read it: `distance2` goes the other way from wherever the
     /// first side went, so a negative entered distance sends it back along the normal. Saved
     /// designs from before entered distances kept their sides carry it, so they rebuild as
@@ -1331,6 +1355,10 @@ pub enum FeatureKind {
     /// along a path). The copied features are named by id (#1134). Component copies are named by
     /// component id; the occurrence ids they make are kept so a count change keeps survivors (#12116).
     Pattern {
+        /// Optional template for copy names; the original keeps its name. The saved key
+        /// differs from the feature's legacy list of pinned body names.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        body_name_template: Option<String>,
         features: Vec<FeatureId>,
         pattern: PatternKind,
         /// Copy these bodies (as new bodies) instead of replaying features.
@@ -3229,6 +3257,49 @@ pub enum FeatureKind {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         extend: bool,
     },
+    /// A rolling-ball fillet between two surface bodies (#769): `a` and `b` each name one face
+    /// of a surface body, by a point on it; the two bodies cut each other where their surfaces
+    /// meet, each keeping the side its point is on (`extend` extends one that stops short of the
+    /// other to meet it), are sewn into `a.body` (`b.body` is then gone), and the seam between
+    /// them is rounded with a fillet of `radius`. `trim` says what is left of the two surfaces: both
+    /// cut back and sewn (the default), only `a`, or neither (the round alone, a new body).
+    SurfaceFillet {
+        #[walk(picks_faces)]
+        a: FaceAt,
+        #[walk(picks_faces)]
+        b: FaceAt,
+        #[walk(length = "Radius")]
+        radius: Expr,
+        #[serde(default, skip_serializing_if = "FilletTrim::is_default")]
+        trim: FilletTrim,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        extend: bool,
+    },
+    /// A chamfer between two surface bodies (#769): as [`FeatureKind::SurfaceFillet`], the two
+    /// surfaces cut each other where they meet and the seam between them is bevelled `distance`
+    /// back along each surface, or `distance` along the first and `distance2` along the second,
+    /// or `distance` along the first at `angle` to it. `flip` swaps which surface is the first (by
+    /// default the one facing up most). `trim` says what is left of the two surfaces.
+    SurfaceChamfer {
+        #[walk(picks_faces)]
+        a: FaceAt,
+        #[walk(picks_faces)]
+        b: FaceAt,
+        #[walk(length = "Distance")]
+        distance: Expr,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(length = "Distance 2")]
+        distance2: Option<Expr>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[walk(angle = "Angle")]
+        angle: Option<Expr>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        flip: bool,
+        #[serde(default, skip_serializing_if = "FilletTrim::is_default")]
+        trim: FilletTrim,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        extend: bool,
+    },
     Move {
         bodies: Vec<BodyName>,
         #[walk(length = ["X distance", "Y distance", "Z distance"])]
@@ -4502,6 +4573,8 @@ impl FeatureKind {
             FeatureKind::Stitch { .. } => "StitchFeature",
             FeatureKind::Thicken { .. } => "ThickenFeature",
             FeatureKind::SurfaceTrim { .. } => "TrimFeature",
+            FeatureKind::SurfaceFillet { .. } => "SurfaceFilletFeature",
+            FeatureKind::SurfaceChamfer { .. } => "SurfaceChamferFeature",
             FeatureKind::SurfaceExtend { .. } => "ExtendFeature",
             FeatureKind::SurfaceRuled { .. } => "RuledSurfaceFeature",
             FeatureKind::Unstitch { .. } => "UnstitchFeature",
@@ -4609,6 +4682,8 @@ impl FeatureKind {
             FeatureKind::SurfaceFair { .. } => "surface_fair",
             FeatureKind::SurfaceMorph { .. } => "surface_morph",
             FeatureKind::SurfaceTrim { .. } => "surface_trim",
+            FeatureKind::SurfaceFillet { .. } => "surface_fillet",
+            FeatureKind::SurfaceChamfer { .. } => "surface_chamfer",
             FeatureKind::Move { .. } => "move",
             FeatureKind::Import { .. } => "import",
             FeatureKind::MeshConvert { .. } => "mesh_convert",
@@ -4707,6 +4782,8 @@ impl FeatureKind {
             "StitchFeature" => "stitch",
             "ThickenFeature" => "thicken",
             "TrimFeature" => "surface_trim",
+            "SurfaceFilletFeature" => "surface_fillet",
+            "SurfaceChamferFeature" => "surface_chamfer",
             "ExtendFeature" => "surface_extend",
             "RuledSurfaceFeature" => "surface_ruled",
             "UnstitchFeature" => "unstitch",
@@ -4813,6 +4890,8 @@ impl FeatureKind {
             FeatureKind::Stitch { .. } => "Stitch",
             FeatureKind::Thicken { .. } => "Thicken",
             FeatureKind::SurfaceTrim { .. } => "Trim",
+            FeatureKind::SurfaceFillet { .. } => "SurfaceFillet",
+            FeatureKind::SurfaceChamfer { .. } => "SurfaceChamfer",
             FeatureKind::SurfaceExtend { .. } => "Extend",
             FeatureKind::SurfaceRuled { .. } => "RuledSurface",
             FeatureKind::Unstitch { .. } => "Unstitch",

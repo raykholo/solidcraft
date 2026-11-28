@@ -11,6 +11,7 @@ mod weld_tests {
         crate::weld::WeldRecord {
             id: 42,
             number: 1,
+            label: None,
             settings: crate::weld::WeldSettings::default(),
             symbol: Some(solidcraft_geom::weld::Weld {
                 arrow_side: Some(solidcraft_geom::weld::WeldSide {
@@ -116,6 +117,88 @@ mod weld_tests {
             let settings = WeldSettings { spans: Some(WeldSpans { count, length_mm, pitch_mm }), ..Default::default() };
             assert_eq!(settings.validate().is_ok(), valid);
         }
+    }
+    #[test]
+    fn weld_data_fields_validate_round_trip_and_stay_out_of_older_saves() {
+        use crate::weld::{WeldNdt, WeldSettings};
+        let plain = serde_json::to_value(WeldSettings::default()).unwrap();
+        for key in ["position", "quality", "wps", "ndt", "tail_text", "filler"] {
+            assert!(plain.get(key).is_none(), "{key} is not saved while empty");
+        }
+        let full = WeldSettings {
+            process: Some("522+15".into()),
+            position: Some("PH".into()),
+            quality: Some("ISO 13919-2-B".into()),
+            wps: Some("WPS-017 rev 2".into()),
+            ndt: Some(WeldNdt { methods: [("VT".into(), 100.), ("UT".into(), 10.)].into_iter().collect(), note: Some("to ISO 17640".into()) }),
+            tail_text: Some("see note 4".into()),
+            filler: Some("ISO 14341-A G 42 4 M21 3Si1".into()),
+            ..Default::default()
+        };
+        full.validate().unwrap();
+        let back: WeldSettings = serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
+        assert_eq!(back, full);
+        for (p, ok) in [
+            ("135", true),
+            ("13", true),
+            ("131-D", true),
+            ("522+15", true),
+            ("522+131-D", true),
+            ("1234", false),
+            ("131-", false),
+            ("131-d", false),
+            ("+15", false),
+            ("135+", false),
+        ] {
+            assert_eq!(crate::weld::process_valid(p), ok, "{p}");
+        }
+        let bad = |f: fn(&mut WeldSettings)| {
+            let mut s = WeldSettings::default();
+            f(&mut s);
+            s.validate().is_err()
+        };
+        assert!(bad(|s| s.position = Some("PL".into())));
+        assert!(bad(|s| s.quality = Some("ISO 5817-A".into())));
+        assert!(bad(|s| s.quality = Some("ISO 9999-C".into())));
+        assert!(bad(|s| s.wps = Some(" ".into())));
+        assert!(bad(|s| s.tail_text = Some("two\nlines".into())));
+        assert!(bad(|s| s.filler = Some("x".repeat(129))));
+        assert!(bad(|s| s.ndt = Some(WeldNdt::default())));
+        assert!(bad(|s| s.ndt = Some(WeldNdt { methods: [("XR".into(), 10.)].into_iter().collect(), note: None })));
+        assert!(bad(|s| s.ndt = Some(WeldNdt { methods: [("UT".into(), 0.)].into_iter().collect(), note: None })));
+        assert!(bad(|s| s.ndt = Some(WeldNdt { methods: [("UT".into(), 100.5)].into_iter().collect(), note: None })));
+        assert!(!bad(|s| s.ndt = Some(WeldNdt { methods: Default::default(), note: Some("visual only".into()) })));
+    }
+    #[test]
+    fn weld_numbers_renumber_in_creation_order_and_labels_stay_unique() {
+        use crate::weld::{next_number, renumber, set_label, set_number};
+        let mut welds: Vec<_> =
+            [(7, 5), (3, 9), (12, 2)].into_iter().map(|(id, number)| crate::weld::WeldRecord { id, number, ..record() }).collect();
+        assert_eq!(next_number(&welds), Some(10));
+        renumber(&mut welds);
+        assert_eq!(welds.iter().map(|w| (w.id, w.number)).collect::<Vec<_>>(), [(7, 2), (3, 1), (12, 3)]);
+        assert!(set_number(&mut welds, 7, 1).is_err(), "W1 is taken");
+        assert!(set_number(&mut welds, 7, 0).is_err());
+        set_number(&mut welds, 7, 12).unwrap();
+        assert_eq!(welds[0].name(), "W12");
+        set_label(&mut welds, 7, Some("A-12".into())).unwrap();
+        assert_eq!((welds[0].name(), welds[0].number), ("A-12".into(), 12));
+        for taken in ["A-12", "W3", "W3 ", " W3", " A-1", "seventeen bytes!!", ""] {
+            assert!(set_label(&mut welds, 3, Some(taken.into())).is_err(), "{taken}");
+        }
+        set_label(&mut welds, 7, None).unwrap();
+        assert_eq!(welds[0].name(), "W12");
+        assert!(set_number(&mut welds, 99, 50).is_err());
+        let mut doc = Document::new("Welds");
+        doc.welds = welds;
+        doc.welds[1].label = Some("Root".into());
+        let back = crate::format::read(&serde_json::to_string(&doc).unwrap()).unwrap();
+        assert_eq!(back.welds, doc.welds);
+        let mut value = serde_json::to_value(&doc).unwrap();
+        value["welds"][2]["label"] = serde_json::json!("Root");
+        assert!(crate::format::read(&value.to_string()).is_err(), "labels are unique in a saved design");
+        value["welds"][2]["label"] = serde_json::json!("W4");
+        assert!(crate::format::read(&value.to_string()).is_err(), "a label never reads as another number");
     }
     #[test]
     fn weld_graphics_refuse_hostile_saved_records() {
@@ -318,6 +401,7 @@ fn plate_doc() -> (Document, u64) {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -435,6 +519,7 @@ fn an_outline_closed_by_point_on_curve_tangent_joints_extrudes() {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -2137,6 +2222,7 @@ fn box_fillet_cut_timeline() {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -2377,6 +2463,7 @@ fn copy_lineage_resolves_seed_material_and_respects_overrides() {
     let pat_id = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_name_template: None,
                 features: Vec::new(),
                 pattern: PatternKind::Rectangular {
                     dir1: crate::points::Dir(Vec3::X),
@@ -2456,6 +2543,7 @@ fn copy_lineage_resolves_seed_material_and_respects_overrides() {
     let join_id = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_name_template: None,
                 features: Vec::new(),
                 pattern: PatternKind::Rectangular {
                     dir1: crate::points::Dir(Vec3::X),
@@ -3260,6 +3348,7 @@ fn a_split_of_a_body_of_two_pieces_gives_the_halves_of_both() {
                 symmetric_offset: false,
                 through_all: false,
                 second_follows_first: false,
+                through_all_to_corner: false,
                 taper: None,
                 taper2: None,
                 corner: Default::default(),
@@ -3778,6 +3867,7 @@ fn an_extruded_ellipse_or_spline_is_one_wall_named_by_its_curve() {
             symmetric_offset: false,
             through_all: false,
             second_follows_first: false,
+            through_all_to_corner: false,
             taper: None,
             taper2: None,
             corner: Default::default(),
@@ -4183,6 +4273,24 @@ fn thread_target_body_identities_follow_face_slots_and_reference_remapping() {
     assert_eq!(saved["target_bodies"], serde_json::json!(["Renamed", "B", "Renamed"]));
     let reopened: FeatureKind = serde_json::from_value(saved).unwrap();
     assert_eq!(reopened, kind);
+}
+
+/// Surface Fillet and Chamfer name and find each pick on its own body (#769): `a` on `a.body`,
+/// `b` on `b.body`, never on another body with a face at the same point.
+#[test]
+fn surface_fillet_and_chamfer_scope_each_face_slot_to_its_body() {
+    for kind in ["surface_fillet", "surface_chamfer"] {
+        let kind: FeatureKind = serde_json::from_value(serde_json::json!({
+            "type": kind, "a": {"body": "A", "point": [0, 5, 0]}, "b": {"body": "B", "point": [0, 0, 5]},
+            "radius": "2 mm", "distance": "2 mm"
+        }))
+        .unwrap();
+        assert_eq!(kind.face_points(), vec![Vec3::new(0.0, 5.0, 0.0), Vec3::new(0.0, 0.0, 5.0)]);
+        assert_eq!([kind.face_slot_body(0), kind.face_slot_body(1), kind.face_slot_body(2)], [Some("A"), Some("B"), None]);
+    }
+    // Other kinds keep their own rule: a thread's slot is its target body, the rest none.
+    let thread: FeatureKind = serde_json::from_value(serde_json::json!({"type": "thread", "face": [3, 0, 2], "target_bodies": ["T"]})).unwrap();
+    assert_eq!(thread.face_slot_body(0), Some("T"));
 }
 
 #[test]
@@ -5547,6 +5655,7 @@ fn capture_position_20644_isolation_for_to_object_mirror_pattern_plane_and_joint
                     start_offset: None,
                     symmetric_offset: false,
                     through_all: false,
+                    through_all_to_corner: false,
                     second_follows_first: false,
                     taper: None,
                     taper2: None,
@@ -5593,6 +5702,7 @@ fn capture_position_20644_isolation_for_to_object_mirror_pattern_plane_and_joint
     let pattern_pre = doc
         .add_feature(
             FeatureKind::Pattern {
+                body_name_template: None,
                 features: Vec::new(),
                 pattern: PatternKind::Rectangular {
                     dir1: crate::points::Dir(Vec3::Y),
@@ -5893,6 +6003,7 @@ fn extrude_start_offset_caps_are_named_consistently_across_rotations() {
                         start_offset: Some("4".into()),
                         symmetric_offset: false,
                         through_all: false,
+                        through_all_to_corner: false,
                         second_follows_first: false,
                         taper: None,
                         taper2: None,

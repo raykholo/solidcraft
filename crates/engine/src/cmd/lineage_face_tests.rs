@@ -219,6 +219,38 @@ fn the_end_faces_of_a_pipe_take_a_sketch_that_follows_the_pipe() {
     }
 }
 
+/// #12485: builds before #14897 named a pipe's faces by their number in the body it built
+/// (`F2:face:<k>`). A design saved so, with a round on the edge between a pipe's end and its wall,
+/// opens with the round on that edge.
+#[test]
+fn a_round_on_a_pipe_saved_under_numbered_names_opens() {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY", "name": "Path"}));
+    run(&mut s, "sketch.line", json!({"points": [[0, 0], [40, 0]]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.pipe", json!({"path_sketch": "Path", "path": ["l1"], "diameter": 10, "operation": "new", "name": "Tube"}));
+    // Each face's name now, and the name the earlier builds gave it: its number in the pipe's body.
+    let names = solidcraft_doc::naming::face_names(&s.model.state().bodies[0]).to_vec();
+    let pipe = names[0].split_once(':').unwrap().0.to_string();
+    let mut renames: Vec<(String, String)> = names.iter().enumerate().map(|(k, name)| (name.clone(), format!("{pipe}:face:{k}"))).collect();
+    renames.sort_by_key(|(name, _)| std::cmp::Reverse(name.len()));
+    run(&mut s, "solid.fillet", json!({"edges": [[40, 0, 5]], "radius": 1, "name": "Round"}));
+    no_errors(&s);
+    let volume = s.model.state().bodies[0].volume().unwrap();
+
+    let mut doc: Value = serde_json::from_str(&s.doc.to_json()).unwrap();
+    let round = doc["features"].as_array_mut().unwrap().iter_mut().find(|f| f["name"] == "Round").unwrap();
+    let edge = round["edge_names"][0].as_str().unwrap().to_string();
+    let old = renames.iter().fold(edge.clone(), |e, (name, old)| e.replace(name.as_str(), old));
+    assert!(old != edge && !old.contains(":end") && !old.contains(":side"), "{edge} -> {old}");
+    round["edge_names"][0] = json!(old);
+
+    let mut t = Session::new(solidcraft_doc::Document::from_json(&doc.to_string()).unwrap());
+    t.refresh();
+    no_errors(&t);
+    assert!((t.model.state().bodies[0].volume().unwrap() - volume).abs() < 1e-6, "the same edge is rounded");
+}
+
 /// #20622: a rib's walls take a sketch, as a thin extrude's walls do: a 2 mm rib along a line
 /// across a shelled box (the issue's steps). Each wall is named by the line and its side, so the
 /// sketches follow the rib when its line moves and keep their faces after a save.

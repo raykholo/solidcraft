@@ -1201,6 +1201,12 @@ impl ModelState {
         self.kept_separate.get(&feature).copied()
     }
 
+    /// How Frame Member `feature` finished its members' ends: each body it made with its two ends ([start, end] along
+    /// its line); none for any other feature.
+    pub fn member_ends(&self, feature: u64) -> &[crate::frame_corners::MemberEnds] {
+        self.member_ends.get(&feature).map_or(&[], Vec::as_slice)
+    }
+
     /// What dogbone `feature` relieved and skipped in this evaluation.
     pub fn dogbone_report(&self, feature: u64) -> Option<&crate::dogbone::DogboneReport> {
         self.dogbones.get(&feature)
@@ -1334,6 +1340,9 @@ pub struct ModelState {
     /// feature id), so the session keeps the names stored for their copies in their places
     /// ([`crate::Feature::pattern_pins`]).
     pattern_left_out: BTreeMap<u64, Vec<usize>>,
+    /// How each Frame Member feature finished its members' ends (by feature id, #4003): each body it made with its
+    /// two ends, a plane cut or coped, fitted or square. A cut list reads its end angles from these.
+    member_ends: BTreeMap<u64, Vec<crate::frame_corners::MemberEnds>>,
     /// For a feature saved before format 14 that split a body, a digest of the later features'
     /// picks its pieces were named by (by feature id, see [`crate::lineage::order_legacy_lumps`]):
     /// the state stands for the feature only while those picks are the same.
@@ -1421,6 +1430,7 @@ impl ModelState {
             tapered,
             kept_separate,
             pattern_left_out,
+            member_ends,
             legacy_picks,
             cut_extents,
             dogbones,
@@ -1444,6 +1454,7 @@ impl ModelState {
             tapered: tapered.clone(),
             kept_separate: kept_separate.clone(),
             pattern_left_out: pattern_left_out.clone(),
+            member_ends: member_ends.clone(),
             legacy_picks: legacy_picks.clone(),
             cut_extents: cut_extents.clone(),
             dogbones: dogbones.clone(),
@@ -4376,6 +4387,8 @@ struct ModelChange {
     kept_separate: Option<KeptSeparate>,
     /// A body Pattern's sources it left out.
     pattern_left_out: Option<Vec<usize>>,
+    /// A Frame Member's members' ends.
+    member_ends: Option<Vec<crate::frame_corners::MemberEnds>>,
     /// Where the feature found its named faces.
     named_faces: Option<Vec<Vec3>>,
     /// Cosmetic threads appended by this feature (`t.feature == feature`), in order.
@@ -4737,6 +4750,7 @@ impl ModelState {
             && self.tapered.keys().filter(|k| **k != feature).eq(before.tapered.keys().filter(|k| **k != feature))
             && others_same(&self.kept_separate, &before.kept_separate, feature)
             && others_same(&self.pattern_left_out, &before.pattern_left_out, feature)
+            && others_same(&self.member_ends, &before.member_ends, feature)
             && others_same(&self.named_faces, &before.named_faces, feature);
         if !same_rest {
             return None;
@@ -4801,6 +4815,7 @@ impl ModelState {
             tapered: self.tapered.get(&feature).cloned(),
             kept_separate: self.kept_separate.get(&feature).copied(),
             pattern_left_out: self.pattern_left_out.get(&feature).cloned(),
+            member_ends: self.member_ends.get(&feature).cloned(),
             named_faces: self.named_faces.get(&feature).cloned(),
             added_threads: Arc::from(added_threads.to_vec()),
             clear_of: Arc::from(clear_boxes),
@@ -4923,6 +4938,10 @@ impl ModelState {
         next.pattern_left_out.remove(&feature);
         if let Some(l) = &change.pattern_left_out {
             next.pattern_left_out.insert(feature, l.clone());
+        }
+        next.member_ends.remove(&feature);
+        if let Some(e) = &change.member_ends {
+            next.member_ends.insert(feature, e.clone());
         }
         next.named_faces.remove(&feature);
         if let Some(p) = &change.named_faces {
@@ -8946,8 +8965,9 @@ fn track_altered_sheets(before: &ModelState, after: &mut ModelState, f: &Feature
 }
 
 /// A Join whose material meets none of its targets still joins it, to the first target as a
-/// separate piece (see `apply_traced`), and so does an Emboss, which raises its profiles with a Join
-/// and has no operation to pick (#23375): a valid body in several pieces, but rarely what was meant
+/// separate piece (see `apply_traced`), and so do an Emboss (#23375), a Rib, a Mirror of a Rib and
+/// a raised Cell Grid, which join with no operation to pick (#23673): a valid body in several
+/// pieces, but rarely what was meant
 /// when Join was left on by mistake. Says so when a feature's Join leaves the bodies it changed
 /// in more pieces than they had (#4434). Combine joins the bodies it is given, apart or not.
 fn note_join_apart(doc: &Document, before: &ModelState, after: &ModelState, f: &Feature, warning: &mut Option<String>) {
@@ -8955,12 +8975,18 @@ fn note_join_apart(doc: &Document, before: &ModelState, after: &ModelState, f: &
     if bodies.is_empty() && features.iter().filter_map(|id| doc.feature(id.0)).any(|source| {
         !source.suppressed && matches!(source.kind, FeatureKind::Extrude { operation: Operation::Join, .. })
     }));
-    let emboss = matches!(&f.kind, FeatureKind::Emboss { deboss: false, .. });
-    if feature_operation(f) != Some(Operation::Join) && !mirrored_join && !emboss {
+    let picked_join = feature_operation(f) == Some(Operation::Join) || mirrored_join;
+    // An Emboss, a Rib and a raised Cell Grid join with no operation to pick, and a Mirror of a
+    // Rib joins its copies the same way (#23673).
+    let always_joins = |g: &Feature| feature_operation(g).is_none() && feature_op(g).0 == Operation::Join;
+    let mirrored_fixed = matches!(&f.kind, FeatureKind::Mirror { features, bodies, .. }
+        if bodies.is_empty() && features.iter().filter_map(|id| doc.feature(id.0)).any(|source| !source.suppressed && always_joins(source)));
+    let fixed_join = matches!(&f.kind, FeatureKind::Emboss { deboss: false, .. }) || feature_op(f).0 == Operation::Join || mirrored_fixed;
+    if !picked_join && !fixed_join {
         return;
     }
-    // The Emboss window has no New Body to point to.
-    let hint = if emboss { "" } else { " (New Body makes it a body of its own)" };
+    // Only a window with an operation to pick has a New Body to point to.
+    let hint = if picked_join { " (New Body makes it a body of its own)" } else { "" };
     for (name, n) in join_pieces_added(before, after) {
         append_warning(warning, format!("the joined piece doesn't touch `{name}`, so `{name}` is now in {n} separate pieces{hint}"));
     }
@@ -10305,10 +10331,11 @@ pub fn second_side(first: f64, negative: bool, follows_first: bool) -> f64 {
     if along { 1.0 } else { -1.0 }
 }
 
-/// Distance that reaches through every target body from the plane `start` along the normal from
-/// the sketch plane (the From Object level plus any start offset), on either side.
-pub fn through_all_distance(st: &ModelState, plane: &Plane, start: f64, targets: &[String]) -> Result<f64> {
-    let mut far: f64 = 0.0;
+/// How far the target bodies' exact corners reach each way from `start` along the plane normal.
+/// Both are at least zero: below the start, then above it.
+fn through_all_side_reaches(st: &ModelState, plane: &Plane, start: f64, targets: &[String]) -> Result<(f64, f64)> {
+    let mut neg: f64 = 0.0;
+    let mut pos: f64 = 0.0;
     let mut any = false;
     for b in st.bodies.iter().filter(|b| targets.is_empty() || targets.contains(&b.name)) {
         let bb = b.body.exact_bounds().map_err(|e| DocError::Invalid(e.to_string()))?;
@@ -10322,13 +10349,25 @@ pub fn through_all_distance(st: &ModelState, plane: &Plane, start: f64, targets:
                 if i & 2 == 0 { bb.min.y } else { bb.max.y },
                 if i & 4 == 0 { bb.min.z } else { bb.max.z },
             );
-            far = far.max((plane.height(p) - start).abs());
+            let h = plane.height(p) - start;
+            if h < 0.0 {
+                neg = neg.max(-h);
+            } else {
+                pos = pos.max(h);
+            }
         }
     }
     if !any {
         return Err(DocError::Invalid("through all needs a body to cut".into()));
     }
-    Ok(far * 1.02 + 1.0)
+    Ok((neg, pos))
+}
+
+/// Distance that reaches through every target body from the plane `start` along the normal from
+/// the sketch plane (the From Object level plus any start offset), on either side.
+pub fn through_all_distance(st: &ModelState, plane: &Plane, start: f64, targets: &[String]) -> Result<f64> {
+    let (neg, pos) = through_all_side_reaches(st, plane, start, targets)?;
+    Ok(neg.max(pos) * 1.02 + 1.0)
 }
 
 /// The body a face-based feature applies to: by name, or the one whose surface is nearest the
@@ -11211,11 +11250,22 @@ pub(crate) fn blend_edges_on(
         });
         let moved = moved_since.unwrap_or(false);
         let named = trusted_edge_name(f, i, p);
+        // On the body the pick was made on, a pick on an edge named alike but for its faces' tie
+        // numbers is that edge: the numbers moved, not the edge (#22230). An unchanged box does
+        // not show the body unmoved where an earlier feature places it whole.
+        let unmoved = moved_since == Some(false) && !placed;
         let Some(hit) = named.and_then(|n| crate::name_lookup::locate_projected_edge(mb, n, p).ok()) else {
             // #21997: the saved whole closed edge can now exist as the pieces a whole-turn
             // revolve join's turned seam split it into. Every piece is blended, as a pick made
             // today stores one name per piece.
             let Some(pieces) = named.and_then(|n| crate::name_lookup::recover_split_closed_edge(mb, n, p)) else {
+                // #22418: with the other number, the name can find no edge at all, where only one
+                // of the faces told apart by it meets the edge's other face; the pick then lies on
+                // the edge it is, clear of its ends.
+                if named.filter(|_| unmoved).and_then(|n| crate::name_lookup::retied_edge(mb, &mb.mesh(), n, None, p)).is_some() {
+                    out.push((i, p));
+                    continue;
+                }
                 if let Some(name) = named {
                     let makers = suppressed_edge_makers(doc, f, name);
                     if !makers.is_empty() {
@@ -11234,11 +11284,9 @@ pub(crate) fn blend_edges_on(
             notes.push(format!("the saved edge `{stored}` now exists as {} pieces; every piece is blended", pieces.len()));
             continue;
         };
-        // On the body the pick was made on, a pick off the named edge and on one named alike but for
-        // its faces' tie numbers is that edge: the numbers moved, not the edge (#22230). An
-        // unchanged box does not show the body unmoved where an earlier feature places it whole.
-        let hit = match (hit.on_point, moved_since) {
-            (false, Some(false)) if !placed => crate::name_lookup::retied_edge(mb, &mb.mesh(), stored, hit.edge, p)
+        // A pick off the named edge, on one named alike but for its faces' tie numbers (#22230).
+        let hit = match hit.on_point {
+            false if unmoved => crate::name_lookup::retied_edge(mb, &mb.mesh(), stored, Some(hit.edge), p)
                 .map_or(hit, |edge| crate::name_lookup::EdgeHit { edge, point: p, verified: false, on_point: true }),
             _ => hit,
         };
@@ -13473,8 +13521,35 @@ fn feature_tools_with_constructor(
                     // The reach is a length; a negative saved distance keeps its side (#10415).
                     // Measured from where the extrude starts, so an offset leaves no side short (#16556).
                     let start = from + extent.start_offset.as_deref().map(|e| val(vals, e, Kind::Length)).transpose()?.unwrap_or(0.0);
-                    let reach = through_all_distance(st, &ss.plane, start, &crate::plain(targets))?;
-                    through_all_side(reach, val(vals, &extent.distance, Kind::Length).ok())
+                    if *operation == Operation::Join && extent.through_all_to_corner {
+                        // A join stops on the exact corner height: a margin would leave material past the model.
+                        let saved_neg = val(vals, &extent.distance, Kind::Length).is_ok_and(|saved| saved < 0.0);
+                        let (neg, pos) = through_all_side_reaches(st, &ss.plane, start, &crate::plain(targets))?;
+                        let pure_symmetric = extent.direction == crate::Direction::Symmetric && extent.distance2.is_none();
+                        let travel_negative = match extent.direction {
+                            crate::Direction::Symmetric => extent.distance2.is_some() && saved_neg,
+                            crate::Direction::Negative => !saved_neg,
+                            crate::Direction::Positive => saved_neg,
+                        };
+                        let magnitude = if pure_symmetric {
+                            neg.max(pos)
+                        } else if travel_negative {
+                            neg
+                        } else {
+                            pos
+                        };
+                        // Pointing away from the model (sketched on its far face, say): nothing lies that
+                        // way, so keep the margined reach instead of refusing valid input.
+                        let magnitude = if !pure_symmetric && !(magnitude > 0.0) {
+                            through_all_distance(st, &ss.plane, start, &crate::plain(targets))?
+                        } else {
+                            magnitude
+                        };
+                        through_all_side(magnitude, val(vals, &extent.distance, Kind::Length).ok())
+                    } else {
+                        let reach = through_all_distance(st, &ss.plane, start, &crate::plain(targets))?;
+                        through_all_side(reach, val(vals, &extent.distance, Kind::Length).ok())
+                    }
                 }
                 (None, _) => val(vals, &extent.distance, Kind::Length)?,
             };
@@ -13775,6 +13850,17 @@ fn feature_tools_with_constructor(
             };
             // A negative distance flips the side.
             let (mut lo, mut hi) = if a <= b { (a, b) } else { (b, a) };
+            if *operation == Operation::Join
+                && extent.through_all
+                && extent.through_all_to_corner
+                && direction == crate::Direction::Symmetric
+                && extent.distance2.is_none()
+                && extent.to.is_none()
+            {
+                let (neg, pos) = through_all_side_reaches(st, &ss.plane, off, &crate::plain(targets))?;
+                lo = -neg;
+                hi = pos;
+            }
             // To a curved (or slanted) face: run right through the target body, then keep what
             // lies before that face's surface, offset by the To offset along the travel
             // (`trim_to_face`, #12617). An end the offset carries back across the start, away from
@@ -14475,14 +14561,15 @@ fn feature_tools_with_constructor(
             }
             regions.iter().map(|r| Ok(tool(r, kernel::sweep_with(&ss.plane, r, &segs, &ctl)?))).collect()
         }
-        FeatureKind::Pipe { path_sketch, path, path_body, path_edges, diameter, wall, .. } => {
+        FeatureKind::Pipe { path_sketch, path, path_body, path_edges, diameter, wall, operation, .. } => {
             let r = val(vals, diameter, Kind::Length)? / 2.0;
             if !(r > 1e-6) {
                 return Err(DocError::Invalid("pipe diameter must be positive".into()));
             }
             let region = pipe_region(vals, r, wall)?;
             // Its faces are named as a sweep's caps and a cylinder's wall are (#14897).
-            let tool = |body: Body| crate::lineage::pipe_tool(body, region.outer.segs.len());
+            let own_body = *operation == Operation::NewBody;
+            let tool = |body: Body| crate::lineage::pipe_tool(body, region.outer.segs.len(), own_body);
             // The path is a chain of a body's edges (#16084), in the chain's own order, or the
             // curves of a sketch.
             let segs = match path_body {
@@ -15544,6 +15631,35 @@ fn pattern_bodies(
             }
         }
     }
+    // Validate every intended name before copying anything. Templates bypass stored legacy
+    // names so growing and shrinking a pattern cannot change a survivor's name.
+    let template = match &f.kind {
+        FeatureKind::Pattern { body_name_template, join, .. } => {
+            if body_name_template.is_some() && *join {
+                return Err(DocError::Invalid("body_name_template requires separate body copies (join: false)".into()));
+            }
+            body_name_template.as_deref()
+        }
+        _ => None,
+    };
+    let mut template_names = Vec::new();
+    if let Some(template) = template {
+        if template.trim().is_empty() {
+            return Err(DocError::Invalid("body_name_template must be a nonempty string".into()));
+        }
+        if bodies.len().saturating_mul(mats.len()) > 1 && !template.contains("{i}") {
+            return Err(DocError::Invalid("body_name_template must contain {i} when creating more than one copy".into()));
+        }
+        let mut taken: std::collections::HashSet<String> = st.bodies.iter().map(|b| b.name.clone()).collect();
+        for i in 1..=bodies.len().saturating_mul(mats.len()) {
+            let name = template.replace("{i}", &i.to_string()).trim().to_string();
+            if !taken.insert(name.clone()) {
+                return Err(DocError::Invalid(format!("Body name `{name}` is already in use")));
+            }
+            template_names.push(name);
+        }
+    }
+    let mut template_names = template_names.into_iter();
     let run_one = |&(s, k): &(usize, usize)| -> Result<Body> {
         let Some(Ok(p)) = prepared.get(s) else { return Err(DocError::Invalid("pattern body".into())) };
         let Some(&local) = p.locals.get(k) else { return Err(DocError::Invalid("pattern transform".into())) };
@@ -15569,6 +15685,10 @@ fn pattern_bodies(
         let p = match entry {
             Ok(p) => p,
             Err(PatternPrepError::Missing { error: e, .. } | PatternPrepError::WrongPlacement(e) | PatternPrepError::LeftOut(e)) => {
+                // Preparation failures keep the same template slots as transform failures.
+                for _ in 0..mats.len() {
+                    let _ = template_names.next();
+                }
                 skipped.push(n.to_string());
                 left_out.push(s);
                 first_error.get_or_insert(e);
@@ -15588,6 +15708,11 @@ fn pattern_bodies(
             }
         }
         if let Some(e) = body_err {
+            if template.is_some() {
+                for _ in 0..mats.len() {
+                    let _ = template_names.next();
+                }
+            }
             // Only once every copy of this body is made: a body that fails leaves none behind.
             skipped.push(n.to_string());
             left_out.push(s);
@@ -15597,7 +15722,11 @@ fn pattern_bodies(
         for (k, (body, local)) in copies.into_iter().enumerate() {
             let copy = moved_copy(&p.mb, body, k + 1);
             let slot = pattern_name_slot(f.body_names.len(), count, mats.len(), s, k, f.pattern_names_in_order);
-            let name = pattern_copy_name(&mut names, f, slot, &p.mb.name);
+            let name = if template.is_some() {
+                template_names.next().ok_or_else(|| DocError::Invalid("missing pattern copy name".into()))?
+            } else {
+                pattern_copy_name(&mut names, f, slot, &p.mb.name)
+            };
             copy_sheet(st, &p.mb.name, &name, &local);
             let mut mb = ModelBody::traced_new(name, copy, f.id);
             // A copy is its source moved: it is drawn from the source's triangles and display plans,
@@ -17078,13 +17207,13 @@ fn with_named_face_points(doc: &Document, vals: &BTreeMap<String, Value>, state:
         }
         let from = if k == 0 { placed.unwrap_or(*p) } else { *p };
         let scoped;
-        let input = if let Some(body) = f.kind.thread_target_body(k) {
+        let input = if let Some(body) = f.kind.face_slot_body(k) {
             scoped = ModelState { bodies: fst.bodies.iter().filter(|b| b.name == body).cloned().collect(), ..ModelState::default() };
             &scoped
         } else {
             &fst
         };
-        let body = f.kind.thread_target_body(k).or_else(|| f.kind.face_body());
+        let body = f.kind.face_slot_body(k).or_else(|| f.kind.face_body());
         // Only a thread may find a numbered piece of a round side again as its whole face (#16602).
         let hit = if let FeatureKind::TransformFace { body, .. } = &f.kind {
             crate::name_lookup::locate_owned_face(input, body, n, from)
@@ -18825,10 +18954,16 @@ fn nearest_object_face(b: &ModelBody, p: Vec3, normal: Option<Vec3>) -> Option<(
 /// cut the face away there: the copy still ends at the face the feature names, as the feature
 /// did, not at a face that later feature left at the point, such as a chamfer's slope (#17692).
 fn object_face(st: &ModelState, name: Option<&str>, p: Vec3, normal: Option<Vec3>) -> Option<(usize, usize)> {
-    if let Some(n) = name.filter(|n| !n.is_empty())
-        && let Some(hit) = crate::naming::locate_face(st, n, p)
-    {
-        return Some((hit.body, hit.face));
+    if let Some(n) = name.filter(|n| !n.is_empty()) {
+        if let Some(hit) = crate::naming::locate_face(st, n, p) {
+            return Some((hit.body, hit.face));
+        }
+        // The face split in pieces, the point maybe on none of them: its surface is theirs, not
+        // that of whichever other face is now nearest the point, such as the wall of the cut that
+        // split it (#23612).
+        if let Some(piece) = crate::name_lookup::nearest_split_face_piece(st, n, p) {
+            return Some(piece);
+        }
     }
     face_at(st, p, normal)
 }
@@ -20038,6 +20173,8 @@ fn eval_feature_kind(
         | FeatureKind::Stitch { .. }
         | FeatureKind::Thicken { .. }
         | FeatureKind::SurfaceTrim { .. }
+        | FeatureKind::SurfaceFillet { .. }
+        | FeatureKind::SurfaceChamfer { .. }
         | FeatureKind::SurfaceExtend { .. }
         | FeatureKind::SurfaceExtrude { .. }
         | FeatureKind::Unstitch { .. }
@@ -20789,7 +20926,10 @@ fn eval_feature_kind(
             }
             Ok(())
         }
-        FeatureKind::Pattern { features, pattern, bodies, placements, components, join, .. } => {
+        FeatureKind::Pattern { features, pattern, bodies, placements, components, join, body_name_template, .. } => {
+            if body_name_template.is_some() && (bodies.is_empty() || !components.is_empty() || *join) {
+                return Err(DocError::Invalid("body_name_template requires separate body copies (join: false)".into()));
+            }
             // Component placements are reconciled on the document after evaluation (#12116).
             if !components.is_empty() {
                 let _ = pattern_transforms(doc, vals, st, f.component, pattern)?;
@@ -22397,11 +22537,11 @@ pub fn face_point_names(doc: &Document, st: &ModelState, kind: &FeatureKind, com
         }
         return Ok(names);
     }
-    if thread_target_bodies(doc, st, kind)?.is_some() {
+    if matches!(kind, FeatureKind::SurfaceFillet { .. } | FeatureKind::SurfaceChamfer { .. }) || thread_target_bodies(doc, st, kind)?.is_some() {
         let mut names = Vec::with_capacity(pts.len());
         for (slot, point) in pts.iter().enumerate() {
             let scoped;
-            let input = if let Some(body) = kind.thread_target_body(slot) {
+            let input = if let Some(body) = kind.face_slot_body(slot) {
                 scoped = ModelState { bodies: st.bodies.iter().filter(|b| b.name == body).cloned().collect(), ..ModelState::default() };
                 &scoped
             } else {

@@ -2372,6 +2372,7 @@ mod tests {
                         symmetric_offset: false,
                         through_all: false,
                         second_follows_first: false,
+                        through_all_to_corner: false,
                         taper: Some("0 deg".into()),
                         taper2: None,
                         corner: Default::default(),
@@ -2730,6 +2731,37 @@ mod tests {
         assert!(said.not_understood.iter().any(|what| what.contains("configs")), "{:?}", said.not_understood);
         let saved: Value = serde_json::from_str(&opened.to_json()).unwrap();
         assert_eq!(saved["configs"], value["configs"], "kept for the build that reads them");
+    }
+
+    #[test]
+    fn configuration_folder_suppression_roundtrips() {
+        use crate::config::{Column, ConfigRow};
+        let mut d = Document::new("folder suppression");
+        let feature = d
+            .add_feature(
+                crate::FeatureKind::Box {
+                    corner: ["0".into(), "0".into(), "0".into()],
+                    length: "10".into(),
+                    width: "10".into(),
+                    height: "10".into(),
+                    operation: crate::Operation::NewBody,
+                    centred: false,
+                },
+                Some("Box1"),
+            )
+            .unwrap();
+        let group = d.allocate_id().unwrap();
+        d.timeline_groups.push(crate::TimelineGroup { id: group, name: "Details".into(), parent: None, features: vec![feature], joints: Vec::new() });
+        d.configs.columns = vec![Column::SuppressFolder(group)];
+        d.configs.rows = vec![
+            ConfigRow { id: d.allocate_id().unwrap(), name: "On".into(), cells: vec!["false".into()] },
+            ConfigRow { id: d.allocate_id().unwrap(), name: "Off".into(), cells: vec!["true".into()] },
+        ];
+        d.apply_configuration("Off").unwrap();
+        let opened = read(&d.to_json()).unwrap();
+        assert_eq!(opened, d);
+        assert!(opened.feature(feature).unwrap().suppressed);
+        assert!(opened.configuration_matches());
     }
 
     #[test]

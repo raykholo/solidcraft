@@ -13,7 +13,7 @@
 
 use crate::network::{self, CrossFace, FaceFrame, NetCurve, NetworkCurve, PointCurve, Tolerances};
 use solidcore_record::brep::Brep;
-use solidcore_record::{Plane, Seg2, Vec3};
+use solidcore_record::{Plane, Seg2, Vec2, Vec3};
 use solidcraft_geom::brep::eval::{CurveEval, SurfaceEval};
 use solidcraft_geom::bspline::{CurveN, NurbsSurface, SplineError};
 use solidcraft_geom::prelude::*;
@@ -142,6 +142,17 @@ pub fn boundary_surface(u: &[BoundaryCurve], v: &[BoundaryCurve]) -> Result<Body
                 boundary.push(c);
             }
         }
+        // Where two sides meet tangent to each other the patch has a flat corner (see
+        // [`flat_corner_refusal`]). The surface of a loop of one sketch's curves is that sketch's
+        // plane, whatever the corners: the face is the plane bounded by the loop, exact. Any
+        // other loop with such a corner has no surface here.
+        let flat = made.smlib()?.face_flat_corners(0).map_err(|e| KernelError::smlib("SMLib flat corners", e))?;
+        if let Some(&[x, y, z]) = flat.first() {
+            if let Some(face) = flat_loop(u.len() + v.len(), &boundary)? {
+                return Ok(face);
+            }
+            return Err(flat_corner_refusal(Vec3::new(x, y, z), &boundary)?);
+        }
         let mut inputs = Vec::new();
         for c in boundary {
             // (a record's tolerance is twice SMLib's: the import halves it into the zone
@@ -231,14 +242,26 @@ fn input_gap(c: &BoundaryCurve, made: &Body, zone: f64) -> Result<Option<([Vec3;
         return Ok(None);
     };
     let smlib = made.smlib()?;
-    let mut ends: Vec<Vec3> = Vec::new();
     let mut gap = 0.0_f64;
     for (curve, interval) in &curves {
         let bound = smlib.curve_face_gap_bound(curve, *interval, 0, 1e-2 * zone).map_err(|e| KernelError::smlib("SMLib curve/face gap", e))?;
         gap = gap.max(proved_or_refused(&c.label, bound)?);
+    }
+    match free_ends(&c.label, &curves)?.as_slice() {
+        [a, z] => Ok(Some(([*a, *z], gap))),
+        // a side with other than two free ends is a closed chain: the network takes none (its
+        // corners are the sides' ends), so a bound that cannot reach the end vertices is refused
+        _ => Err(unproved(&c.label, "its ends")),
+    }
+}
+
+/// The ends of the pieces `curves` of the boundary curve `label` that no other piece shares.
+fn free_ends(label: &str, curves: &[(solidcore_record::brep::Curve, [f64; 2])]) -> Result<Vec<Vec3>> {
+    let mut ends: Vec<Vec3> = Vec::new();
+    for (curve, interval) in curves {
         let eval = CurveEval::new(curve).map_err(|e| KernelError::Failed(format!("boundary surface: {e}")))?;
         for t in *interval {
-            let p = eval.point(t).ok_or_else(|| unproved(&c.label, "an end is not evaluated"))?;
+            let p = eval.point(t).ok_or_else(|| unproved(label, "an end is not evaluated"))?;
             // a piece's end another piece starts or ends at is inside the chain
             match ends.iter().position(|q| q.dist(p) <= CROSS_TOLERANCE) {
                 Some(i) => {
@@ -248,12 +271,111 @@ fn input_gap(c: &BoundaryCurve, made: &Body, zone: f64) -> Result<Option<([Vec3;
             }
         }
     }
-    match ends.as_slice() {
-        [a, z] => Ok(Some(([*a, *z], gap))),
-        // a side with other than two free ends is a closed chain: the network takes none (its
-        // corners are the sides' ends), so a bound that cannot reach the end vertices is refused
-        _ => Err(unproved(&c.label, "its ends")),
+    Ok(ends)
+}
+
+/// The refusal of a boundary surface whose face has a flat corner at `corner`: a corner where the
+/// surface's u and v directions are parallel, as they must be where two of its sides meet tangent
+/// to each other (a circle cut into four arcs, an arc running on into a straight line). No
+/// four-sided surface through those sides has a corner the kernel's check accepts there
+/// (`SmSurface::Test #1 Bad Surf FlatCorner`), and Stitch runs that check: the surface is refused
+/// here, naming the two `boundary` curves that meet there, rather than left for the next
+/// operation to fail on. Whether a corner is flat is the kernel's own test of the built face
+/// ([`solidcraft_smlib::Brep::face_flat_corners`]); the curves named are the sides with an end
+/// at the corner, within [`CROSS_TOLERANCE`] ([`meet`]).
+fn flat_corner_refusal(corner: Vec3, boundary: &[&BoundaryCurve]) -> Result<KernelError> {
+    // the sides with an end at the corner
+    let mut named: Vec<&str> = Vec::new();
+    for c in boundary {
+        let Some(curves) = input_curves(c)? else { continue };
+        for end in free_ends(&c.label, &curves)? {
+            if meet(end, corner)? {
+                named.push(&c.label);
+                break;
+            }
+        }
     }
+    // to the thousandth, with no "-0.000"
+    let mm = |x: f64| (x * 1000.0).round() / 1000.0 + 0.0;
+    let at = format!("({:.3}, {:.3}, {:.3})", mm(corner.x), mm(corner.y), mm(corner.z));
+    let sides = match named.as_slice() {
+        [a, b] => format!("{a} and {b} meet tangent to each other at {at}"),
+        _ => format!("two sides meet tangent to each other at {at}"),
+    };
+    Ok(KernelError::Invalid(format!(
+        "boundary surface: {sides}, so the surface's two directions run parallel at that corner, which the kernel's check (and so Stitch) refuses. Give sides that meet at an angle at every corner, or, for a flat loop, use Patch"
+    )))
+}
+
+/// Whether two points meet within [`CROSS_TOLERANCE`], as the kernel measures them
+/// ([`solidcore_ops::measure::points_meet`]).
+fn meet(a: Vec3, b: Vec3) -> Result<bool> {
+    solidcore_ops::measure::points_meet([a.x, a.y, a.z], [b.x, b.y, b.z], CROSS_TOLERANCE)
+        .map_err(|e| KernelError::Failed(format!("boundary surface: the ends of the curves can't be compared: {e}")))
+}
+
+/// The flat face of a network of only its sides `boundary` (no curves inside), each a chain of
+/// curves of sketches on one plane, chained end to end into one loop: the plane region inside the
+/// loop ([`crate::patch_region`]), exact (every curve of such a network lies in that plane, so the
+/// network's surface is that region). `None` for a network with curves inside it (`curves` counts
+/// them all: a face of the region alone would leave out any part of one that runs outside the
+/// loop), with any other curve (a 3D curve, a body's edges; a point is the apex of a three-sided
+/// loop), or with sides that do not close into one loop within [`CROSS_TOLERANCE`] ([`meet`]).
+fn flat_loop(curves: usize, boundary: &[&BoundaryCurve]) -> Result<Option<Body>> {
+    if curves != boundary.len() {
+        return Ok(None);
+    }
+    let mut plane: Option<Plane> = None;
+    let mut sides: Vec<&[Seg2]> = Vec::new();
+    for c in boundary {
+        let (p, segs) = match &c.source {
+            CurveSource::Sketch { plane, segs } => (plane, segs),
+            // the apex of a three-sided patch: where the two sides beside it meet
+            CurveSource::Point(_) => continue,
+            _ => return Ok(None),
+        };
+        match plane {
+            None => plane = Some(*p),
+            Some(q) if q == *p => {}
+            Some(_) => return Ok(None),
+        }
+        sides.push(segs);
+    }
+    let Some(plane) = plane else { return Ok(None) };
+    // sketch points, compared in the sketch's plane
+    let at = |p: Vec2| Vec3::new(p.x, p.y, 0.0);
+    // the sides in loop order, each turned to run on from the one before
+    let Some((first, rest)) = sides.split_first() else { return Ok(None) };
+    let mut segs: Vec<Seg2> = first.to_vec();
+    let mut left: Vec<&[Seg2]> = rest.to_vec();
+    while !left.is_empty() {
+        let Some(end) = segs.last().map(|s| at(s.end())) else { return Ok(None) };
+        let mut next = None;
+        for (i, side) in left.iter().enumerate() {
+            let (Some(a), Some(z)) = (side.first(), side.last()) else { return Ok(None) };
+            if meet(at(a.start()), end)? {
+                next = Some((i, false));
+            } else if meet(at(z.end()), end)? {
+                next = Some((i, true));
+            }
+            if next.is_some() {
+                break;
+            }
+        }
+        let Some((i, reversed)) = next else { return Ok(None) };
+        let side = left.swap_remove(i);
+        if reversed {
+            segs.extend(side.iter().rev().map(|s| s.reversed()));
+        } else {
+            segs.extend_from_slice(side);
+        }
+    }
+    let (Some(start), Some(end)) = (segs.first().map(|s| at(s.start())), segs.last().map(|s| at(s.end()))) else { return Ok(None) };
+    if !meet(start, end)? {
+        return Ok(None);
+    }
+    let region = solidcore_record::Region2 { outer: solidcore_record::Loop2 { segs }, holes: Vec::new() };
+    crate::patch_region(&plane, &region).map(Some)
 }
 
 /// The proved distance of a boundary curve's piece from the surface. A side whose distance
@@ -702,7 +824,7 @@ fn index(i: usize) -> Result<u32> {
 mod tests {
     use super::*;
     use crate::patch_region;
-    use solidcore_record::{Loop2, Region2, Vec2};
+    use solidcore_record::{Loop2, Region2};
 
     fn sketch(label: &str, plane: Plane, segs: Vec<Seg2>) -> BoundaryCurve<'static> {
         BoundaryCurve { label: label.into(), source: CurveSource::Sketch { plane, segs }, continuity: Continuity::G0 }
@@ -794,6 +916,178 @@ mod tests {
         assert!(near(tess), "measuring mesh: {tess}");
         let display = body.mesh(&crate::MeshTolerance::chord(0.01)).unwrap().measure().area;
         assert!(near(display), "display mesh: {display}");
+    }
+
+    /// The flat patch of a network of one sketch's curves through `u` and `v`, which the kernel's
+    /// check passes, and its area by its faces.
+    fn flat(u: &[BoundaryCurve], v: &[BoundaryCurve]) -> (Body, f64) {
+        let body = boundary_surface(u, v).unwrap();
+        assert!(body.is_surface() && body.face_count() == 1);
+        let check = body.smlib().unwrap().check(solidcraft_smlib::CheckLevel::All).unwrap();
+        assert!(check.is_valid(), "{check}");
+        let area = body.faces(0.01).unwrap().iter().map(|f| f.area).sum();
+        (body, area)
+    }
+
+    /// #23407: a circle of radius 50 cut into four quarter arcs, as a network (`a1`, `a3` one way,
+    /// `a2`, `a4` the other). Each arc runs on into the next tangent to it, so a four-sided patch
+    /// through them has its two directions parallel at every corner, which the kernel's check
+    /// refuses (`Bad Surf FlatCorner`), and Stitch with it. The curves are one sketch's, so the
+    /// surface is the disc in the sketch's plane: one face, valid, its four arcs for edges, of
+    /// area 2500π. A square through the same corners is still the Coons patch.
+    #[test]
+    fn a_circle_of_four_tangent_arcs_is_its_flat_disc() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let q = |k: f64| Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: 50.0, start: k * FRAC_PI_2, sweep: FRAC_PI_2 };
+        let pl = Plane::XY.offset(2.0);
+        let (disc, area) = flat(
+            &[sketch("a1", pl, vec![q(0.0)]), sketch("a3", pl, vec![q(2.0)])],
+            &[sketch("a2", pl, vec![q(1.0)]), sketch("a4", pl, vec![q(3.0)])],
+        );
+        assert_eq!(disc.edge_count(), 4, "one edge per arc");
+        assert!(disc.smlib().unwrap().face_flat_corners(0).unwrap().is_empty());
+        // chords of the arcs at 0.01 mm sag cut off up to (2/3)·sag·length ≈ 2.1 mm²
+        assert!((area - 2500.0 * PI).abs() < 2.2, "area {area}");
+        let s = face_surface(&disc);
+        for uv in [[0.0, 0.0], [0.3, 0.7], [1.0, 1.0]] {
+            assert!((s.point(uv).unwrap().z - 2.0).abs() < 1e-12);
+        }
+        // the same four corners joined by lines: square corners, the Coons patch as before
+        let line = |a: [f64; 2], b: [f64; 2]| Seg2::Line { a: Vec2::new(a[0], a[1]), b: Vec2::new(b[0], b[1]) };
+        let (p, n) = (50.0, -50.0);
+        let u = [sketch("l1", pl, vec![line([p, 0.0], [0.0, p])]), sketch("l3", pl, vec![line([n, 0.0], [0.0, n])])];
+        let v = [sketch("l2", pl, vec![line([0.0, p], [n, 0.0])]), sketch("l4", pl, vec![line([0.0, n], [p, 0.0])])];
+        let (square, area) = flat(&u, &v);
+        assert!((area - 5000.0).abs() < 1e-6 * 5000.0, "area {area}");
+        let net = |label: &str, seg: Seg2| NetworkCurve {
+            label: label.into(),
+            curve: Box::new(SketchChain::new(label, &pl, &[seg]).unwrap()),
+            condition: None,
+        };
+        let tol = Tolerances { cross: CROSS_TOLERANCE, fit: FIT_TOLERANCE };
+        let patch = network::network_surface(
+            vec![net("l1", line([p, 0.0], [0.0, p])), net("l3", line([n, 0.0], [0.0, n]))],
+            vec![net("l2", line([0.0, p], [n, 0.0])), net("l4", line([0.0, n], [p, 0.0]))],
+            tol,
+        )
+        .unwrap();
+        let (patch, _) = face_of(&patch, &[], &[]).unwrap();
+        assert_eq!(square.record().faces, patch.record().faces, "the square is the network's own patch");
+    }
+
+    /// #23407: the stadium of [`a_patch_with_straight_corners_measures_its_own_area`] (each
+    /// half-circle runs on into its lines) is its flat face too, and the kernel's check passes it.
+    #[test]
+    fn a_stadium_is_its_flat_face() {
+        use std::f64::consts::PI;
+        let low = Seg2::Arc { center: Vec2::new(5.0, 0.0), radius: 5.0, start: PI, sweep: PI };
+        let high = Seg2::Arc { center: Vec2::new(5.0, 8.0), radius: 5.0, start: PI, sweep: -PI };
+        let left = Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(0.0, 8.0) };
+        let right = Seg2::Line { a: Vec2::new(10.0, 0.0), b: Vec2::new(10.0, 8.0) };
+        let pl = Plane::XY.offset(3.0);
+        let (_, area) = flat(
+            &[sketch("low", pl, vec![low]), sketch("high", pl, vec![high])],
+            &[sketch("left", pl, vec![left]), sketch("right", pl, vec![right])],
+        );
+        let want = 80.0 + 25.0 * PI;
+        // as the patch measured: chords at 0.01 mm sag cut off up to 0.21 mm²
+        assert!((area - want).abs() < 0.25, "area {area} vs {want}");
+    }
+
+    /// #23407: three sides, one corner tangent: a half circle below [0, 10] on the x axis, the
+    /// line up from its end (10, 0) to (10, 8) that runs on from it, and the line back to (0, 0),
+    /// the side across from the half circle collapsed to the apex (10, 8). The flat face of the
+    /// loop, of area 40 + 12.5π.
+    #[test]
+    fn a_three_sided_loop_with_a_tangent_corner_is_its_flat_face() {
+        use std::f64::consts::PI;
+        let low = Seg2::Arc { center: Vec2::new(5.0, 0.0), radius: 5.0, start: PI, sweep: PI };
+        let up = Seg2::Line { a: Vec2::new(10.0, 0.0), b: Vec2::new(10.0, 8.0) };
+        let back = Seg2::Line { a: Vec2::new(10.0, 8.0), b: Vec2::new(0.0, 0.0) };
+        let pl = Plane::XY;
+        let apex = BoundaryCurve { label: "apex".into(), source: CurveSource::Point(Vec3::new(10.0, 8.0, 0.0)), continuity: Continuity::G0 };
+        let (_, area) = flat(&[sketch("low", pl, vec![low]), apex], &[sketch("back", pl, vec![back]), sketch("up", pl, vec![up])]);
+        let want = 40.0 + 12.5 * PI;
+        assert!((area - want).abs() < 0.25, "area {area} vs {want}");
+    }
+
+    /// #23407: the circle of four arcs with a curve inside it as well, a line across the circle
+    /// from a2 to a4. Only a network of its sides alone is its flat face: the region inside the
+    /// loop would leave out any part of an inner curve that ran outside it. With the inner curve,
+    /// the patch's flat corners are refused, naming two arcs and a corner of the circle.
+    #[test]
+    fn a_circle_with_a_curve_inside_is_refused_at_a_corner() {
+        use std::f64::consts::FRAC_PI_2;
+        let q = |k: f64| Seg2::Arc { center: Vec2::new(0.0, 0.0), radius: 50.0, start: k * FRAC_PI_2, sweep: FRAC_PI_2 };
+        let h = 50.0 / 2.0_f64.sqrt();
+        let across = Seg2::Line { a: Vec2::new(-h, h), b: Vec2::new(h, -h) };
+        let pl = Plane::XY;
+        let e = boundary_surface(
+            &[sketch("a1", pl, vec![q(0.0)]), sketch("across", pl, vec![across]), sketch("a3", pl, vec![q(2.0)])],
+            &[sketch("a2", pl, vec![q(1.0)]), sketch("a4", pl, vec![q(3.0)])],
+        )
+        .unwrap_err();
+        let m = e.to_string();
+        assert!(matches!(e, KernelError::Invalid(_)), "{e:?}");
+        let corners = [
+            ("a1", "a2", "(0.000, 50.000, 0.000)"),
+            ("a2", "a3", "(-50.000, 0.000, 0.000)"),
+            ("a3", "a4", "(0.000, -50.000, 0.000)"),
+            ("a4", "a1", "(50.000, 0.000, 0.000)"),
+        ];
+        assert!(corners.iter().any(|(a, b, at)| m.contains(at) && m.contains(a) && m.contains(b)), "two arcs and the corner they meet at: {m}");
+    }
+
+    /// #23407: a loop that does not lie in one plane, with two tangent corners: a half circle in
+    /// z = 0 from (0, 0, 0) through (5, −5, 0) to (10, 0, 0), quarter arcs of radius 8 rising from
+    /// its ends in the planes x = 0 and x = 10 (each leaving along +y, the way the half circle
+    /// runs there), and a line across their tops at y = z = 8. No four-sided surface through these
+    /// sides has a corner the kernel's check accepts where an arc runs on into the half circle, and
+    /// no plane holds them: refused, naming the two curves and the corner.
+    #[test]
+    fn a_loop_out_of_plane_with_tangent_corners_is_refused_at_a_corner() {
+        use std::f64::consts::{FRAC_PI_2, PI};
+        let low = Seg2::Arc { center: Vec2::new(5.0, 0.0), radius: 5.0, start: PI, sweep: PI };
+        // in a plane x = c: sketch x is world y, sketch y world z
+        let rise = Seg2::Arc { center: Vec2::new(0.0, 8.0), radius: 8.0, start: -FRAC_PI_2, sweep: FRAC_PI_2 };
+        let e = boundary_surface(
+            &[sketch("low", Plane::XY, vec![low]), line3("top", Vec3::new(0.0, 8.0, 8.0), Vec3::new(10.0, 8.0, 8.0))],
+            &[sketch("left", Plane::YZ, vec![rise]), sketch("right", Plane::YZ.offset(10.0), vec![rise])],
+        )
+        .unwrap_err();
+        let m = e.to_string();
+        assert!(matches!(e, KernelError::Invalid(_)), "{e:?}");
+        assert!(m.contains("meet tangent to each other at") && m.contains("Patch"), "{m}");
+        let named = [("low", "left", "(0.000, 0.000, 0.000)"), ("low", "right", "(10.000, 0.000, 0.000)")];
+        assert!(named.iter().any(|(a, b, at)| m.contains(at) && m.contains(a) && m.contains(b)), "the curves named meet at the corner named: {m}");
+    }
+
+    /// The network's own four-sided patch of the stadium, which Surface Boundary no longer makes
+    /// (#23407): it has four flat corners, and the mesher still keeps its boundary walk on the
+    /// domain there (see [`a_patch_with_straight_corners_measures_its_own_area`]).
+    #[test]
+    fn a_network_patch_with_flat_corners_measures_its_own_area() {
+        use std::f64::consts::PI;
+        let low = Seg2::Arc { center: Vec2::new(5.0, 0.0), radius: 5.0, start: PI, sweep: PI };
+        let high = Seg2::Arc { center: Vec2::new(5.0, 8.0), radius: 5.0, start: PI, sweep: -PI };
+        let left = Seg2::Line { a: Vec2::new(0.0, 0.0), b: Vec2::new(0.0, 8.0) };
+        let right = Seg2::Line { a: Vec2::new(10.0, 0.0), b: Vec2::new(10.0, 8.0) };
+        let pl = Plane::XY.offset(3.0);
+        let net = |label: &str, seg: Seg2| NetworkCurve {
+            label: label.into(),
+            curve: Box::new(SketchChain::new(label, &pl, &[seg]).unwrap()),
+            condition: None,
+        };
+        let tol = Tolerances { cross: CROSS_TOLERANCE, fit: FIT_TOLERANCE };
+        let surface = network::network_surface(vec![net("low", low), net("high", high)], vec![net("left", left), net("right", right)], tol).unwrap();
+        let (body, _) = face_of(&surface, &[], &[]).unwrap();
+        assert_eq!(body.smlib().unwrap().face_flat_corners(0).unwrap().len(), 4, "a flat corner where each arc runs on into a line");
+        let want = 80.0 + 25.0 * PI;
+        let near = |a: f64| (a - want).abs() < 0.25;
+        let faces = body.faces(0.01).unwrap();
+        assert!(faces.len() == 1 && near(faces[0].area), "faces: {faces:?}");
+        let tess = body.mesh(&crate::MeshTolerance::chord(0.01)).unwrap().measure().area;
+        assert!(near(tess), "measuring mesh: {tess}");
     }
 
     /// Three sides: a quarter disc of radius 10 (two radii and the arc) is one face with three

@@ -393,9 +393,11 @@ fn detached_panel_host_follows_workspace_and_remembers_its_own_placement() {
     detached.swap(&mut app);
     assert!(app.panel_runtime().is_none());
     let mut remembered = None;
-    let _ = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+    ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
         assert!(prepare_pop_out_panels(&mut app, ui, rect, Some(&review), "detached.review", &remembered));
-    });
+    })
+    .textures_delta
+    .clear();
     let live = app.panel_runtime().unwrap();
     assert_eq!(live.layout().layout().workspace, review);
     assert_ne!(live.environment().window, root);
@@ -411,9 +413,11 @@ fn detached_panel_host_follows_workspace_and_remembers_its_own_placement() {
     assert_eq!(app.panel_runtime().unwrap().environment().window, root);
     let mut reopened = PopOutPanels::default();
     reopened.swap(&mut app);
-    let _ = ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
+    ctx.run_ui(egui::RawInput { screen_rect: Some(rect), ..Default::default() }, |ui| {
         assert!(prepare_pop_out_panels(&mut app, ui, rect, Some(&review), "detached.review", &remembered));
-    });
+    })
+    .textures_delta
+    .clear();
     let live = app.panel_runtime().unwrap();
     assert_eq!(live.layout().layout().workspace, review);
     assert!(live.layout().layout().section(&browser).unwrap().collapsed);

@@ -1916,6 +1916,228 @@ fn shared_session_holds_queued_startup_prompt_on_tab_switch() {
     }
 }
 
+/// With `agent_shared_session` enabled (Part of #23624), `document.activate` and `document.close`
+/// work mid-turn while preserving the shared session and active turn, refusing dirty tabs; with
+/// per-tab chat (`agent_shared_session == false`), both remain refused during an assistant turn.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn shared_session_allows_document_activate_and_close_while_per_tab_refuses() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-shared-doc-ops-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let first_path = dir.join("first.solidcraft");
+    let second_path = dir.join("second.solidcraft");
+
+    let mut second = solidcraft_engine::Session::default();
+    second.execute("solid.box", &boxed(100.0)["params"]).unwrap();
+    second.execute("file.save_as", &json!({"path": second_path})).unwrap();
+    let second_id = second.document_id.clone();
+
+    let (mut app, script, ctx) = app_with_script();
+    let (tx, rx) = channel();
+    app.agent_chat.tools_rx = Some(rx);
+    app.preferences.ai_permissions = agents::Mode::All;
+    app.run("solid.box", boxed(0.0)["params"].clone()).unwrap();
+    app.run("file.save_as", json!({"path": first_path})).unwrap();
+    let first_id = app.session.document_id.clone();
+    crate::documents::open_tab_behind(&mut app, second).unwrap();
+    assert_eq!((app.docs.count(), app.docs.active), (2, 0));
+
+    // Per-tab mode: switching tabs and closing tabs are refused mid-turn.
+    app.preferences.agent_shared_session = false;
+    send(&mut app, &ctx, "try per-tab switch and close".into());
+    let r = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "document.activate", "params": {"document_id": second_id}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(r["ok"], false, "per-tab mode must refuse document.activate: {r}");
+    assert_eq!(app.docs.active, 0);
+    let r = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "document.close", "params": {"document_id": first_id}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(r["ok"], false, "per-tab mode must refuse document.close: {r}");
+    assert_eq!(app.docs.count(), 2);
+    ended(&script, "");
+    poll(&mut app, &ctx);
+
+    // Shared-session mode: activate, edit, refuse closing dirty tab, save, close tab, continue.
+    app.preferences.agent_shared_session = true;
+    send(&mut app, &ctx, "navigate and close tabs".into());
+    let active = app.agent_chat.turn.as_ref().unwrap().active.clone();
+
+    let r = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "document.activate", "params": {"document_id": second_id}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!((app.docs.active, app.session.document_id.as_str()), (1, second_id.as_str()));
+    assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+
+    assert_eq!(
+        chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "solid.box", "params": boxed(140.0)["params"], "allow_paths": [&dir]}))["ok"],
+        true
+    );
+    let dirty_close = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "document.close", "params": {"document_id": second_id}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(dirty_close["ok"], false, "dirty tab must be refused: {dirty_close}");
+    assert!(dirty_close["error"].as_str().is_some_and(|e| e.contains("unsaved")), "{dirty_close}");
+    assert_eq!(app.docs.count(), 2);
+
+    assert_eq!(chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "file.save", "params": {}, "allow_paths": [&dir]}))["ok"], true);
+    let closed = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "document.close", "params": {"document_id": second_id}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(closed["ok"], true, "{closed}");
+    assert_eq!(closed["result"]["closed_document_id"], json!(second_id));
+    assert_eq!(closed["result"]["document_id"], json!(first_id));
+    assert_eq!(closed["result"]["documents"], json!(1));
+    assert_eq!((app.docs.count(), app.session.document_id.as_str()), (1, first_id.as_str()));
+    assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+    assert!(app.agent_chat.backend.is_some());
+
+    // Closing the last clean tab opens a blank tab and keeps the active turn alive with a fresh undo boundary.
+    let last_closed = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "document.close", "params": {"document_id": first_id}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(last_closed["ok"], true, "{last_closed}");
+    assert_eq!(last_closed["result"]["closed_document_id"], json!(first_id));
+    assert_eq!(last_closed["result"]["documents"], json!(1));
+    assert!(crate::documents::active_is_blank(&app));
+    assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+    assert_eq!(
+        chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "solid.box", "params": boxed(20.0)["params"], "allow_paths": [&dir]}))["ok"],
+        true
+    );
+    assert_eq!(app.session.doc.features.len(), 1);
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    assert!(!script.calls().iter().any(|call| matches!(call.as_str(), "cancel" | "new_session")));
+    assert_eq!(app.session.undo.len(), 1, "edits on the blank tab form one clean undo step");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With `agent_shared_session` enabled (Part of #23624), `component.edit_in_place` and
+/// `component.finish_edit` execute mid-turn without deferring or cancelling the active turn, and
+/// update the parent assembly's linked component; per-tab mode still defers them until turn end.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn shared_session_allows_edit_in_place_and_finish_edit_mid_turn() {
+    let dir = std::env::temp_dir().join(format!("solidcraft-shared-eip-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let plate_path = dir.join("plate.solidcraft");
+    let post_path = dir.join("post.solidcraft");
+    let case_path = dir.join("case.solidcraft");
+
+    let mut plate_session = solidcraft_engine::Session::default();
+    plate_session.execute("solid.box", &json!({"length": 10, "width": 20, "height": 30})).unwrap();
+    plate_session.execute("file.save", &json!({"path": plate_path, "overwrite": true})).unwrap();
+    let mut post_session = solidcraft_engine::Session::default();
+    post_session.execute("solid.box", &json!({"length": 10, "width": 10, "height": 10})).unwrap();
+    post_session.execute("file.save", &json!({"path": post_path, "overwrite": true})).unwrap();
+
+    let (mut app, script, ctx) = app_with_script();
+    let (tx, rx) = channel();
+    app.agent_chat.tools_rx = Some(rx);
+    app.preferences.ai_permissions = agents::Mode::All;
+    let plate = app.run("component.insert_design", json!({"path": plate_path, "translate": [50, 0, 0]})).unwrap()["component"].as_u64().unwrap();
+    app.run("component.insert_design", json!({"path": post_path, "translate": [-100, 0, 0]})).unwrap();
+    app.run("file.save", json!({"path": case_path})).unwrap();
+
+    // Per-tab mode still defers `component.edit_in_place` until the turn ends.
+    app.preferences.agent_shared_session = false;
+    send(&mut app, &ctx, "per-tab edit in place".into());
+    let deferred = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "component.edit_in_place", "params": {"component": plate}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(deferred["ok"], true, "{deferred}");
+    assert_eq!(deferred["result"]["queued"], json!(true), "per-tab mode must defer edit_in_place: {deferred}");
+    assert_eq!(app.docs.count(), 1);
+    crate::edit_in_place::forget_after_turn(&mut app);
+    ended(&script, "");
+    poll(&mut app, &ctx);
+
+    // Shared-session mode runs `component.edit_in_place`, edits & saves the part, runs
+    // `component.finish_edit`, closes the opened part tab, and updates the assembly mid-turn.
+    app.preferences.agent_shared_session = true;
+    send(&mut app, &ctx, "edit plate in place and update case".into());
+    let active = app.agent_chat.turn.as_ref().unwrap().active.clone();
+
+    let entered = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "component.edit_in_place", "params": {"component": plate}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(entered["ok"], true, "{entered}");
+    assert!(entered["result"].get("queued").is_none(), "shared-session edit_in_place must not defer: {entered}");
+
+    // The next command automatically waits for the part's file load, then edits the part tab.
+    let edited = chat_tool(
+        &mut app,
+        &tx,
+        &ctx,
+        "engine.execute",
+        json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10, "operation": "new"}, "allow_paths": [&dir]}),
+    );
+    assert_eq!(edited["ok"], true, "{edited}");
+    assert_eq!(app.docs.count(), 2);
+    assert!(app.session.path.as_deref().is_some_and(|p| crate::documents::same_path(p, &plate_path.to_string_lossy())));
+    assert!(app.edit_in_place.active.is_some());
+    assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+
+    let saved = chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "file.save", "params": {}, "allow_paths": [&dir]}));
+    assert_eq!(saved["ok"], true, "{saved}");
+
+    let finished = chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "component.finish_edit", "params": {}, "allow_paths": [&dir]}));
+    assert_eq!(finished["ok"], true, "{finished}");
+    assert!(finished["result"].get("queued").is_none(), "shared-session finish_edit must not defer: {finished}");
+    assert!(app.edit_in_place.active.is_none());
+    assert_eq!(app.docs.count(), 1);
+    assert!(app.session.path.as_deref().is_some_and(|p| crate::documents::same_path(p, &case_path.to_string_lossy())));
+    assert!(active.load(std::sync::atomic::Ordering::Relaxed));
+
+    // A follow-up command waits for `UpdateLinks` on the assembly before reading its updated geometry.
+    let measured = chat_tool(&mut app, &tx, &ctx, "engine.execute", json!({"command": "inspect.measure", "params": {}, "allow_paths": [&dir]}));
+    assert_eq!(measured["ok"], true, "{measured}");
+    let total_volume: f64 =
+        app.session.world_state().unwrap().bodies.iter().map(|b| solidcraft_engine::kernel::measure(&b.body).unwrap().volume).sum();
+    assert!((total_volume - 8000.0).abs() < 1e-6, "updated assembly volume: {total_volume}");
+
+    ended(&script, "");
+    poll(&mut app, &ctx);
+    assert!(!script.calls().iter().any(|call| matches!(call.as_str(), "cancel" | "new_session")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn an_agents_failed_new_design_batch_restores_its_undo_boundary() {
     let (mut app, script, ctx) = app_with_script();

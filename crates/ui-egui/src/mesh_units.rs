@@ -13,6 +13,7 @@
 use serde_json::json;
 use solidcraft_engine::doc::point_cloud::UNITS;
 
+use crate::import_options::{Prompt, enqueue};
 use crate::ui_kit::BackingTooltipExt as _;
 use crate::{SolveApp, file_load, ui_kit};
 
@@ -29,6 +30,8 @@ pub struct Ask {
     pub mesh: bool,
     /// Move it to the origin as it comes in (`origin`); off until ticked.
     pub origin: bool,
+    /// The destination tab when inserting into a design.
+    pub tab: Option<u64>,
 }
 
 /// Files that state no unit of their own and take one when imported.
@@ -44,7 +47,8 @@ pub fn ask(app: &mut SolveApp, path: &str, insert: bool) -> bool {
     if !needs_unit(path) {
         return false;
     }
-    app.mesh_units = Some(Ask { path: path.into(), insert, choice: default_choice(), mesh: false, origin: false });
+    let tab = insert.then(|| app.docs.active_tab());
+    enqueue(app, Prompt::Mesh(Ask { path: path.into(), insert, choice: default_choice(), mesh: false, origin: false, tab }));
     true
 }
 
@@ -55,7 +59,8 @@ pub fn ask_ply_as_mesh(app: &mut SolveApp, path: &str) -> bool {
     if !solidcraft_engine::io::is_ply_path(path) {
         return false;
     }
-    app.mesh_units = Some(Ask { path: path.into(), insert: true, choice: default_choice(), mesh: true, origin: false });
+    let tab = Some(app.docs.active_tab());
+    enqueue(app, Prompt::Mesh(Ask { path: path.into(), insert: true, choice: default_choice(), mesh: true, origin: false, tab }));
     true
 }
 
@@ -99,6 +104,9 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         ui_kit::Action::None if closed => app.mesh_units = None,
         _ => app.mesh_units = Some(ask),
     }
+    if app.mesh_units.is_none() && !app.import_options_waiting.is_empty() {
+        ctx.request_repaint();
+    }
 }
 
 /// The import the dialog's answer starts: the file with its unit, and `origin` when ticked (left
@@ -106,6 +114,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
 fn request(ask: &Ask) -> file_load::Request {
     let kind = if ask.insert { file_load::Kind::Insert } else { file_load::Kind::Open };
     let mut request = file_load::Request::new(&ask.path, kind);
+    request.tab = ask.tab;
     request.mesh = ask.mesh;
     request.options.insert("units".into(), json!(unit_at(ask.choice)));
     if ask.origin {
@@ -154,6 +163,10 @@ mod tests {
         file_load::begin(&mut app, "part.stl", true);
         let ask = app.mesh_units.clone().expect("asked");
         assert_eq!((ask.path.as_str(), ask.insert, unit_at(ask.choice)), ("part.stl", true, "mm"));
+        let tab = app.docs.current_tab();
+        crate::documents::open_tab(&mut app, solidcraft_engine::Session::default()).unwrap();
+        assert_ne!(app.docs.current_tab(), tab);
+        assert_eq!(request(&ask).tab, Some(tab), "the destination was chosen before the question");
         assert!(app.file_load.idle(), "nothing is imported until OK");
     }
 

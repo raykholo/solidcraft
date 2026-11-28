@@ -88,3 +88,26 @@ fn a_face_has_the_same_area_on_a_ball_and_on_a_cavity() {
     assert_close(sphere_area(&ball_side), want);
     assert_close(sphere_area(&cavity_side), want);
 }
+
+/// A face's exact area is measured once and kept (#23681): the body's clones and its rigidly
+/// moved copies read it back, and another body measures its own.
+#[test]
+fn a_face_area_is_kept_for_the_body_its_clones_and_moved_copies() {
+    let notched = || cut(&block([0.0, 0.0, 0.0], [20.0, 20.0, 20.0]), &ball());
+    let body = notched();
+    let face = (0..body.record().faces.len())
+        .find(|&f| matches!(face_surface(&body, f), Some(FaceSurface::Sphere { .. })))
+        .unwrap_or_else(|| panic!("no face on the ball"));
+    assert!(!body.has_kept_face_area(face), "kept before it was measured");
+    let area = ok(body.face_area(face)).unwrap_or_else(|| panic!("face {face} has no exact area"));
+    assert_close(area, PI * R * R / 2.0);
+    assert!(body.has_kept_face_area(face), "the measured area is kept");
+    assert!(body.clone().has_kept_face_area(face), "a clone shares it");
+    let shift = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [5.0, -3.0, 2.0, 1.0]];
+    let moved = ok(crate::transform_matrix(&body, shift));
+    assert!(moved.has_kept_face_area(face), "a rigidly moved copy shares it");
+    assert_eq!(ok(moved.face_area(face)), Some(area));
+    let other = notched();
+    assert!(!other.has_kept_face_area(face), "another body measures its own");
+    assert_close(ok(other.face_area(face)).unwrap_or_default(), area);
+}

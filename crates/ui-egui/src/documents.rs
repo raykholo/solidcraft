@@ -2246,7 +2246,7 @@ pub(crate) fn command(app: &mut SolveApp, id: &str, p: &Value) -> Result<Value, 
             return Err("document.activate: that design is outside the folders this caller may use".into());
         }
     }
-    if app.agent_chat.following_document && at != app.docs.active {
+    if app.agent_chat.following_document && at != app.docs.active && !app.preferences.agent_shared_session {
         return Err("the design is already open in another tab; select that tab to continue in its own conversation".into());
     }
     if at != app.docs.active {
@@ -2367,27 +2367,33 @@ pub fn prepare_open(app: &mut SolveApp) {
     }
 }
 
-/// Close only the active clean design for the control API. The optional document_id
-/// guards against a tab switch between inspection and closing (#18781).
+/// Close only the active clean design for the control API and `document.close`. The optional
+/// `document_id` guards against a tab switch between inspection and closing (#18781, Part of #23624).
 pub(crate) fn close_clean(app: &mut SolveApp, p: &Value) -> Result<Value, String> {
-    let expected = match p {
-        Value::Null => None,
-        Value::Object(fields) => {
-            if let Some(key) = fields.keys().find(|key| key.as_str() != "document_id") {
-                return Err(format!("unknown document.close field {key}"));
-            }
-            match fields.get("document_id") {
-                None => None,
-                Some(Value::String(id)) => Some(id.as_str()),
-                _ => return Err("document_id must be a string".into()),
-            }
-        }
-        _ => return Err("document.close params must be an object".into()),
-    };
-    if let Some(id) = expected
+    use solidcraft_engine::schema::documents::{DocumentCloseParams, DocumentCloseResult};
+    let request: DocumentCloseParams = read_params("document.close", p)?;
+    if let Some(id) = request.document_id.as_deref()
         && id != app.session.document_id
     {
         return Err("the active document changed; nothing was closed".into());
+    }
+    if app.agent_chat.following_document && !app.preferences.agent_shared_session {
+        return Err("cannot close a design tab during an assistant turn unless shared session across tabs is enabled".into());
+    }
+    // Enforce the same folder scope as `document.activate`: a scoped caller cannot close an
+    // outside design or land on an outside neighbour tab by closing the current one.
+    if let Some(path) = app.session.path.as_deref()
+        && solidcraft_engine::io::vfs::check(path).is_err()
+    {
+        return Err("document.close: that design is outside the folders this caller may use".into());
+    }
+    if app.docs.count() > 1 {
+        let next = if app.docs.active + 1 < app.docs.count() { app.docs.active + 1 } else { app.docs.active - 1 };
+        if let Some(path) = open_sessions(app)[next].path.as_deref()
+            && solidcraft_engine::io::vfs::check(path).is_err()
+        {
+            return Err("document.close: the next design is outside the folders this caller may use".into());
+        }
     }
     if app.file_picker_busy()
         || app.file_load.busy()
@@ -2410,7 +2416,13 @@ pub(crate) fn close_clean(app: &mut SolveApp, p: &Value) -> Result<Value, String
     if app.session.document_id == closed {
         return Err("the active design could not be closed".into());
     }
-    Ok(json!({"closed_document_id": closed, "document_id": app.session.document_id, "documents": app.docs.count()}))
+    serde_json::to_value(DocumentCloseResult {
+        closed_document_id: closed,
+        document_id: app.session.document_id.clone(),
+        documents: app.docs.count(),
+        param_warnings: Vec::new(),
+    })
+    .map_err(|e| format!("document.close: {e}"))
 }
 
 /// Close tab `i`: asks first when it has unsaved changes (`force`: close anyway).
@@ -2435,8 +2447,13 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
     if n <= 1 {
         crate::browser::discard_reveals(app);
         crate::semantic_content::leave_document(app);
-        // The last design: a blank one takes its place.
-        reset_chat(app);
+        // The last design: a blank one takes its place. When the active assistant turn requested
+        // closing this tab (shared session), continue it after `replace_design` so the turn's undo
+        // boundary targets the new blank session rather than the closed one (Part of #23624).
+        let following = app.agent_chat.following_document;
+        if !following {
+            reset_chat(app);
+        }
         if let Some(a) = app.autosave.as_mut().and_then(|a| a.active.take()) {
             a.discard();
         }
@@ -2451,6 +2468,9 @@ pub fn close(app: &mut SolveApp, i: usize, force: bool) {
         app.session.replace_design(Session::default());
         app.sketch_last_views = Default::default();
         give_up_renames_of_other_designs(app);
+        if following {
+            reset_chat(app);
+        }
         app.session.revision = rev + 1;
         crate::prefs::apply_new_design(app);
         app.cam = Camera::default();
@@ -7235,7 +7255,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(base);
     }
 
-    /// While the assistant follows its own conversation's design, another tab is not shown.
+    /// While the assistant follows its own conversation's design, another tab is not shown unless
+    /// shared session across tabs is enabled (Part of #23624).
     #[test]
     fn document_activate_keeps_to_the_design_the_assistant_follows() {
         let (mut a, ids) = three_sheets();
@@ -7243,9 +7264,13 @@ mod tests {
         assert!(a.run("document.activate", json!({"document_id": ids[0]})).is_err());
         assert_eq!(a.docs.active, 2);
         assert!(a.run("document.activate", json!({"document_id": ids[2]})).is_ok(), "the design shown stays shown");
-        a.agent_chat.following_document = false;
+        a.preferences.agent_shared_session = true;
         a.run("document.activate", json!({"document_id": ids[0]})).unwrap();
-        assert_eq!(a.docs.active, 0);
+        assert_eq!(a.docs.active, 0, "shared session allows switching tabs during an assistant turn");
+        a.preferences.agent_shared_session = false;
+        a.agent_chat.following_document = false;
+        a.run("document.activate", json!({"document_id": ids[1]})).unwrap();
+        assert_eq!(a.docs.active, 1);
     }
 
     /// `doc.open` with `new_tab` opens the file in a tab of its own, keeps the design that was
@@ -7313,9 +7338,11 @@ mod tests {
     #[test]
     fn a_batch_may_not_open_or_show_a_design() {
         let (a, ids) = three_sheets();
-        for step in
-            [json!({"command": "file.new", "params": {"new_tab": true}}), json!({"command": "document.activate", "params": {"document_id": ids[0]}})]
-        {
+        for step in [
+            json!({"command": "file.new", "params": {"new_tab": true}}),
+            json!({"command": "document.activate", "params": {"document_id": ids[0]}}),
+            json!({"command": "document.close", "params": {"document_id": ids[2]}}),
+        ] {
             assert!(crate::control::batch_refusal(std::slice::from_ref(&step)).is_some(), "{step}");
         }
         for step in [json!({"command": "file.new", "params": {"new_tab": false}}), json!({"command": "document.list"})] {

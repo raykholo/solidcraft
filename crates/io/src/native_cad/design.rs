@@ -417,6 +417,7 @@ impl Builder {
                 // The PR was written before these: no second side follows the first (the
                 // FreeCAD two-sided extent is one side each way), no taper, no join apart.
                 second_follows_first: false,
+                through_all_to_corner: through,
                 corner: None,
                 to_body_apart: false,
                 through_all2: false,
@@ -550,6 +551,7 @@ impl Builder {
                 let dir = axis.map(|a| a.1).or_else(|| vec3(p.get("direction")));
                 let dir = dir.map(|d| rotate(&self.frame, d)).and_then(Vec3::normalized).ok_or_else(|| format!("{name}: no direction"))?;
                 FeatureKind::Pattern {
+                    body_name_template: None,
                     features,
                     pattern: solidcraft_doc::PatternKind::Rectangular {
                         dir1: Dir(dir),
@@ -586,6 +588,7 @@ impl Builder {
                 let origin = apply(&self.frame, at.ok_or_else(|| format!("{name}: no axis"))?);
                 let axis = along.map(|d| rotate(&self.frame, d)).and_then(Vec3::normalized).ok_or_else(|| format!("{name}: no axis"))?;
                 FeatureKind::Pattern {
+                    body_name_template: None,
                     features,
                     pattern: solidcraft_doc::PatternKind::Circular {
                         origin: solidcraft_doc::point_expr(origin),

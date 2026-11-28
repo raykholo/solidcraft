@@ -140,7 +140,8 @@ pub enum MarkFaces {
 }
 
 /// The marks of a [`SpotStyle`]: three zones on an outer face, a core out to diameter `core`, a
-/// band out to `band` and an edge out to `edge` (fractions of `d`, `0 < core < band < edge`).
+/// band out to `band` and an edge out to `edge` (fractions of `d`, `0 < core < band <= edge`; an
+/// edge no wider than the band, as [`SpotStyle::within`] can leave it, is not drawn).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SpotMarks {
     pub core: f64,
@@ -243,6 +244,20 @@ pub enum SpotLook {
     Dent,
 }
 
+impl SpotStyle {
+    /// This style for a spot of `diameter` on a site with `room` to the faces' edges
+    /// ([`SpotSite::room`]): the marks' edge zone held to that room, so it is drawn on the faces;
+    /// left no wider than the band, it is not drawn. The core and the band, the weld's own size,
+    /// are never changed: [`spot_site`] has checked that they fit.
+    #[must_use]
+    pub fn within(self, diameter: f64, room: f64) -> Self {
+        let Some(m) = self.marks else {
+            return self;
+        };
+        Self { marks: Some(SpotMarks { edge: m.edge.min(2.0 * room / diameter).max(m.band), ..m }), ..self }
+    }
+}
+
 impl SpotLook {
     /// Every look, in the order a weld tool lists them.
     pub const ALL: [Self; 6] = [Self::Marks, Self::Ball, Self::MarksSmallBall, Self::MarksThinPin, Self::MarksPinConcaveEnds, Self::Dent];
@@ -319,8 +334,14 @@ pub fn spot_weld(spot: &SpotWeld) -> Result<Vec<SpotPiece>> {
     if spot.style.ball.is_some() && spot.thicknesses.len() > 2 {
         return bad("a spot ball on more than two sheets");
     }
-    let layout = Layout::of(spot, first, last);
+    let mut layout = Layout::of(spot, first, last);
     let tol = profiles::zone_tolerance()?;
+    // an edge zone narrower than the zone tolerance (held to a site's room) is not drawn
+    if let Some(zones) = &mut layout.zones
+        && zones[2] - zones[1] < tol
+    {
+        zones[2] = zones[1];
+    }
     check_sizes(spot, &layout, tol)?;
     let placement = placement(spot.at, spot.normal)?;
     local_pieces(&layout, tol, &placement)
@@ -332,7 +353,7 @@ fn check_style(style: &SpotStyle) -> Result<()> {
         return bad("a spot style with no marks, ball or pin");
     }
     if let Some(m) = style.marks {
-        if !(positive(m.core) && positive(m.band) && positive(m.edge)) || m.core >= m.band || m.band >= m.edge {
+        if !(positive(m.core) && positive(m.band) && positive(m.edge)) || m.core >= m.band || m.band > m.edge {
             return bad("spot marks whose diameters are not positive and increasing");
         }
         match m.top {
@@ -416,7 +437,10 @@ impl Layout {
     fn lengths(&self) -> Vec<f64> {
         let mut out = vec![self.t_u, self.t_l, self.thinnest];
         if let Some([core, band, edge]) = self.zones {
-            out.extend([core, band - core, edge - band, edge]);
+            out.extend([core, band - core, edge]);
+            if edge > band {
+                out.push(edge - band);
+            }
         }
         match self.top {
             Some(Top::Flat(h)) => out.push(h),
@@ -484,6 +508,10 @@ fn local_pieces(layout: &Layout, tol: f64, place: &affine::Matrix) -> Result<Vec
             };
             for (i, zone) in [SpotZone::Core, SpotZone::Band, SpotZone::Edge].into_iter().enumerate() {
                 let (inner, outer) = (radii[i], radii[i + 1]);
+                // an edge zone held to the band's width (no room past it) is not drawn
+                if outer <= inner {
+                    continue;
+                }
                 let mut curves = vec![line((inner, face), (outer, face))];
                 match &dish {
                     Some(dish) => {
@@ -592,6 +620,10 @@ pub struct SpotSite {
     pub normal: [f64; 3],
     /// The sheets in stack order along `normal`, the picked one first.
     pub sheets: Vec<SpotSheet>,
+    /// How far the spot's line lies from the nearest edge of every face it crosses: at least half
+    /// the diameter. The marks' edge zone is held to it ([`SpotStyle::within`]) so it stays on the
+    /// faces. Infinite when no face has an edge.
+    pub room: f64,
 }
 
 /// The site of a spot of `diameter` picked at `point` on record face `face` of sheet `picked`, the
@@ -692,6 +724,7 @@ pub fn spot_site(sheets: &[&Body], picked: usize, face: usize, point: [f64; 3], 
     }
 
     Ok(SpotSite {
+        room: tightest.map_or(f64::INFINITY, |(room, ..)| room),
         // where the line leaves the picked sheet
         at: crossed.first().map_or(point, |(_, _, far)| far.point),
         normal,

@@ -1034,8 +1034,8 @@ pub struct SolveApp {
     pub mesh_units: Option<mesh_units::Ask>,
     /// A STEP, IGES, FreeCAD, Rhino or glTF file waiting for its import options (`import_options`).
     pub import_options: Option<import_options::Ask>,
-    /// Files asked while another waits for its options (several dropped at once), asked in turn.
-    pub import_options_waiting: std::collections::VecDeque<import_options::Ask>,
+    /// Files waiting for the current import dialog, in the order they were received.
+    pub(crate) import_options_waiting: std::collections::VecDeque<import_options::Prompt>,
     /// The Plugins menu and the open plugin entry dialog (`plugin_menu`).
     pub(crate) plugin_menu: plugin_menu::State,
     /// The view background a plugin draws (`shaders@0.1`), when one is chosen.
@@ -1918,9 +1918,12 @@ impl SolveApp {
         if self.file_load_holds() || self.file_picker.is_some() || self.saving.is_some() {
             return Err("a file operation is in progress".into());
         }
-        // The window has the design tabs, which the engine does not: it shows the design asked for.
+        // The window has the design tabs, which the engine does not: it shows or closes the design asked for.
         if id == "document.activate" {
             return documents::command(self, id, &params);
+        }
+        if id == "document.close" {
+            return documents::close_clean(self, &params);
         }
         // `new_tab`: the design opens in a tab of its own and the active one stays as it was.
         if matches!(id, "file.new" | "doc.open") && documents::take_new_tab(&mut params) {

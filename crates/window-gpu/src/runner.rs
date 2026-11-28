@@ -96,6 +96,9 @@ pub struct Created {
     pub render_state: Option<RenderState>,
     /// Wakes the loop from other threads.
     pub waker: Waker,
+    /// The main window, for what needs its native handle (its monitor's work area, an X11
+    /// activation request).
+    pub window: Option<Arc<Window>>,
 }
 
 /// Wakes the loop from any thread.
@@ -259,6 +262,15 @@ impl Shared {
                 settings.clamp_position_to_monitors(zoom, event_loop);
                 viewport.builder = settings.initialize_viewport_builder(zoom, viewport.builder.clone());
                 self.restore = Some(settings);
+            } else if id == ViewportId::ROOT
+                && viewport.builder.clamp_size_to_monitor_size.unwrap_or(true)
+                && let Some(size) = viewport.builder.inner_size
+            {
+                // A window larger than the monitor crashes on some Linux systems and doesn't
+                // appear on Windows, so its first size is at most the largest monitor's, as in
+                // eframe.
+                let largest = largest_monitor_points(self.ctx.zoom_factor(), event_loop);
+                viewport.builder = viewport.builder.clone().with_inner_size(size.min(largest));
             }
             let window = match egui_winit::create_window(&self.ctx, event_loop, &viewport.builder) {
                 Ok(window) => Arc::new(window),
@@ -480,11 +492,12 @@ impl Runner<'_> {
         if self.app.is_none()
             && let Some(create) = self.create.take()
         {
-            let (ctx, render_state) = {
+            let (ctx, render_state, window) = {
                 let shared = self.shared.borrow();
-                (shared.ctx.clone(), shared.painter.render_state())
+                let window = shared.viewports.get(&ViewportId::ROOT).and_then(|root| root.window.clone());
+                (shared.ctx.clone(), shared.painter.render_state(), window)
             };
-            self.app = Some(create(Created { ctx, render_state, waker: self.waker.clone() }));
+            self.app = Some(create(Created { ctx, render_state, waker: self.waker.clone(), window }));
         }
     }
 
@@ -599,8 +612,7 @@ impl ApplicationHandler<UserEvent> for Runner<'_> {
             UserEvent::RunLogicNow => self.run_logic(event_loop),
             UserEvent::Repaint { viewport, when, cumulative_pass_nr } => {
                 let mut shared = self.shared.borrow_mut();
-                // A request from a pass that has since been followed by another is already met.
-                if shared.ctx.cumulative_pass_nr_for(viewport) != cumulative_pass_nr {
+                if !repaint_still_wanted(shared.ctx.cumulative_pass_nr_for(viewport), cumulative_pass_nr) {
                     return;
                 }
                 if let Some(v) = shared.viewports.get_mut(&viewport) {
@@ -685,5 +697,24 @@ impl ApplicationHandler<UserEvent> for Runner<'_> {
             app.on_exit();
         }
         self.shared.borrow_mut().painter.destroy();
+    }
+}
+
+/// Whether a repaint asked for during pass `asked_in` still needs a pass, now that `current`
+/// passes have begun. A request made before the pass that is running, or during it (the pass
+/// count moves on as the pass ends, so the request arrives with `current` one ahead), still does:
+/// that is how a control request served in a logic-only pass gets the frame its screenshot waits
+/// for. One from an older pass was met by a later one. This is eframe's rule.
+fn repaint_still_wanted(current: u64, asked_in: u64) -> bool {
+    current == asked_in || asked_in.checked_add(1) == Some(current)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_repaint_asked_for_during_the_last_pass_still_paints() {
+        assert!(super::repaint_still_wanted(7, 7), "asked before the running pass ended");
+        assert!(super::repaint_still_wanted(8, 7), "asked during the pass that just ended");
+        assert!(!super::repaint_still_wanted(9, 7), "a later pass already met it");
     }
 }

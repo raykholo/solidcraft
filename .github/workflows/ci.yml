@@ -33,6 +33,9 @@
 # merges main into a change that already passed (scripts/ci/main_merge.py): it carries that
 # result and runs the repository checks. Merge groups, the nightly run and Run workflow are not
 # pull requests and always run the full suite.
+# On a pull request the heavy jobs also wait for the cheap gate, Format and repository checks and
+# Native Linux Clippy (see `checks`), and are skipped when either fails: the fix's push runs them.
+# Everything else runs them side by side, as the merge queue and batches must not wait.
 # GitHub cannot filter `labeled` events by label name, so any other label starts a run whose jobs
 # are all skipped; it gets its own concurrency group (below) so it never cancels the real run. Its
 # `ci` job still runs and reports the commit's real result (see the `ci` job): the merge queue
@@ -607,14 +610,20 @@ jobs:
             echo "packages=$packages"
           } >> "$GITHUB_OUTPUT"
 
+  # The cheap gate, on pull requests: this job and Native Linux Clippy (`clippy`). Every heavy job
+  # on a pull request waits for both and is skipped when either did not pass, so a format, repository
+  # check or Clippy failure costs minutes, not a full run that the fix has to repeat anyway; `ci`
+  # fails with them. Every other run (merge queue, batch/** pushes, main, nightly, Run workflow)
+  # runs the same steps in `checks-queue` and `clippy-queue`, beside the heavy jobs, as before:
+  # those changes passed the gate as pull requests, and the queue must not wait for it again.
+  # `needs` cannot depend on the event, hence the two copies (one set of steps, a YAML anchor).
   checks:
     name: Format and repository checks
-    # Not on a push to main the merge queue (or a batch) already tested and passed: nothing changed.
     needs: changes
-    if: needs.changes.outputs.queue_tested != 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci')
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 75 || 25 }}
-    steps:
+    steps: &repo-checks-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         # Two commits: `cargo xtask app-geometry` (and its workspace test) judges what HEAD adds to
         # HEAD~1, the code a pull request or merge-queue group lands on.
@@ -688,6 +697,16 @@ jobs:
       - name: Claim, triage and PR-check bot tests
         run: node --test scripts/claim/*.test.js scripts/triage/*.test.js scripts/pr-checks/*.test.js
 
+  # `checks` for every run but a pull request's (see there). Not on a push to main the merge queue
+  # (or a batch) already tested and passed: nothing changed.
+  checks-queue:
+    name: Format and repository checks (queue and main)
+    needs: changes
+    if: github.event_name != 'pull_request' && needs.changes.outputs.queue_tested != 'true'
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: ${{ vars.CI_RUNNER && 75 || 25 }}
+    steps: *repo-checks-steps
+
   # Fast feedback for a pull request that has not been approved for the full CI yet.
   quick-compile:
     name: Quick compile
@@ -725,13 +744,14 @@ jobs:
         if: success() && github.ref == 'refs/heads/main'
         run: python3 -I scripts/ci/warm_target.py seal --target target
 
+  # Part of the pull request gate (see `checks`); `clippy-queue` runs the same steps everywhere else.
   clippy:
     name: Native Linux Clippy
     needs: changes
-    if: needs.changes.outputs.native == 'true' || needs.changes.outputs.warm == 'true'
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.native == 'true' || needs.changes.outputs.warm == 'true')
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
-    steps:
+    steps: &clippy-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/merge-main
       - uses: dtolnay/rust-toolchain@1.99.1
@@ -774,14 +794,22 @@ jobs:
         if: success() && github.ref == 'refs/heads/main'
         run: python3 -I scripts/ci/warm_target.py seal --target target
 
+  clippy-queue:
+    name: Native Linux Clippy (queue and main)
+    needs: changes
+    if: github.event_name != 'pull_request' && (needs.changes.outputs.native == 'true' || needs.changes.outputs.warm == 'true')
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
+    steps: *clippy-steps
+
   shared-crates:
     name: Shared crates build on their own
-    needs: changes
+    needs: [changes, checks, clippy]
     # The shared crates must build on their own, without the rest of the workspace: that is
     # what makes them movable to their own repository (#12935). The check builds them in a
     # scratch workspace, so it compiles the kernel and the UI stack again: it is a build, not
     # a static check, and it belongs in the heavy lane.
-    if: needs.changes.outputs.shared == 'true' || needs.changes.outputs.warm == 'true'
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.shared == 'true' || needs.changes.outputs.warm == 'true') }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
     steps:
@@ -879,10 +907,10 @@ jobs:
 
   tests:
     name: Native Linux tests
-    needs: changes
+    needs: [changes, checks, clippy]
     # `warm`: a push to main whose checks don't run here builds the tests without running them,
     # to write the target/ disk (see WARM_TARGET).
-    if: ${{ !cancelled() && needs.changes.result == 'success' && (needs.changes.outputs.native == 'true' || needs.changes.outputs.warm == 'true') }}
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.native == 'true' || needs.changes.outputs.warm == 'true') }}
     # Builds the tests and runs them in one job on a big runner: there is no archive to upload
     # and download (3 GB on a full run), and the job starts beside the repository checks, not
     # after them. nextest hands tests to its threads as they free up, the slowest first (priority
@@ -1094,8 +1122,8 @@ jobs:
     # every test runs exactly once.
     # 16 vCPU, not 8: lavapipe compiles on every core, and on 8 vCPU one test went past the 600 s
     # budget (665 s, against 204 s for the same test in another run) and a shard took 35 minutes.
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.changes.outputs.gpu == 'true' }}
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && needs.changes.outputs.gpu == 'true' }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 135 || 45 }}
     strategy:
@@ -1313,8 +1341,8 @@ jobs:
 
   doc-tests:
     name: Doc tests
-    needs: changes
-    if: needs.changes.outputs.doctests == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.doctests == 'true') }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 135 || 45 }}
     env:
@@ -1379,11 +1407,11 @@ jobs:
 
   oracle:
     name: Reference tests
-    needs: changes
+    needs: [changes, checks, clippy]
     # Also the Python client's tests (Select checks' `python`) when the native checks don't run
     # (a change to python/ alone): they need the CLI this job builds, so they reuse its build and
     # caches. With the native checks, Native Linux tests runs them against its own build instead.
-    if: needs.changes.outputs.oracle == 'true' || ((needs.changes.outputs.python == 'true' || needs.changes.outputs.typescript == 'true') && needs.changes.outputs.native != 'true')
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.oracle == 'true' || ((needs.changes.outputs.python == 'true' || needs.changes.outputs.typescript == 'true') && needs.changes.outputs.native != 'true')) }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     env:
@@ -1453,8 +1481,8 @@ jobs:
   # (crates/gpu/tests/capture.rs).
   windows-fxc:
     name: Windows D3D12 FXC shaders
-    needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.windows == 'true') }}
     runs-on: ${{ vars.CI_RUNNER_WINDOWS || 'blacksmith-8vcpu-windows-2025' }}
     timeout-minutes: ${{ vars.CI_RUNNER_WINDOWS && 135 || 45 }}
     env:
@@ -1489,8 +1517,8 @@ jobs:
   # which needs a desktop that presents frames, stays GitHub-hosted, on the built app.
   windows-build:
     name: Windows app build
-    needs: changes
-    if: needs.changes.outputs.windows == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.windows == 'true') }}
     runs-on: ${{ vars.CI_RUNNER_WINDOWS || 'blacksmith-8vcpu-windows-2025' }}
     timeout-minutes: ${{ vars.CI_RUNNER_WINDOWS && 135 || 45 }}
     steps:
@@ -1517,7 +1545,9 @@ jobs:
   windows-startup:
     name: Windows app startup
     needs: [changes, windows-build]
-    if: needs.changes.outputs.windows == 'true'
+    # An explicit check: an implicit success() also reads windows-build's skipped `needs` (the
+    # gate copies another event leaves out), and would skip this job everywhere.
+    if: ${{ !cancelled() && needs.windows-build.result == 'success' && needs.changes.outputs.windows == 'true' }}
     # GitHub-hosted: the startup smoke needs an interactive desktop that presents frames; on
     # Blacksmith's Windows runners the window never presents ("no frame was presented").
     runs-on: windows-latest
@@ -1545,9 +1575,9 @@ jobs:
   # Pushes to main and develop, the release gate and a run by hand run kernel-rig.yml directly.
   kernel-rig:
     name: Kernel rig
-    needs: changes
+    needs: [changes, checks, clippy]
     if: >-
-      ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name == 'merge_group' ||
+      ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (github.event_name == 'merge_group' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/batch/')) ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'approved-for-ci') &&
       needs.changes.outputs.carried == '')) }}
@@ -1563,8 +1593,8 @@ jobs:
   # binary holds no trace of the endpoint.
   no-usage-stats:
     name: Build without usage statistics
-    needs: changes
-    if: needs.changes.outputs.no_usage_stats == 'true' || needs.changes.outputs.warm == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.no_usage_stats == 'true' || needs.changes.outputs.warm == 'true') }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 40 }}
     steps:
@@ -1612,7 +1642,7 @@ jobs:
     # commit's real run instead: the merge queue reads `ci` from the newest run of a commit, so a
     # run without a passing `ci` would block a pull request that passed (#1850, #3182, #3252).
     name: ci
-    needs: [changes, checks, quick-compile, clippy, shared-crates, build-tests, tests, gpu-path-tests, doc-tests, oracle, windows-fxc, windows-build, windows-startup, dependency-advisories, wasm, solidcore, solidcore-tests, solidcore-standalone, kernel-rig, no-usage-stats]
+    needs: [changes, checks, checks-queue, quick-compile, clippy, clippy-queue, shared-crates, build-tests, tests, gpu-path-tests, doc-tests, oracle, windows-fxc, windows-build, windows-startup, dependency-advisories, wasm, solidcore, solidcore-tests, solidcore-standalone, kernel-rig, no-usage-stats]
     if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     permissions:
@@ -1669,11 +1699,26 @@ jobs:
           echo "The commit's latest run: $latest"
           echo "A label started this run: \`ci\` repeats the commit's latest result ($latest)." >> "$GITHUB_STEP_SUMMARY"
           test "${latest%% *}" = success
+      # The gate stopped this run: say so, so nobody reads the skipped heavy jobs as passed or re-runs
+      # them. A push with the fix runs everything.
+      - name: Report the pull request gate
+        if: >-
+          github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci') &&
+          needs.changes.result == 'success' && (needs.checks.result != 'success' || !contains(fromJSON('["success", "skipped"]'), needs.clippy.result))
+        env:
+          CHECKS: ${{ needs.checks.result }}
+          CLIPPY: ${{ needs.clippy.result }}
+        run: |
+          msg="Format and repository checks: $CHECKS, Native Linux Clippy: $CLIPPY. The heavy checks did not run; push the fix and the next run runs them all."
+          echo "::error title=Fast checks failed::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
       - name: Verify required checks
         if: github.event.action != 'labeled' || github.event.label.name == 'approved-for-ci'
         env:
           CHANGES: ${{ needs.changes.result }}
-          CHECKS: ${{ needs.checks.result }}
+          # The pull request gate's copies, or the queue and main ones (see `checks`).
+          CHECKS: ${{ github.event_name == 'pull_request' && needs.checks.result || needs.checks-queue.result }}
           QUEUE_TESTED: ${{ needs.changes.outputs.queue_tested }}
           NATIVE: ${{ needs.changes.outputs.native }}
           QUICK: ${{ needs.changes.outputs.quick }}
@@ -1683,7 +1728,7 @@ jobs:
           PYTHON_RUN: ${{ needs.changes.outputs.python }}
           TYPESCRIPT_RUN: ${{ needs.changes.outputs.typescript }}
           DOCTESTS: ${{ needs.changes.outputs.doctests }}
-          CLIPPY: ${{ needs.clippy.result }}
+          CLIPPY: ${{ github.event_name == 'pull_request' && needs.clippy.result || needs.clippy-queue.result }}
           # The build-variant checks: with the native flag, except on a pull request that does not
           # touch what they guard (Select checks' `shared` and `no_usage_stats`).
           SHARED_RUN: ${{ needs.changes.outputs.shared }}
@@ -1841,8 +1886,8 @@ jobs:
   # `layers` rule reads the manifests, this builds them without the rest of the repository around.
   solidcore-standalone:
     name: SolidCore builds on its own
-    needs: changes
-    if: needs.changes.outputs.solidcore == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.solidcore == 'true') }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 90 || 30 }}
     env:
@@ -1869,8 +1914,8 @@ jobs:
 
   solidcore:
     name: SolidCore checks (${{ matrix.check }})
-    needs: changes
-    if: needs.changes.outputs.solidcore == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.solidcore == 'true') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     strategy:
@@ -2041,8 +2086,8 @@ jobs:
   # `SolidCore checks (tests)` below is the one result the rest of the workflow reads.
   solidcore-tests-build:
     name: SolidCore tests (build)
-    needs: changes
-    if: needs.changes.outputs.solidcore == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.solidcore == 'true') }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     defaults:
@@ -2094,7 +2139,8 @@ jobs:
   solidcore-tests-shard:
     name: SolidCore tests (${{ matrix.shard }}/6)
     needs: [changes, solidcore-tests-build]
-    if: needs.changes.outputs.solidcore == 'true'
+    # Explicit, as for windows-startup: an implicit success() also reads the build's skipped gate copies.
+    if: ${{ !cancelled() && needs.solidcore-tests-build.result == 'success' && needs.changes.outputs.solidcore == 'true' }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     strategy:
@@ -2142,8 +2188,8 @@ jobs:
 
   solidcore-tests-extras:
     name: SolidCore tests (doctests and solids report)
-    needs: changes
-    if: needs.changes.outputs.solidcore == 'true'
+    needs: [changes, checks, clippy]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && (github.event_name != 'pull_request' || (needs.checks.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.clippy.result))) && (needs.changes.outputs.solidcore == 'true') }}
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 180 || 60 }}
     defaults:
@@ -2281,7 +2327,7 @@ jobs:
   # failed nor fully passed (cancelled) leaves the issue as it is. The only job that may write issues.
   nightly-alert:
     name: Nightly alert
-    needs: [dependency-advisories, changes, checks, ci, build-tests, action-matrix, action-matrix-determinism, property-tests]
+    needs: [dependency-advisories, changes, checks-queue, ci, build-tests, action-matrix, action-matrix-determinism, property-tests]
     if: always() && github.event_name == 'schedule'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
     timeout-minutes: ${{ vars.CI_RUNNER && 15 || 5 }}

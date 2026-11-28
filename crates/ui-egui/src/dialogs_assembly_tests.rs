@@ -2705,6 +2705,54 @@ fn as_built_takes_a_component_with_a_sub_component_as_one() {
     }
 }
 
+/// #23704: As-Built takes exactly two components. Three selected when it starts keep Components
+/// active, with OK refused, until one is taken out there; two selected join at once and one waits
+/// for the second.
+#[test]
+fn as_built_with_three_components_selected_stays_on_components() {
+    let setup = || {
+        let mut h = crate::scenario::Harness::new();
+        let mut occs = Vec::new();
+        for (name, x) in [("A", 0.0), ("B", 40.0), ("C", 80.0)] {
+            occs.push(h.app.run("component.create", json!({ "name": name })).unwrap()["occurrence"].as_u64().unwrap());
+            h.app.run("solid.box", json!({"length": 20, "width": 20, "height": 20, "corner": [x, 0.0, 0.0], "operation": "new_body"})).unwrap();
+            h.app.run("component.activate", json!({"component": "root"})).unwrap();
+        }
+        h.app.preferences.browser_components_open = true;
+        h.frames(3);
+        (h, occs)
+    };
+    let start_with = |h: &mut crate::scenario::Harness, picked: &[u64]| {
+        h.app.session.selection = picked.iter().map(|o| Sel::Occurrence { path: vec![*o] }).collect();
+        h.app.start("joint.as_built");
+        h.frames(2);
+    };
+
+    let (mut h, occs) = setup();
+    start_with(&mut h, &occs);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!((d.inputs[0].items.len(), d.active), (3, 0), "three components: Components stays active");
+    assert_eq!(apply_commands(&h.app, d).unwrap_err(), "select two components");
+    // Taking C out there leaves two: Position is next and OK joins A and B.
+    click_row(&mut h, occs[2]);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!((d.inputs[0].items.len(), d.active), (2, 1), "two components left: Position is next");
+    let c = apply_commands(&h.app, d).unwrap();
+    assert_eq!((c[0].1["a"].clone(), c[0].1["b"].clone()), (json!(occs[0]), json!(occs[1])));
+
+    let (mut h, occs) = setup();
+    start_with(&mut h, &occs[..2]);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!(d.active, 1, "two components selected: Position is next");
+    let c = apply_commands(&h.app, d).unwrap();
+    assert_eq!((c[0].1["a"].clone(), c[0].1["b"].clone()), (json!(occs[0]), json!(occs[1])));
+
+    let (mut h, occs) = setup();
+    start_with(&mut h, &occs[..1]);
+    let d = h.app.dialog.as_ref().unwrap();
+    assert_eq!((d.inputs[0].items.len(), d.active), (1, 0), "one component: Components waits for the second");
+}
+
 /// Both grounded: Outer, which holds a sub-component, picked by its row, and Other make a joint
 /// that moves neither, as OK counts them; Outer alone is one component, with nothing to say yet.
 #[test]

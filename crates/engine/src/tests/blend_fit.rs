@@ -112,6 +112,101 @@ fn oversized_fillet_reports_smlib_fit_size_that_applies_cleanly() {
     assert!(volume(&mut s) < 24000.0 && volume(&mut s) > 20000.0, "{}", volume(&mut s));
 }
 
+/// A 20 x 20 x 2 plate with a 0.3 mm boss, whose foot passes through [4, 0, 2].
+fn shallow_boss_on_plate(profile_command: &str, profile: serde_json::Value) -> Session {
+    let mut s = Session::default();
+    run(&mut s, "sketch.create", json!({"plane": "XY"}));
+    run(&mut s, "sketch.rectangle.two_point", json!({"p0": [-10, -10], "p1": [10, 10]}));
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 2, "operation": "new", "body_name": "Main"}));
+    run(&mut s, "sketch.create", json!({"plane": {"origin": [0, 0, 2], "x_dir": [1, 0, 0], "y_dir": [0, 1, 0]}}));
+    run(&mut s, profile_command, profile);
+    run(&mut s, "sketch.finish", json!({}));
+    run(&mut s, "solid.extrude", json!({"distance": 0.3, "operation": "join"}));
+    s
+}
+
+fn shallow_ellipse_boss_on_plate() -> Session {
+    shallow_boss_on_plate("sketch.ellipse", json!({"center": [0, 0], "major": [4, 0], "minor_radius": 2}))
+}
+
+fn assert_shallow_boss_fillet_refusal(error: &str) {
+    assert!(error.contains("the largest radius that fits is 0.3 mm"), "{error}");
+    assert!(!error.contains("SMLib"), "{error}");
+}
+
+/// The contact line on this vertical wall reaches the top when the radius equals the boss height.
+#[test]
+fn shallow_ellipse_boss_refuses_a_round_above_its_height() {
+    let mut s = shallow_ellipse_boss_on_plate();
+    let error = s.execute("solid.fillet", &json!({"edges": [[4, 0, 2]], "radius": 0.6, "tangent_chain": true})).unwrap_err().to_string();
+    assert_shallow_boss_fillet_refusal(&error);
+}
+
+#[test]
+fn shallow_ellipse_boss_round_builds_at_and_below_its_height() {
+    for radius in [0.3_f64, 0.29] {
+        let mut s = shallow_ellipse_boss_on_plate();
+        let reply = run(&mut s, "solid.fillet", json!({"edges": [[4, 0, 2]], "radius": radius, "tangent_chain": true}));
+        assert!(reply["warning"].is_null(), "{radius} mm: {reply}");
+        let state = s.model.state();
+        let body = &state.body("Main").unwrap().body;
+        assert_eq!(body.shell_count(), 1, "{radius} mm");
+        assert!(body.validity().is_empty(), "{radius} mm: {:?}", body.validity());
+        let measured = solidcraft_kernel::measure_mass(body).unwrap();
+        assert_eq!(measured.measured_by, "smlib");
+        // The ellipse perimeter is 16 E(sqrt(3)/2). At height z above the base, the fillet
+        // adds a parallel band of width w = r - sqrt(r² - (r - z)²) and area Lw + πw².
+        let perimeter = 19.376_896_441_095_35;
+        let added = perimeter * radius.powi(2) * (1.0 - PI / 4.0) + PI * radius.powi(3) * (5.0 / 3.0 - PI / 2.0);
+        let expected = 800.0 + 0.3 * PI * 4.0 * 2.0 + added;
+        assert!((measured.volume - expected).abs() < 2e-3, "{radius} mm: {} vs {expected}", measured.volume);
+    }
+}
+
+#[test]
+fn shallow_circle_boss_refuses_a_round_above_its_height() {
+    let mut s = shallow_boss_on_plate("sketch.circle.center", json!({"center": [0, 0], "radius": 4}));
+    let error = s.execute("solid.fillet", &json!({"edges": [[4, 0, 2]], "radius": 0.6, "tangent_chain": true})).unwrap_err().to_string();
+    // A circular boss already refused through the rail-misses-edge fit, which keeps a margin of
+    // a thousand edge tolerances below the 0.3 mm height, so it names 0.29 mm.
+    assert!(error.contains("the largest radius that fits is 0.29 mm"), "{error}");
+    assert!(!error.contains("SMLib"), "{error}");
+}
+
+#[test]
+fn shallow_ellipse_boss_round_keeps_its_fit_through_history() {
+    let mut s = shallow_ellipse_boss_on_plate();
+    run(&mut s, "parameters.add", json!({"name": "round_radius", "expression": "0.29 mm"}));
+    let reply = run(&mut s, "solid.fillet", json!({"edges": [[4, 0, 2]], "radius": "round_radius", "tangent_chain": true}));
+    let id = reply["feature"].as_u64().unwrap();
+    let fitted = volume(&mut s);
+
+    run(&mut s, "parameters.change", json!({"name": "round_radius", "expression": "0.6 mm"}));
+    assert_shallow_boss_fillet_refusal(s.model.result(id).unwrap().error.as_deref().unwrap());
+    run(&mut s, "edit.undo", json!({}));
+    assert_eq!(s.model.result(id).unwrap().error, None);
+    assert!((volume(&mut s) - fitted).abs() < 1e-9);
+    run(&mut s, "edit.redo", json!({}));
+    assert_shallow_boss_fillet_refusal(s.model.result(id).unwrap().error.as_deref().unwrap());
+
+    let bytes = crate::io::write_design_container(&s.doc).unwrap();
+    let mut reopened = Session::new(crate::io::read_design(&bytes).unwrap());
+    assert_shallow_boss_fillet_refusal(reopened.model.result(id).unwrap().error.as_deref().unwrap());
+    run(&mut reopened, "timeline.edit", json!({"feature": id, "set": {"radius": "0.3 mm"}}));
+    assert_eq!(reopened.model.result(id).unwrap().error, None);
+    let error = reopened.execute("timeline.edit", &json!({"feature": id, "set": {"radius": "0.6 mm"}})).unwrap_err().to_string();
+    assert_shallow_boss_fillet_refusal(&error);
+    let error = reopened
+        .execute(
+            "timeline.redefine",
+            &json!({"feature": id, "command": "solid.fillet", "params": {"edges": [[4, 0, 2]], "radius": 0.6, "tangent_chain": true}}),
+        )
+        .unwrap_err()
+        .to_string();
+    assert_shallow_boss_fillet_refusal(&error);
+}
+
 // ---- fit: keep_edge: a concave round taller than its wall ends on
 // the wall's top edge ----
 

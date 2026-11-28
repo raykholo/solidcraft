@@ -1748,7 +1748,7 @@ impl Dialog {
         d.sync_thread(s);
         d.sync_material(s);
         d.advance();
-        // As-built opens on Components until they hold two components (#21842).
+        // As-built opens on Components until they hold exactly two components (#21842, #23704).
         if crate::dialogs_assembly::as_built_wants_components(s, &d) {
             d.active = 0;
         }

@@ -1507,7 +1507,7 @@ fn dialog_hook_prefilled_values_stay_protected_and_hidden_values_are_validated()
     let (width, value) = fields.iter().find(|(field, _)| field.key == "width").unwrap();
     assert!(!width.visible && width.prefilled && width.edited);
     assert_eq!(*value, Input::Number(42.0), "a hook default must not replace a stored value");
-    assert_eq!(width.tip.as_deref(), Some("Computed width"));
+    assert_eq!(width.hint.as_deref(), Some("Computed width"));
     let (size, value) = fields.iter().find(|(field, _)| field.key == "size").unwrap();
     assert!(!size.enabled);
     assert_eq!(size.available, [1]);
@@ -1521,6 +1521,36 @@ fn dialog_hook_prefilled_values_stay_protected_and_hidden_values_are_validated()
     set_input(dialog.fields.as_mut().unwrap(), "size", Input::Choice(Some(1)));
     checked_prefill(&h.app);
     assert_eq!(h.app.plugin_menu.dialog().unwrap().ready(&h.app).unwrap(), json!({"width":42.0,"size":"large"}));
+}
+
+/// #23623: a dialog hook's `hint` is drawn under its field while the reply stands, where the user
+/// sees it, and leaves with a reply that drops it; the field's `description` stays its tooltip.
+#[test]
+fn dialog_hook_hints_show_under_their_field_while_the_reply_stands() {
+    let mut h = hook_dialog_harness();
+    let hint = "The part is d25 and the pipe d110: reducers are added";
+    let reply = |dialog: &EntryDialog, patch: &str| {
+        let hook = dialog.hook.as_ref().unwrap();
+        solidcraft_engine::plugin::dialog::apply(&hook.schema, &json!({"width":1,"size":"large"}), &Default::default(), Some(patch), false).unwrap()
+    };
+    let drawn = |h: &crate::scenario::Harness, dialog: &mut EntryDialog| {
+        let output = form_frame(&h.ctx, |ui| {
+            let _ = body(&h.app, ui, dialog, None, &mut None, &mut None);
+        });
+        crate::test_support::text_shapes(&output).map(|t| t.galley.text().to_owned()).collect::<Vec<_>>()
+    };
+    let mut dialog = h.app.plugin_menu.dialogs.pop().unwrap();
+    assert!(!drawn(&h, &mut dialog).iter().any(|t| t == hint));
+    let update = reply(&dialog, &format!(r#"{{"width":{{"hint":"{hint}"}}}}"#));
+    assert!(apply_hook_reply(&mut dialog, 0, update));
+    let width = &dialog.fields.as_ref().unwrap().iter().find(|(f, _)| f.key == "width").unwrap().0;
+    assert_eq!((width.hint.as_deref(), width.tip.as_deref()), (Some(hint), None), "the hint is not the tooltip");
+    assert!(drawn(&h, &mut dialog).iter().any(|t| t == hint), "the hint is visible text under the field");
+    // A later reply without it takes it away.
+    dialog.hook.as_mut().unwrap().generation = 1;
+    let update = reply(&dialog, r#"{"width":{"default":24}}"#);
+    assert!(apply_hook_reply(&mut dialog, 1, update));
+    assert!(!drawn(&h, &mut dialog).iter().any(|t| t == hint));
 }
 
 #[test]
@@ -4233,7 +4263,7 @@ fn importer_file_conditions_and_general_patches_share_defaults_without_overwriti
     let fields = dialog.fields.as_ref().unwrap();
     let detail = &fields.iter().find(|(field, _)| field.key == "detail").unwrap().0;
     assert!(!detail.visible && !detail.enabled);
-    assert_eq!(detail.tip.as_deref(), Some("Header detail"));
+    assert_eq!(detail.hint.as_deref(), Some("Header detail"));
     assert_eq!(params(fields).unwrap()["width"], 24.0);
     assert_eq!(params(fields).unwrap()["part"], "chosen");
     assert!(!dialog.has_hook, "general patches do not resubmit the file-aware schema hook");

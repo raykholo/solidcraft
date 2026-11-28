@@ -4931,6 +4931,63 @@ fn a_body_pattern_redefined_to_picked_placements_says_why_it_is_refused() {
     assert_eq!(s.doc.occurrences.len(), occurrences, "no placement is added");
 }
 
+#[test]
+fn body_name_templates_survive_count_changes_and_rebuilds() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.add", json!({"name":"copies", "expression":"5", "unit":"none"}));
+    run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"body_name":"Seed"}));
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":"copies","body_name_template":"Block {i}"}),
+    );
+    let check = |s: &Session, count: usize| {
+        let names: Vec<_> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+        let expected: Vec<_> = std::iter::once("Seed".to_string()).chain((1..=count).map(|i| format!("Block {i}"))).collect();
+        assert_eq!(names, expected);
+    };
+    check(&s, 4);
+    run(&mut s, "parameters.change", json!({"name":"copies","expression":"7"}));
+    check(&s, 6);
+    s.refresh();
+    check(&s, 6);
+    let saved = serde_json::to_value(&s.doc).unwrap();
+    assert!(saved.to_string().contains("Block {i}"));
+    s.doc = serde_json::from_value(saved).unwrap();
+    s.refresh();
+    check(&s, 6);
+}
+
+#[test]
+fn body_name_templates_refuse_duplicates_and_require_an_index() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"body_name":"Seed"}));
+    run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"corner":[0,10,0],"body_name":"Block 1"}));
+    for (template, message) in [("Block {i}", "Block 1"), ("Block", "{i}")] {
+        let error = s
+            .execute("solid.pattern.rectangular", &json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":3,"body_name_template":template}))
+            .unwrap_err();
+        assert!(error.to_string().contains(message), "{error}");
+        assert_eq!(s.model.state().bodies.len(), 2);
+    }
+}
+
+#[test]
+fn body_patterns_without_templates_keep_legacy_names() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"body_name":"Seed"}));
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":3}));
+    let names: Vec<_> = s.model.state().bodies.iter().map(|b| b.name.clone()).collect();
+    assert_eq!(names, ["Seed", "Seed (2)", "Seed (3)"]);
+    let mut saved = serde_json::to_value(&s.doc).unwrap();
+    for feature in saved["features"].as_array_mut().unwrap() {
+        feature.as_object_mut().unwrap().remove("body_name_template");
+    }
+    s.doc = serde_json::from_value(saved).unwrap();
+    s.refresh();
+    assert_eq!(s.model.state().bodies.iter().map(|b| b.name.clone()).collect::<Vec<_>>(), names);
+}
+
 /// The pattern repeats the full cut, including the tapered bore, helical groove, and any lead-in.
 fn check_modelled_tapered_hole_patterns(circular: bool, lead_in: bool) {
     use solidcore_record::Vec3;
@@ -5537,4 +5594,90 @@ fn patterns_of_a_hole_before_a_body_transfer_keep_every_copy() {
     run(&mut s, "edit.undo", json!({}));
     run(&mut s, "edit.redo", json!({}));
     assert!((PLATE_574 - volume(&mut s) - 3.0 * one).abs() < 1e-3 * one);
+}
+
+#[test]
+fn body_name_templates_keep_suppressed_source_slots() {
+    let mut s = Session::default();
+    for (name, y) in [("A", 0), ("B", 10)] {
+        run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"corner":[0,y,0],"body_name":name,"name":name}));
+    }
+    run(&mut s, "solid.pattern.rectangular", json!({"bodies":["A","B"],"dir1":[1,0,0],"spacing1":3,"count1":3,"body_name_template":"Block {i}"}));
+    assert_eq!(body_names(&s), ["A", "B", "Block 1", "Block 2", "Block 3", "Block 4"]);
+    run(&mut s, "timeline.suppress", json!({"feature":"A","suppressed":true}));
+    assert_eq!(body_names(&s), ["B", "Block 3", "Block 4"]);
+    run(&mut s, "timeline.suppress", json!({"feature":"A","suppressed":false}));
+    assert_eq!(body_names(&s), ["A", "B", "Block 1", "Block 2", "Block 3", "Block 4"]);
+}
+
+#[test]
+fn body_name_templates_refuse_copy_renames() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"body_name":"Seed"}));
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":3,"body_name_template":"Block {i}","name":"Pattern1"}),
+    );
+    for params in [json!({"body":"Block 2","name":"Other"}), json!({"bodies":["Seed","Block 2"],"name":"Other"})] {
+        let before = s.doc.clone();
+        let error = s.execute("body.rename", &params).unwrap_err().to_string();
+        for text in ["Block 2", "Pattern1", "Block {i}", "clear"] {
+            assert!(error.contains(text), "{error}");
+        }
+        assert_eq!(s.doc, before);
+    }
+    let mut plain = Session::default();
+    run(&mut plain, "solid.box", json!({"length":1,"width":1,"height":1,"body_name":"Seed"}));
+    run(&mut plain, "solid.pattern.rectangular", json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":2}));
+    run(&mut plain, "body.rename", json!({"body":"Seed (2)","name":"Other"}));
+    plain.refresh();
+    assert_eq!(body_names(&plain), ["Seed", "Other"]);
+}
+
+#[test]
+fn body_name_templates_survive_inspect_and_redefine() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length":1,"width":1,"height":1,"body_name":"Seed"}));
+    run(
+        &mut s,
+        "solid.pattern.rectangular",
+        json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":3,"body_name_template":"Block {i}","name":"Pattern1"}),
+    );
+    let inspected = run(&mut s, "timeline.inspect", json!({"feature":"Pattern1"}));
+    // The command's geometric parameters live under `pattern` in the saved definition.
+    let mut params = inspected["definition"]["pattern"].clone();
+    params.as_object_mut().unwrap().remove("type");
+    params["bodies"] = inspected["definition"]["bodies"].clone();
+    params["body_name_template"] = inspected["definition"]["body_name_template"].clone();
+    assert_eq!(params["body_name_template"], "Block {i}");
+    let before = body_names(&s);
+    run(&mut s, "timeline.redefine", json!({"feature":"Pattern1","command":"solid.pattern.rectangular","params":params}));
+    s.refresh();
+    assert_eq!(body_names(&s), before);
+    for template in [json!(""), json!(42), json!("Different {i}")] {
+        let mut invalid = params.clone();
+        invalid["body_name_template"] = template;
+        invalid["body_names"] = json!(["Pinned 1", "Pinned 2"]);
+        assert!(s.execute("timeline.redefine", &json!({"feature":"Pattern1","command":"solid.pattern.rectangular","params":invalid})).is_err());
+        assert_eq!(body_names(&s), before);
+    }
+}
+
+#[test]
+fn body_pattern_pinned_list_survives_save_and_redefine() {
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"width":1,"length":1,"height":1,"body_name":"Seed"}));
+    let params = json!({"bodies":["Seed"],"dir1":[1,0,0],"spacing1":3,"count1":3,"body_names":["Pinned 1","Pinned 2"],"name":"Pattern1"});
+    run(&mut s, "solid.pattern.rectangular", params.clone());
+    assert_eq!(body_names(&s), ["Seed", "Pinned 1", "Pinned 2"]);
+    let saved = serde_json::to_value(&s.doc).unwrap();
+    let feature = saved["features"].as_array().unwrap().iter().find(|f| f["name"] == "Pattern1").unwrap();
+    assert_eq!(feature["body_names"], json!(["Pinned 1", "Pinned 2"]));
+    assert!(feature.get("body_name_template").is_none());
+    s.doc = serde_json::from_value(saved).unwrap();
+    s.refresh();
+    assert_eq!(body_names(&s), ["Seed", "Pinned 1", "Pinned 2"]);
+    run(&mut s, "timeline.redefine", json!({"feature":"Pattern1","command":"solid.pattern.rectangular","params":params}));
+    assert_eq!(body_names(&s), ["Seed", "Pinned 1", "Pinned 2"]);
 }

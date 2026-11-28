@@ -101,8 +101,9 @@ welds, surfacing layers, closed-path all-around detection, type-specific face
 icons, revised looks/icons and floating-weld reference planes. `penetration_shown`
 is a saved display flag; viewport penetration is a later job.
 
-`process` is optional ISO 4063 text (1–3 ASCII digits, e.g. `"135"`), always used
-as the supported symbol's tail. The panel filters processes by type and derives
+`process` is optional ISO 4063 text: 1–3 ASCII digits (`"135"`, group `"13"`),
+an optional variant (`"131-D"`), several joined by `+` for a hybrid (`"522+15"`); it is
+always used as the supported symbol's tail. The panel filters processes by type and derives
 display texture from the number; texture is not saved. Process defaults are
 135, 135, 141, 135, 21, 22, 78, 135, 135 in the type order above.
 
@@ -120,3 +121,14 @@ accepting length expressions). Pitch is centre to centre. Supported chain fillet
 write spans into the symbol; single spans, staggered spans, butt spans and spans
 outside the geometry annotation bounds remain saved without symbol intermittency.
 Use the Pattern tool to repeat spot welds.
+
+Manufacturing data, all optional and saved only when set: `position` (ISO 6947
+main position `PA`–`PK`), `quality` (`ISO 5817`, `ISO 10042`, `ISO 13919-1` or
+`ISO 13919-2` with level `B`, `C` or `D`, e.g. `"ISO 5817-C"`), `wps`, `ndt`
+(`methods`: `VT`, `PT`, `MT`, `UT`, `RT` to an extent in per cent above 0 and at
+most 100, plus a `note`), `tail_text` and `filler` (designation). Texts are one
+plain line (WPS 64, filler 128, tail text and NDT note 256 bytes).
+
+Welds are numbered W1, W2, … in creation order. A weld may carry a `label`
+(at most 16 bytes, unique, never `W<number>`) shown in place of its number;
+renumbering gives W1…Wn in creation order and keeps labels.

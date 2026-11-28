@@ -866,6 +866,34 @@ fn translated_box() -> crate::scenario::Harness {
     h
 }
 
+#[test]
+fn select_other_returns_crossings_in_the_move_previews_frame() {
+    let mut h = translated_box();
+    let mut d = h.app.dialog.take().unwrap();
+    switch_type(&h.app, &mut d, ROTATE);
+    d.inputs[1].items = vec![Sel::Axis { name: "Y".into() }];
+    let Kind::Move { angle, .. } = &mut d.kind else { panic!("expected Move") };
+    *angle = "90 deg".into();
+    h.app.dialog = Some(d);
+    h.call("ui.view", json!({"view":"top"}));
+    h.settle();
+
+    // The original X end faces at 0 and 20 now lie at Z = -10 and -30.
+    let proj = crate::viewport::projection(&h.app, h.app.viewport.rect.unwrap());
+    let pos = proj.to_screen(Vec3::new(5.0, 15.0, -10.0)).unwrap();
+    let faces: Vec<_> = crate::viewport::pick_through(&h.app, &proj, pos)
+        .into_iter()
+        .filter_map(|hit| match hit {
+            crate::viewport::Hit::Face { body, point, .. } if body == "Body1" => Some(point),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(faces.len(), 2, "{faces:?}");
+    for (point, z) in faces.into_iter().zip([-10.0, -30.0]) {
+        assert!((point - Vec3::new(5.0, 15.0, z)).len() < 1e-4, "{point:?}");
+    }
+}
+
 /// #8746: changing the Move Type keeps the move made so far, and the new type moves the body
 /// on from there; one solid.move holds the chain.
 #[test]

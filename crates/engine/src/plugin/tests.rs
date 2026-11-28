@@ -3079,6 +3079,38 @@ mod native {
         assert_eq!((s.plugin_state.caller_design.as_ref(), s.source_path.as_deref()), (None, None));
     }
 
+    #[test]
+    fn document_close_in_a_plugin_run_needs_the_doc_grant() {
+        assert_eq!(command_group("document.close"), Some("doc"));
+        let f = Fixture::new("call $box");
+        let command = "document.close";
+        let source = component_template();
+        let arguments = r#"{\22length\22:2,\22width\22:3,\22height\22:4}"#;
+        assert!(source.contains(arguments));
+        let source = source
+            .replace("\"solid.box\"", &format!("\"{command}\""))
+            .replace(
+                "i32.const 9\n      i32.const 1024\n      i32.const 33",
+                &format!("i32.const {}\n      i32.const 1024\n      i32.const 2", command.len()),
+            )
+            .replace(arguments, "{}");
+        std::fs::write(f.0.join("sample/plugin.wasm"), wat::parse_str(&source).unwrap()).unwrap();
+        let mut m = manifest();
+        m["runtime"]["commands"] = json!([command]);
+        let missing_group = parse_manifest(&serde_json::to_vec(&m).unwrap(), "sample").unwrap_err().to_string();
+        assert!(missing_group.contains("needs \"doc\" in runtime.permissions.command_groups"), "{missing_group}");
+        m["runtime"]["permissions"] = json!({"command_groups":["doc"]});
+        std::fs::write(f.0.join("sample/plugin.json"), m.to_string()).unwrap();
+        let file = f.0.join("Saved.sc").to_string_lossy().into_owned();
+        let mut s = Session::default();
+        s.execute("solid.box", &json!({"length":2,"width":3,"height":4})).unwrap();
+        s.execute("file.save_as", &json!({"path": file})).unwrap();
+        let id_before = s.document_id.clone();
+        let error = f.run(&mut s).unwrap_err();
+        assert!(matches!(error.host_error(), Some(HostError::PermissionDenied { permission }) if permission.contains("`doc`")), "{error}");
+        assert_eq!((s.document_id.as_str(), s.path.as_deref(), s.doc.features.len()), (id_before.as_str(), Some(file.as_str()), 1));
+    }
+
     /// `plugin.check` finds what Install and a call would refuse, with a fix for each, and runs
     /// no plugin code: the fixture's component would trap if it ran.
     #[test]

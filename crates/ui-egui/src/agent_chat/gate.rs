@@ -225,8 +225,8 @@ pub fn command(id: &str, params: &Value, undo_left: usize) -> Verdict {
         let entry = shown("entry");
         return Verdict::Ask(solidcraft_ui_text::format("ui.plugin_run_consent", &[("entry", &entry), ("path", &path)]));
     }
-    // Files, and commands that replace or reload the whole design.
-    let file_command = id.starts_with("file.") || id.starts_with("doc.") || matches!(id, "render.export" | "render.start");
+    // Files, and commands that replace, reload, or close the active design.
+    let file_command = id.starts_with("file.") || id.starts_with("doc.") || matches!(id, "render.export" | "render.start" | "document.close");
     // The question says which program a send to a slicer would start.
     let with_slicer =
         |question: String| match params.get("slicer").and_then(Value::as_str).filter(|_| id.ends_with("save_mesh") || id.ends_with("send_to_slicer"))
@@ -400,6 +400,11 @@ mod tests {
         assert!(matches!(exec("file.new", json!({})), Verdict::Ask(_)));
         assert!(matches!(exec("doc.open", json!({"path": "x.step"})), Verdict::Ask(_)));
         assert!(matches!(exec("file.export", json!({"path": "x.stl"})), Verdict::Ask(_)));
+        assert!(matches!(exec("document.close", json!({})), Verdict::Ask(a) if a == "document.close"));
+        assert!(matches!(exec("document.close", json!({"document_id": "abc"})), Verdict::Ask(a) if a == "document.close"));
+        assert_eq!(tool_key("engine.execute", &json!({"command": "document.close", "params": {}})), "document.close");
+        let close_batch = json!({"commands": [{"command": "solid.box", "params": {}}, {"command": "document.close", "params": {}}]});
+        assert!(matches!(request("engine.batch", &close_batch, 0), Verdict::Ask(a) if a.contains("document.close")));
         // Any command given a file, whatever its area.
         assert!(matches!(exec("sketch.create", json!({"file": "a.dxf"})), Verdict::Ask(_)));
         let batch = json!({"commands": [{"command": "solid.box", "params": {}}, {"command": "file.save", "params": {"path": "/etc/x"}}]});

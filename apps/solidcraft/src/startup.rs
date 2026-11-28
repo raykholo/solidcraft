@@ -1446,6 +1446,8 @@ mod tests {
             up: false,
             take_focus_unwanted: true,
             come_forward: crate::come_forward::ComeForward::default(),
+            native_window: None,
+            settings_input: false,
             gpu: None,
             unkept: Vec::new(),
             #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
