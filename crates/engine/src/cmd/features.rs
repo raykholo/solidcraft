@@ -261,6 +261,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<PatternResult>)
         .params(concat!(
             "features: [names] | bodies: [names] | components: [names]; ",
+            "body_name_template?: string template (body copies only, join false; {i} starts at 1; original unchanged); ",
             "dir1: [x,y,z]; ",
             "count1; ",
             "spacing1; ",
@@ -284,6 +285,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<PatternResult>)
         .params(concat!(
             "features: [names] | bodies: [names] | components: [names]; ",
+            "body_name_template?: string template (body copies only, join false; {i} starts at 1; original unchanged); ",
             "axis: X|Y|Z | construction axis name (followed when edited) | {origin, dir} (origin coordinates may be length expressions; the pattern follows them) | {edge|face: [x,y,z]} (a straight or circular edge, or a cylinder, cone or torus face: about its axis, followed as the model changes); ",
             "count; ",
             "angle? (default 360 deg; partial arcs include both ends); ",
@@ -298,6 +300,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .output(output_schema_for::<PatternResult>)
         .params(concat!(
             "features: [names] | bodies: [names]; ",
+            "body_name_template?: string template (body copies only, join false; {i} starts at 1; original unchanged); ",
             "path_sketch: sketch; ",
             "path: [curve ids in order]; ",
             "path_body?: body name; path_edges?: [points on its edges] (the path is a chain of that body's edges, instead of a sketch's curves, starting at the chain's end nearest the first point, or a closed chain at its point nearest the first point); ",
@@ -3850,10 +3853,22 @@ fn finish_pattern(
     if join && !(comps.is_empty() && paths.is_empty()) {
         return Err(bad("pattern", "`join` joins bodies: a pattern of components places occurrences, which are not joined"));
     }
+    let body_name_template = match p.get("body_name_template") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(template)) if !template.trim().is_empty() => Some(template.clone()),
+        Some(_) => return Err(bad("pattern", "body_name_template must be a nonempty string")),
+    };
+    if body_name_template.is_some() && (bodies.is_empty() || !comps.is_empty() || !paths.is_empty() || join) {
+        return Err(bad("pattern", "body_name_template requires separate body copies (join: false)"));
+    }
+    if body_name_template.is_some() && p.get("body_names").is_some_and(|v| !v.is_null()) {
+        return Err(bad("pattern", "give either body_names or body_name_template, not both"));
+    }
     if comps.is_empty() && paths.is_empty() {
         let copied = bodies.clone();
         let sources = features.clone();
         let kind = FeatureKind::Pattern {
+            body_name_template,
             features,
             pattern,
             bodies: bodies.into_iter().map(BodyName).collect(),
@@ -3895,7 +3910,16 @@ fn finish_pattern(
         let mut reply = add_feature(
             s,
             p,
-            FeatureKind::Pattern { features, pattern, bodies: Vec::new(), placements: Vec::new(), components, occurrences: Vec::new(), join: false },
+            FeatureKind::Pattern {
+                body_name_template: None,
+                features,
+                pattern,
+                bodies: Vec::new(),
+                placements: Vec::new(),
+                components,
+                occurrences: Vec::new(),
+                join: false,
+            },
         )?;
         let made = s
             .doc

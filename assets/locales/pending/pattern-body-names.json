@@ -1,0 +1,42 @@
+{
+  "en": {
+    "pattern.body_name_template_clash": "Body name `{name}` is already in use",
+    "pattern.body_name_template_index_required": "body_name_template must contain {i} when creating more than one copy",
+    "pattern.body_name_template_invalid": "body_name_template must be a nonempty string"
+  },
+  "ar": {
+    "pattern.body_name_template_clash": "اسم الجسم `{name}` مستخدم بالفعل",
+    "pattern.body_name_template_index_required": "يجب أن يحتوي body_name_template على {i} عند إنشاء أكثر من نسخة",
+    "pattern.body_name_template_invalid": "يجب أن يكون body_name_template نصًا غير فارغ"
+  },
+  "de": {
+    "pattern.body_name_template_clash": "Der Körpername `{name}` wird bereits verwendet",
+    "pattern.body_name_template_index_required": "body_name_template muss beim Erstellen mehrerer Kopien {i} enthalten",
+    "pattern.body_name_template_invalid": "body_name_template muss eine nicht leere Zeichenfolge sein"
+  },
+  "he": {
+    "pattern.body_name_template_clash": "שם הגוף `{name}` כבר נמצא בשימוש",
+    "pattern.body_name_template_index_required": "body_name_template חייב להכיל {i} בעת יצירת יותר מעותק אחד",
+    "pattern.body_name_template_invalid": "body_name_template חייב להיות מחרוזת שאינה ריקה"
+  },
+  "ja": {
+    "pattern.body_name_template_clash": "ボディ名 `{name}` はすでに使用されています",
+    "pattern.body_name_template_index_required": "複数のコピーを作成する場合、body_name_template に {i} が必要です",
+    "pattern.body_name_template_invalid": "body_name_template は空でない文字列にしてください"
+  },
+  "ko": {
+    "pattern.body_name_template_clash": "바디 이름 `{name}`이(가) 이미 사용 중입니다",
+    "pattern.body_name_template_index_required": "복사본을 둘 이상 만들 때 body_name_template에 {i}가 포함되어야 합니다",
+    "pattern.body_name_template_invalid": "body_name_template는 비어 있지 않은 문자열이어야 합니다"
+  },
+  "vi": {
+    "pattern.body_name_template_clash": "Tên khối `{name}` đã được sử dụng",
+    "pattern.body_name_template_index_required": "body_name_template phải chứa {i} khi tạo nhiều hơn một bản sao",
+    "pattern.body_name_template_invalid": "body_name_template phải là chuỗi không trống"
+  },
+  "zh": {
+    "pattern.body_name_template_clash": "实体名称 `{name}` 已被使用",
+    "pattern.body_name_template_index_required": "创建多个副本时，body_name_template 必须包含 {i}",
+    "pattern.body_name_template_invalid": "body_name_template 必须是非空字符串"
+  }
+}

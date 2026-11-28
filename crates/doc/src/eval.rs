@@ -15544,6 +15544,35 @@ fn pattern_bodies(
             }
         }
     }
+    // Validate every intended name before copying anything. Templates bypass stored legacy
+    // names so growing and shrinking a pattern cannot change a survivor's name.
+    let template = match &f.kind {
+        FeatureKind::Pattern { body_name_template, join, .. } => {
+            if body_name_template.is_some() && *join {
+                return Err(DocError::Invalid("body_name_template requires separate body copies (join: false)".into()));
+            }
+            body_name_template.as_deref()
+        }
+        _ => None,
+    };
+    let mut template_names = Vec::new();
+    if let Some(template) = template {
+        if template.trim().is_empty() {
+            return Err(DocError::Invalid("body_name_template must be a nonempty string".into()));
+        }
+        if bodies.len().saturating_mul(mats.len()) > 1 && !template.contains("{i}") {
+            return Err(DocError::Invalid("body_name_template must contain {i} when creating more than one copy".into()));
+        }
+        let mut taken: std::collections::HashSet<String> = st.bodies.iter().map(|b| b.name.clone()).collect();
+        for i in 1..=bodies.len().saturating_mul(mats.len()) {
+            let name = template.replace("{i}", &i.to_string()).trim().to_string();
+            if !taken.insert(name.clone()) {
+                return Err(DocError::Invalid(format!("Body name `{name}` is already in use")));
+            }
+            template_names.push(name);
+        }
+    }
+    let mut template_names = template_names.into_iter();
     let run_one = |&(s, k): &(usize, usize)| -> Result<Body> {
         let Some(Ok(p)) = prepared.get(s) else { return Err(DocError::Invalid("pattern body".into())) };
         let Some(&local) = p.locals.get(k) else { return Err(DocError::Invalid("pattern transform".into())) };
@@ -15569,6 +15598,10 @@ fn pattern_bodies(
         let p = match entry {
             Ok(p) => p,
             Err(PatternPrepError::Missing { error: e, .. } | PatternPrepError::WrongPlacement(e) | PatternPrepError::LeftOut(e)) => {
+                // Preparation failures keep the same template slots as transform failures.
+                for _ in 0..mats.len() {
+                    let _ = template_names.next();
+                }
                 skipped.push(n.to_string());
                 left_out.push(s);
                 first_error.get_or_insert(e);
@@ -15588,6 +15621,11 @@ fn pattern_bodies(
             }
         }
         if let Some(e) = body_err {
+            if template.is_some() {
+                for _ in 0..mats.len() {
+                    let _ = template_names.next();
+                }
+            }
             // Only once every copy of this body is made: a body that fails leaves none behind.
             skipped.push(n.to_string());
             left_out.push(s);
@@ -15597,7 +15635,11 @@ fn pattern_bodies(
         for (k, (body, local)) in copies.into_iter().enumerate() {
             let copy = moved_copy(&p.mb, body, k + 1);
             let slot = pattern_name_slot(f.body_names.len(), count, mats.len(), s, k, f.pattern_names_in_order);
-            let name = pattern_copy_name(&mut names, f, slot, &p.mb.name);
+            let name = if template.is_some() {
+                template_names.next().ok_or_else(|| DocError::Invalid("missing pattern copy name".into()))?
+            } else {
+                pattern_copy_name(&mut names, f, slot, &p.mb.name)
+            };
             copy_sheet(st, &p.mb.name, &name, &local);
             let mut mb = ModelBody::traced_new(name, copy, f.id);
             // A copy is its source moved: it is drawn from the source's triangles and display plans,
@@ -20789,7 +20831,10 @@ fn eval_feature_kind(
             }
             Ok(())
         }
-        FeatureKind::Pattern { features, pattern, bodies, placements, components, join, .. } => {
+        FeatureKind::Pattern { features, pattern, bodies, placements, components, join, body_name_template, .. } => {
+            if body_name_template.is_some() && (bodies.is_empty() || !components.is_empty() || *join) {
+                return Err(DocError::Invalid("body_name_template requires separate body copies (join: false)".into()));
+            }
             // Component placements are reconciled on the document after evaluation (#12116).
             if !components.is_empty() {
                 let _ = pattern_transforms(doc, vals, st, f.component, pattern)?;

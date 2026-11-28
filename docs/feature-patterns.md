@@ -58,3 +58,41 @@ The command forms share sketch patterns' alignment names:
 Omitted alignments default to `right`, and omitted reversals to `false`, preserving
 older designs. `left` is also accepted by the command API. New placement values
 are stored through the pending document-format migration.
+
+## Stable names for body copies
+
+The command forms of `solid.pattern.rectangular`, `solid.pattern.circular` and
+`solid.pattern.path` accept an optional `body_name_template` string when copying bodies.
+For example:
+
+```json
+{"command":"solid.pattern.rectangular","params":{"bodies":["Rail block"],"dir1":[1,0,0],"count1":5,"spacing1":20,"body_name_template":"Block {i}"}}
+```
+
+The original keeps its name, `Rail block`. The four new bodies are `Block 1`,
+`Block 2`, `Block 3` and `Block 4`. Quantity includes the original; `{i}` counts
+only new bodies, starting at 1 in the pattern's existing copy order. When several
+source bodies are selected, copies of the first source come first, followed by
+copies of each later source, with numbering continuing across sources. Picked
+placements use the same rule.
+
+The pattern saves the template and applies it on every rebuild. Changing
+`count1` to 7 in this example gives `Block 1` through `Block 6`; rebuilding or
+saving and reopening preserves those names. The template must contain `{i}`
+when more than one new body is made. A name that clashes with another body is
+refused, and the error identifies the conflicting name.
+
+Leaving out `body_name_template` keeps the existing naming behavior, including for old
+designs. The template is for separate body copies, not feature replays,
+component occurrences or joined pattern results.
+
+The design stores the template as `body_name_template`, separate from the legacy
+`body_names` list of pinned names. The existing `body_names` command input remains a list of explicit pinned copy names.
+Giving both inputs is refused: choose pinned names or a template.
+
+A copy named by a template cannot be renamed with `body.rename` (including a
+bulk rename). Change the pattern's template or clear it before renaming the copy.
+Copies without a template can be renamed as usual. Sources omitted during a
+rebuild keep their numbering slots, so later sources' copies keep their names.
+`timeline.redefine` accepts the inspected `body_name_template` directly, or the
+existing `body_names` list. The template must be a nonempty string.
