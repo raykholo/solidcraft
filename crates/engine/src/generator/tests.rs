@@ -353,9 +353,17 @@ pattern = "X{size: 1.50}"
 fn dangling_separators_use_the_default_package_no_match_message() {
     let dir = nut_package(None);
     let g = load(&dir);
-    let refusal = g.parse("TN-M4-40-").unwrap_err();
-    assert_eq!(refusal.kind, RefusalKind::Invalid);
-    assert_eq!(refusal.message, "`TN-M4-40-` is not a Metric T-nut ordering code");
+    for (code, displayed, character, position) in [
+        ("TN-M4-40-", "TN-M4-40-", '-', 9),
+        ("  TN-M4-40- \n", "TN-M4-40-", '-', 9),
+        ("TN-M4--40", "TN-M4--40", '-', 7),
+        ("TN-M4-_40", "TN-M4-_40", '_', 7),
+        ("-TN-M4-40", "-TN-M4-40", '-', 1),
+    ] {
+        let refusal = g.parse(code).unwrap_err();
+        assert_eq!(refusal.kind, RefusalKind::Invalid);
+        assert_eq!(refusal.message, format!("`{displayed}` is not a Metric T-nut ordering code: unexpected '{character}' at character {position}"));
+    }
 }
 
 #[test]
@@ -364,8 +372,10 @@ fn a_raw_fallback_preserves_the_scripts_own_refusal_message() {
     let dir = nut_package(Some(&manifest));
     std::fs::write(dir.path().join("generator.rhai"), r#"fn resolve(f) { refuse("invalid", "Please check the catalog code."); }"#).unwrap();
     let g = load(&dir);
-    assert_eq!(g.read_code("TN-M4-40-").unwrap().0, 1);
-    let refusal = g.parse("TN-M4-40-").unwrap_err();
-    assert_eq!(refusal.kind, RefusalKind::Invalid);
-    assert_eq!(refusal.message, "Please check the catalog code.");
+    for code in ["TN-M4-40-", "TN-M4--40", "-TN-M4-40"] {
+        assert_eq!(g.read_code(code).unwrap().0, 1);
+        let refusal = g.parse(code).unwrap_err();
+        assert_eq!(refusal.kind, RefusalKind::Invalid);
+        assert_eq!(refusal.message, "Please check the catalog code.");
+    }
 }

@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::Value as Json;
 
 use super::GeneratorError;
-use super::code_template::{CharSet, Decl, Declared, FieldKind, MAX_CODE_CHARS, Params, Template, TemplateError, is_name, match_any};
+use super::code_template::{CharSet, Decl, Declared, FieldKind, MAX_CODE_CHARS, Params, Template, TemplateError, is_name, is_separator, match_any};
 use super::csv_table::{MAX_TABLE_BYTES, Table};
 use super::script::{RefusalKind, Script, ScriptError};
 
@@ -468,10 +468,25 @@ impl Package {
         let list: Vec<Template> = self.templates.iter().map(|t| t.template.clone()).collect();
         match match_any(&list, code) {
             Ok(Some(found)) => Ok(found),
-            Ok(None) => Err(Refusal {
-                kind: RefusalKind::Invalid,
-                message: format!("`{}` is not a {} ordering code", code.trim().chars().take(40).collect::<String>(), self.name),
-            }),
+            Ok(None) => {
+                let code = code.trim();
+                let mut message = format!("`{}` is not a {} ordering code", code.chars().take(40).collect::<String>(), self.name);
+                // This diagnostic belongs only to the default no-match path. A successful
+                // fallback template (including one with a script refusal) keeps its message.
+                let mut chars = code.chars().peekable();
+                let mut previous_separator = false;
+                let mut position = 0;
+                while let Some(c) = chars.next() {
+                    position += 1;
+                    let separator = is_separator(c);
+                    if separator && (position == 1 || previous_separator || chars.peek().is_none()) {
+                        message.push_str(&format!(": unexpected '{c}' at character {position}"));
+                        break;
+                    }
+                    previous_separator = separator;
+                }
+                Err(Refusal { kind: RefusalKind::Invalid, message })
+            }
             Err(TemplateError::Limit { what, limit }) => Err(Refusal { kind: RefusalKind::Limit, message: format!("more than {limit} {what}") }),
             Err(e) => Err(Refusal { kind: RefusalKind::Error, message: e.to_string() }),
         }
