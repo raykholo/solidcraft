@@ -1,0 +1,7 @@
+solidcraft-doc config_rules::tests
+solidcraft-engine generator
+solidcraft-engine config_style_tests
+solidcraft-engine patterns_tests
+solidcraft-engine linked_configurations_reject_row_ids_recycled_after_source_undo
+solidcraft-ui-egui dialogs_generator::tests
+solidcraft-engine schema::component_link
