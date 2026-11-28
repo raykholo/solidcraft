@@ -22163,7 +22163,7 @@ impl BodyNames {
         }
         let mut i = self.next.get(base).copied().unwrap_or(2);
         let name = loop {
-            let candidate = format!("{base} ({i})");
+            let candidate = disambiguated_body_name(base, i);
             i += 1;
             if self.taken.insert(candidate.clone()) {
                 break candidate;
@@ -22177,7 +22177,7 @@ impl BodyNames {
     fn first_free(&mut self, base: &str, from: u64) -> String {
         let mut i = from.max(self.next.get(base).map_or(0, |n| *n as u64));
         loop {
-            let candidate = format!("{base} ({i})");
+            let candidate = disambiguated_body_name(base, i);
             i += 1;
             if self.taken.insert(candidate.clone()) {
                 return candidate;
@@ -22186,13 +22186,26 @@ impl BodyNames {
     }
 }
 
+/// The canonical numbered fallback used by body-name allocation.
+fn disambiguated_body_name(base: &str, number: impl std::fmt::Display) -> String {
+    format!("{base} ({number})")
+}
+
+/// The base of a canonical numbered fallback, excluding spellings allocation never produces.
+/// This recognises the spelling only; callers must establish whether restoring it is appropriate.
+pub fn disambiguated_body_name_base(name: &str) -> Option<&str> {
+    let (base, suffix) = name.strip_suffix(')')?.rsplit_once(" (")?;
+    let number = suffix.parse::<usize>().ok()?;
+    (number >= 2 && !base.is_empty() && base.trim() == base && disambiguated_body_name(base, number) == name).then_some(base)
+}
+
 /// `base`, or `base (2)`, `base (3)`… if a body already has that name.
 fn unique_body_name(st: &ModelState, base: &str) -> String {
     let base = if base.trim().is_empty() { "Body" } else { base.trim() };
     if st.body(base).is_none() {
         return base.to_string();
     }
-    (2..).map(|i| format!("{base} ({i})")).find(|n| st.body(n).is_none()).unwrap_or_else(|| base.to_string())
+    (2..).map(|i| disambiguated_body_name(base, i)).find(|n| st.body(n).is_none()).unwrap_or_else(|| base.to_string())
 }
 
 /// The model as a component sees it: bodies and sketches of components placed differently from
@@ -23816,6 +23829,15 @@ pub(crate) mod cost_tests;
 #[cfg(test)]
 mod body_name_tests {
     use super::*;
+
+    #[test]
+    fn fallback_base_requires_the_allocators_canonical_spelling() {
+        assert_eq!(disambiguated_body_name_base("Nut (2)"), Some("Nut"));
+        assert_eq!(disambiguated_body_name_base("Nut (2) (3)"), Some("Nut (2)"));
+        for name in ["Nut", "Nut (1)", "Nut (0)", "Nut (02)", "Nut (+2)", "Nut ( 2)", " Nut (2)", "Nut (2) ", " (2)"] {
+            assert_eq!(disambiguated_body_name_base(name), None, "{name}");
+        }
+    }
 
     /// Imported bodies get the names one-at-a-time naming gives them, in time linear in the
     /// bodies: a board file with thousands of same-named parts once took minutes (#883).

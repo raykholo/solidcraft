@@ -263,6 +263,7 @@ fn same_feature(a: &Feature, b: &Feature) -> bool {
         name,
         suppressed,
         body_names,
+        requested_body_names,
         param_names,
         component,
         edge_refs,
@@ -284,6 +285,7 @@ fn same_feature(a: &Feature, b: &Feature) -> bool {
         && *name == b.name
         && *suppressed == b.suppressed
         && *body_names == b.body_names
+        && *requested_body_names == b.requested_body_names
         && *param_names == b.param_names
         && *component == b.component
         && *edge_refs == b.edge_refs

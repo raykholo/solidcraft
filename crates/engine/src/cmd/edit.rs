@@ -1823,6 +1823,9 @@ fn edit_feature(s: &mut Session, p: &Value) -> Result<Value> {
     resolve_feature_names(&mut v, &s.doc, cmd)?;
     let mut nf: Feature = serde_json::from_value(v.clone()).map_err(|e| bad(cmd, format!("invalid feature: {e}")))?;
     nf.id = f.id;
+    if set.get("body_names").is_some() {
+        nf.requested_body_names.clear();
+    }
     // An older script's `coped_butt` is Butt with the frame's Coped ticked, as `frame.member` reads it. A corner's
     // member of this frame itself is saved without the name; another frame's is refused.
     if let FeatureKind::FrameMember { corner, corners, coped, .. } = &mut nf.kind {
@@ -3799,6 +3802,10 @@ fn redefine(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if let Some(slot) = trial.doc_mut().feature_mut(id) {
         slot.suppressed = old.suppressed;
+        if params.get("body_name").is_some() || params.get("body_names").is_some() {
+            slot.body_names = new.body_names.clone();
+            slot.requested_body_names.clear();
+        }
         if let Some((names, _)) = cap_names {
             slot.body_names = names;
         }
