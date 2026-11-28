@@ -35,6 +35,12 @@ pub struct HelpState {
     /// SolidCraft 3000: the pretend SolidCredits (prices, the free trial, Top up).
     #[cfg(feature = "sc3000")]
     pub sc3000_credits: crate::sc3000_credits::Credits,
+    /// SolidCraft 3000: Cumulo, the cloud helper.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_helper: crate::sc3000_helper::Helper,
+    /// SolidCraft 3000: the update notice that asks more firmly each time.
+    #[cfg(feature = "sc3000")]
+    pub sc3000_updates: crate::sc3000_helper::Updates,
 }
 
 /// One line per fact, for bug reports.
@@ -227,6 +233,8 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context, anchor: egui::Pos2) {
     crate::sc3000_account::show(app, ctx);
     #[cfg(feature = "sc3000")]
     crate::sc3000_credits::show(app, ctx);
+    #[cfg(feature = "sc3000")]
+    crate::sc3000_helper::show(app, ctx);
 }
 
 fn about(app: &mut SolveApp, ctx: &egui::Context) {

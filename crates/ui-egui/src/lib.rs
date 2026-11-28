@@ -343,6 +343,8 @@ pub mod sc3000_account;
 #[cfg(feature = "sc3000")]
 pub mod sc3000_credits;
 #[cfg(feature = "sc3000")]
+pub mod sc3000_helper;
+#[cfg(feature = "sc3000")]
 pub mod sc3000_support;
 mod scale_bar;
 pub mod scenario;
@@ -2049,6 +2051,7 @@ impl SolveApp {
         #[cfg(feature = "sc3000")]
         if done.is_ok() {
             crate::sc3000_credits::after_command(self, id, params);
+            self.help.sc3000_helper.command(id);
         }
         if self.session.revision != revision {
             timeline::stop_playback(self);
