@@ -1,0 +1,5 @@
+solidcraft-engine send_to
+solidcraft-engine slicer
+solidcraft-engine send_app
+solidcraft-engine schema::apps_tests
+solidcraft-engine cmd::file::send::tests
