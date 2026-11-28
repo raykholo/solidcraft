@@ -917,7 +917,7 @@ fn volume_sign_on_nets(k: &mut Kernel, copy: &mut Brep) -> Result<VolumeSign> {
         let tolerance = copy.tolerance();
         let mut records = crate::topology::topology::NotifyRecords::new();
         let mut attributes = crate::geom::attribute::AttributeStore::default();
-        OffsetExecutive::replace_implicit_offsets(
+        let replaced = OffsetExecutive::replace_implicit_offsets(
             k,
             copy,
             tolerance,
@@ -926,9 +926,13 @@ fn volume_sign_on_nets(k: &mut Kernel, copy: &mut Brep) -> Result<VolumeSign> {
                 attributes: &mut attributes,
                 key_of: &crate::topology::loopuse::notify_ref,
             },
-        )?;
+        );
+        eprintln!("DIAG15715 replace {:?}", replaced.as_ref().err());
+        replaced?;
     }
-    validation::volume_sign(k, copy)
+    let vs = validation::volume_sign(k, copy);
+    eprintln!("DIAG15715 volume_sign {:?}", vs.as_ref().map(|_| ()).map_err(|e| format!("{e:?}")));
+    vs
 }
 
 /// (not upstream) The local operation's final gate: the body it built is refused when it
