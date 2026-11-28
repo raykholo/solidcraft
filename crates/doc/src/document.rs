@@ -4842,6 +4842,10 @@ pub struct Feature {
     /// first (`Ribs (4)`), or get `BodyN` when there is none (or see `shell_piece_order`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub body_names: Vec<String>,
+    /// Explicit requests replaced by numbered pins, indexed like `body_names`.
+    /// An empty slot has no recorded request; explicit user names never create provenance.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requested_body_names: Vec<String>,
     /// Parameter names of the feature's inputs (see `FeatureKind::inputs`), e.g. `d3`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_names: Vec<String>,
@@ -4921,6 +4925,16 @@ pub struct Feature {
 }
 
 impl Feature {
+    /// Forget a pin's prior request when its body is explicitly renamed.
+    pub fn clear_requested_body_name(&mut self, slot: usize) {
+        if let Some(request) = self.requested_body_names.get_mut(slot) {
+            request.clear();
+        }
+        while self.requested_body_names.last().is_some_and(String::is_empty) {
+            self.requested_body_names.pop();
+        }
+    }
+
     /// Where in `body_names` the names of the first `count` bodies the feature builds are kept,
     /// in the order it builds them. The same index for most features. An Import keeps its names
     /// by the file's body index, and builds no body for the file bodies it skips, so its built
@@ -6548,6 +6562,7 @@ impl Document {
             name,
             suppressed: false,
             body_names: Vec::new(),
+            requested_body_names: Vec::new(),
             param_names: Vec::new(),
             component,
             edge_refs: Vec::new(),

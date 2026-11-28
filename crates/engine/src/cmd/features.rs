@@ -1324,6 +1324,7 @@ pub(super) fn add_feature_in(s: &mut Session, p: &Value, kind: FeatureKind, worl
         && let Some(f) = s.doc_mut().feature_mut(id)
     {
         f.body_names = names.clone();
+        f.requested_body_names.clear();
     }
     s.active_sketch = None;
     s.sketching_view = None;
