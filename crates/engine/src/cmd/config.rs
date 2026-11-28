@@ -819,6 +819,85 @@ mod tests {
         check_alternative_body_names(3);
     }
 
+    fn check_coexisting_body_names(configured: bool) {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"name": "First", "body_name": "Nut", "length": 10, "width": 10, "height": 10, "operation": "new"}));
+        if configured {
+            run(&mut s, "timeline.suppress", json!({"feature": "First", "suppressed": true}));
+        }
+        run(
+            &mut s,
+            "solid.box",
+            json!({"name": "Second", "body_name": "Nut", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}),
+        );
+        if configured {
+            run(&mut s, "config.configure", json!({"params": [], "features": ["First", "Second"]}));
+            run(&mut s, "config.row", json!({"name": "Both", "values": {"suppress:First": false, "suppress:Second": false}}));
+            run(&mut s, "config.row", json!({"name": "Second only", "values": {"suppress:First": true, "suppress:Second": false}}));
+            run(&mut s, "config.activate", json!({"row": "Both"}));
+        }
+        assert_eq!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().body_names, vec!["Nut (2)"]);
+        run(
+            &mut s,
+            "solid.cylinder",
+            json!({"name": "Bore", "diameter": 2, "height": 12, "base": [25, 5, -1], "axis": "Z", "operation": "cut", "targets": ["Nut (2)"]}),
+        );
+        run(&mut s, "timeline.suppress", json!({"feature": "First", "suppressed": true}));
+        assert!(s.model.results.iter().all(|r| r.error.is_none()), "{:?}", s.model.results);
+        assert!(s.model.state().body("Nut (2)").is_some());
+        assert_eq!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().body_names, vec!["Nut (2)"]);
+        let bore = s.doc.features.iter().find(|f| f.name == "Bore").unwrap();
+        let result = s.model.result(bore.id).unwrap();
+        assert!(!result.skipped && result.error.is_none());
+    }
+
+    #[test]
+    fn coexisting_body_names_stay_pinned_after_plain_suppression() {
+        check_coexisting_body_names(false);
+    }
+
+    #[test]
+    fn configuration_coexisting_body_names_stay_pinned() {
+        check_coexisting_body_names(true);
+    }
+
+    #[test]
+    fn editing_rows_to_prove_alternatives_restores_an_existing_pin_immediately() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"name": "First", "body_name": "Nut", "length": 10, "width": 10, "height": 10, "operation": "new"}));
+        run(
+            &mut s,
+            "solid.box",
+            json!({"name": "Second", "body_name": "Nut", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}),
+        );
+        run(&mut s, "timeline.suppress", json!({"feature": "First", "suppressed": true}));
+        run(&mut s, "config.configure", json!({"params": [], "features": ["First", "Second"]}));
+        run(&mut s, "config.row", json!({"name": "Variant", "values": {"suppress:First": false, "suppress:Second": false}}));
+        assert!(s.model.state().body("Nut (2)").is_some());
+        run(&mut s, "config.row", json!({"name": "Variant", "values": {"suppress:First": true, "suppress:Second": false}}));
+        assert_eq!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().body_names, vec!["Nut"]);
+        assert!(s.model.state().body("Nut").is_some());
+        assert!(s.model.state().body("Nut (2)").is_none());
+        assert!(s.model.results.iter().all(|r| r.error.is_none()));
+    }
+
+    #[test]
+    fn explicitly_numbered_body_name_without_alternative_stays_unchanged() {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"name": "First", "body_name": "Nut", "length": 10, "width": 10, "height": 10, "operation": "new"}));
+        run(
+            &mut s,
+            "solid.box",
+            json!({"name": "Second", "body_name": "Nut (2)", "corner": [20, 0, 0], "length": 10, "width": 10, "height": 10, "operation": "new"}),
+        );
+        run(&mut s, "config.configure", json!({"params": [], "features": ["First"]}));
+        run(&mut s, "config.row", json!({"name": "Without first", "values": {"suppress:First": true}}));
+        run(&mut s, "config.activate", json!({"row": "Without first"}));
+        assert!(s.model.state().body("Nut (2)").is_some());
+        assert_eq!(s.doc.features.iter().find(|f| f.name == "Second").unwrap().body_names, vec!["Nut (2)"]);
+        assert!(s.model.results.iter().all(|r| r.error.is_none()));
+    }
+
     /// A placed copy's body name (`KB (K:2)`, as inspect.measure lists it) means the body it
     /// shows: the column is keyed by that body's own name, for every placement.
     #[test]
