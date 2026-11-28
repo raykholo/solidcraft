@@ -892,6 +892,13 @@ fn local_operation_on(
     let upd = validation::validate_and_update_tolerances(k, b, false, None, 0);
     eprintln!("DIAG15715 update {:?}", upd.as_ref().err());
     upd?;
+    let mut classes: std::collections::BTreeMap<&str, usize> = Default::default();
+    for f in bp1::faces(b, None)? {
+        if let Some(sf) = b.face(f)?.surface.as_ref() {
+            *classes.entry(sf.class_string()).or_default() += 1;
+        }
+    }
+    eprintln!("DIAG15715 classes {classes:?}");
     let gate = refuse_unsound(k, b, &input);
     eprintln!("DIAG15715 gate {:?}", gate.as_ref().err());
     gate
