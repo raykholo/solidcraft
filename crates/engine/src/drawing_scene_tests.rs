@@ -2880,6 +2880,57 @@ fn status_says_which_views_are_out_of_date() {
     assert!(all_are(&status_of(&mut s).1, "out_of_date"), "a model edit marks every view");
 }
 
+/// [`front_and_top`], still automatic, after the block's length becomes 160 mm. Inspect shows both
+/// paper boundaries at that length. This is not the sheet page, and status is not read: a view that
+/// nothing has rebuilt yet may still be out of date.
+fn automatic_views_after_the_block_lengthens() -> (Session, u64, [u64; 2]) {
+    let (mut s, sheet, [front, top]) = front_and_top();
+    assert_eq!(run(&mut s, "drawing.inspect", json!({}))["updates"], "automatic");
+    let block = s.doc.features[0].id;
+    run(&mut s, "timeline.edit", json!({"feature": block.to_string(), "set": {"length": 160}}));
+    // The block is 160 x 50 x 20 mm along X, Y and Z. Both views are at 1:2, so one model millimetre
+    // is 0.5 mm on paper. The front view is centred at (150, 150): paper size 160/2 by 20/2 = 80 x 10,
+    // boundary (150 ± 40, 150 ± 5) = (110, 145) to (190, 155). The top view keeps that scale, lined
+    // up at y 220: paper size 160/2 by 50/2 = 80 x 25, boundary (150 ± 40, 220 ± 12.5) = (110, 207.5)
+    // to (190, 232.5).
+    let boundary = |s: &mut Session, view: u64| run(s, "drawing.view.inspect", json!({"view": ids::encode(view)}))["boundary_mm"].clone();
+    let is_box = |got: &Value, min: [f64; 2], max: [f64; 2]| {
+        let corner = |at: &str| Vec2::new(got[at][0].as_f64().unwrap(), got[at][1].as_f64().unwrap());
+        (corner("min") - Vec2::from(min)).len() < 1e-6 && (corner("max") - Vec2::from(max)).len() < 1e-6
+    };
+    let (front_box, top_box) = (boundary(&mut s, front), boundary(&mut s, top));
+    assert!(is_box(&front_box, [110.0, 145.0], [190.0, 155.0]), "front followed the length: {front_box}");
+    assert!(is_box(&top_box, [110.0, 207.5], [190.0, 232.5]), "top followed the length: {top_box}");
+    (s, sheet, [front, top])
+}
+
+/// Every view is current, none is waiting, and the drawing is not held.
+fn rebuilt_views_are_current(s: &mut Session) {
+    let (reply, words) = status_of(s);
+    assert!(all_are(&words, "current"), "{reply}");
+    assert_eq!(reply["waiting"], json!(0), "{reply}");
+    assert!(reply.get("held").is_none() || reply["held"] == json!(false), "{reply}");
+}
+
+/// Once an export has rebuilt an automatic drawing's views for the model as it is, `drawing.status`
+/// says they are current. No sheet page is opened.
+#[test]
+fn status_is_current_after_an_export_rebuilds_the_views() {
+    let (mut s, sheet, _) = automatic_views_after_the_block_lengthens();
+    let reply = run(&mut s, "drawing.export", json!({"sheet": ids::encode(sheet)}));
+    assert!(reply["svg"].as_str().is_some_and(|svg| svg.contains("<svg")), "{reply}");
+    rebuilt_views_are_current(&mut s);
+}
+
+/// Once `drawing.scene` has rebuilt that sheet, status says the same: it does not stay stale until a
+/// sheet page is shown.
+#[test]
+fn status_is_current_after_drawing_scene_rebuilds_the_views() {
+    let (mut s, sheet, _) = automatic_views_after_the_block_lengthens();
+    run(&mut s, "drawing.scene", json!({"sheet": ids::encode(sheet)}));
+    rebuilt_views_are_current(&mut s);
+}
+
 /// A failed or placeholder view always says why, and a view on another sheet is out of date until
 /// its own sheet is drawn, with that sheet's id.
 #[test]
@@ -8507,4 +8558,144 @@ fn what_the_design_hides_leaves_an_open_sketch_alone() {
     run(&mut s, "browser.visibility", json!({"paths": [[placed]], "visible": false}));
     let hidden = s.design_hidden();
     assert!(hidden.hides(&[placed], "Plate") && !hidden.hides(&[], "Plate"), "by its placement's path");
+}
+
+/// A vertical bore and a cross bore. Front and top SVG must contain no two-point path
+/// shorter than 1e-3 mm, and each view must still draw a straight edge longer than 5 mm. The
+/// sheet border is outside the view groups, so it does not count.
+#[test]
+fn odd_angle_cross_bores_export_no_sub_micron_stroke() {
+    let mut cases = Vec::new();
+    for degrees in [0.0_f64, 15.0, 30.0, 45.0, 60.0, 77.0, 89.5, 89.999] {
+        let mut s = Session::default();
+        run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Block"}));
+        run(&mut s, "solid.cylinder", json!({"diameter": 6, "height": 32, "base": [20, 15, -1], "operation": "cut", "targets": ["Block"]}));
+        let a = f64::to_radians(degrees);
+        let (cos_a, sin_a) = (a.cos(), a.sin());
+        let base = [20.0 - 40.0 * cos_a, 15.0 - 40.0 * sin_a, 10.0];
+        run(
+            &mut s,
+            "solid.cylinder",
+            json!({"diameter": 4, "height": 80, "axis": [cos_a, sin_a, 0.0], "base": base, "operation": "cut", "targets": ["Block"]}),
+        );
+        cases.push((format!("a={degrees}"), cross_bore_sheet_strokes(s)));
+    }
+    let mut s = Session::default();
+    run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 20, "body_name": "Block"}));
+    run(&mut s, "solid.cylinder", json!({"diameter": 12, "height": 10, "base": [20, 15, 20], "operation": "join", "targets": ["Block"]}));
+    run(&mut s, "solid.cylinder", json!({"diameter": 6, "height": 32, "base": [20, 15, -1], "operation": "cut", "targets": ["Block"]}));
+    run(&mut s, "solid.cylinder", json!({"diameter": 4, "height": 42, "base": [-1, 15, 8], "axis": "X", "operation": "cut", "targets": ["Block"]}));
+    cases.push(("boss".to_string(), cross_bore_sheet_strokes(s)));
+
+    let report = cases
+        .iter()
+        .map(|(label, (short, edges))| format!("{label}: {short} two-point paths shorter than 1e-3 mm; both views keep an edge over 5 mm: {edges}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let clean = cases.iter().all(|(_, (short, edges))| *short == 0 && *edges);
+    assert!(
+        clean,
+        "a cross-drilled block's front and top SVG must have no two-point path shorter than 1e-3 mm, and each view must keep a straight edge longer than 5 mm:\n{report}"
+    );
+}
+
+/// Front and top SVG of `design`: how many two-point paths in the whole export are shorter than
+/// 1e-3 mm, and whether both view groups (not the sheet border) contain a straight run over 5 mm.
+fn cross_bore_sheet_strokes(design: Session) -> (usize, bool) {
+    let (mut s, sheet, views) = front_and_top_of(design);
+    let export = run(&mut s, "drawing.export", json!({"sheet": ids::encode(sheet), "format": "svg"}));
+    let svg = export["svg"].as_str().unwrap();
+    let mut short = 0;
+    for piece in svg.split(" d=\"").skip(1) {
+        let Some((d, _)) = piece.split_once('"') else { continue };
+        if cross_bore_two_point_length(d).is_some_and(|len| len < 1e-3) {
+            short += 1;
+        }
+    }
+    let views_with_edge = views
+        .into_iter()
+        .filter(|view| {
+            let marker = format!("<g data-object=\"{view}\" data-kind=\"view\">\n");
+            let Some((_, rest)) = svg.split_once(&marker) else { return false };
+            let Some((group, _)) = rest.split_once("</g>") else { return false };
+            group.split(" d=\"").skip(1).any(|piece| piece.split_once('"').is_some_and(|(d, _)| cross_bore_straight_length(d) > 5.0))
+        })
+        .count();
+    (short, views_with_edge == 2)
+}
+
+/// `M<x> <y>L<x> <y>` and nothing else: its length in paper mm. Digits, an optional minus and an
+/// optional fraction, as the SVG writer emits them.
+fn cross_bore_two_point_length(d: &str) -> Option<f64> {
+    let rest = d.strip_prefix('M')?;
+    let (x0, y0, rest) = cross_bore_xy(rest)?;
+    let rest = rest.strip_prefix('L')?;
+    let (x1, y1, rest) = cross_bore_xy(rest)?;
+    rest.is_empty().then_some((x1 - x0).hypot(y1 - y0))
+}
+
+/// Length of the straight pieces of `d` (`L`, and `Z` back to the subpath start). An arc or curve
+/// stops the measure; the sheet border and the block edges are straight.
+fn cross_bore_straight_length(d: &str) -> f64 {
+    let mut rest = d;
+    let mut total = 0.0;
+    let mut pen: Option<(f64, f64)> = None;
+    let mut start: Option<(f64, f64)> = None;
+    while let Some(cmd) = rest.chars().next() {
+        match cmd {
+            'M' | 'L' => {
+                let Some((x, y, next)) = cross_bore_xy(&rest[cmd.len_utf8()..]) else { break };
+                if cmd == 'L' {
+                    if let Some((px, py)) = pen {
+                        total += (x - px).hypot(y - py);
+                    }
+                } else {
+                    start = Some((x, y));
+                }
+                pen = Some((x, y));
+                rest = next;
+            }
+            'Z' | 'z' => {
+                if let (Some((px, py)), Some((sx, sy))) = (pen, start) {
+                    total += (sx - px).hypot(sy - py);
+                }
+                pen = start;
+                rest = &rest[cmd.len_utf8()..];
+            }
+            _ => break,
+        }
+    }
+    total
+}
+
+/// One SVG point: `<x> <y>`.
+fn cross_bore_xy(s: &str) -> Option<(f64, f64, &str)> {
+    let (x, s) = cross_bore_svg_number(s)?;
+    let s = s.strip_prefix(' ')?;
+    let (y, s) = cross_bore_svg_number(s)?;
+    Some((x, y, s))
+}
+
+/// A number as the SVG writer emits it: an optional minus, digits, and an optional fraction.
+fn cross_bore_svg_number(s: &str) -> Option<(f64, &str)> {
+    let bytes = s.as_bytes();
+    let mut i = usize::from(bytes.first() == Some(&b'-'));
+    let whole = i;
+    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+        i += 1;
+    }
+    if i == whole {
+        return None;
+    }
+    if bytes.get(i) == Some(&b'.') {
+        i += 1;
+        let frac = i;
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == frac {
+            return None;
+        }
+    }
+    s[..i].parse().ok().map(|n| (n, &s[i..]))
 }

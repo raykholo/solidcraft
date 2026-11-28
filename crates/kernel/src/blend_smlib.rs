@@ -102,6 +102,13 @@ pub(crate) fn fillet_variable(body: &Body, edge_at: Vec3, start: Vec3, spline: &
     imp::variable(body, edge_at, start, spline)
 }
 
+/// The edges at `edges`, one tangent chain, rounded with the radius `spline` (checked by the
+/// caller) along the whole chain from its end nearest `start`
+/// ([`crate::fillet_variable_spline_chain`]).
+pub(crate) fn fillet_variable_chain(body: &Body, edges: &[Vec3], start: Vec3, spline: &RadiusSpline) -> Result<Body> {
+    imp::variable_chain(body, edges, start, spline)
+}
+
 /// The edges `picks` select, in the body's edge order, as a blend resolves them, and per edge
 /// whether a pick passes it over (a seam or a smooth join: never a blend's edge), for a caller
 /// that selects edges to blend ([`crate::tangent_chain`]).
@@ -433,6 +440,18 @@ mod imp {
         .map_err(|e| crate::blend::with_continuation(e, next))
     }
 
+    pub(super) fn variable_chain(body: &Body, edges: &[Vec3], start: Vec3, spline: &RadiusSpline) -> Result<Body> {
+        body.require_brep("fillet")?;
+        if !start.is_finite() {
+            return Err(KernelError::Invalid("the start point must be finite".into()));
+        }
+        let picked = resolve(body, edges)?;
+        let tol = pick_tolerance(body);
+        run(body, "variable fillet", &picked.edges, |b| {
+            b.fillet_variable_chain(&picked.points, tol, [start.x, start.y, start.z], spline.degree, &spline.knots, &spline.radii)
+        })
+    }
+
     /// `op` on `body` in SMLib, tagged as operand 0, checked, decoded, with its history.
     fn run(body: &Body, what: &str, edges: &[usize], op: impl FnOnce(&Brep) -> solidcraft_smlib::Result<Brep>) -> Result<Body> {
         run_with(body, what, edges, &[], |b| op(b).map(|r| (r, ()))).map(|(out, (), _)| out)
@@ -470,6 +489,14 @@ mod imp {
                     KernelError::Invalid(format!(
                         "not supported yet: the {what} meets a corner of this kind{at}, which SMLib's blends do not handle yet (where its edges \
                          run on tangentially into each other, or meet in a way no blend corner builds){why}"
+                    ))
+                }
+                // Not a size a smaller radius fixes: the face has no width there at all.
+                SmError::FaceClosesToPoint { at } => {
+                    let at = at.map(|[x, y, z]| format!(" at ({x:.3}, {y:.3}, {z:.3})")).unwrap_or_default();
+                    KernelError::Invalid(format!(
+                        "the {what} cannot be built: a face beside its edge narrows to a point{at}, where the edge touches another edge \
+                         of that face tangentially, so no {what} of any size fits there"
                     ))
                 }
                 SmError::NoRoom => KernelError::TooLarge(format!("the {what} is larger than the faces beside its edges allow")),
@@ -732,6 +759,31 @@ mod tests {
         let KernelError::TooLarge(text) = &e else { panic!("{e:?}") };
         assert!(text.contains("the largest distance that fits is 2.5"), "{text}");
         assert!(!text.contains("ball") && !text.contains("roll"), "{text}");
+    }
+
+    /// #16404: a 35 mm boss on a 50 mm base, 7.5 mm off its centre, so the boss's base circle
+    /// touches the base's rim at (0, -25, 15) and the top face between them narrows to a point
+    /// there. A round of the boss's base circle is refused at any radius, naming that point; with
+    /// the boss 1 mm clear of the rim it is too large, with the largest radius that fits.
+    #[test]
+    fn a_round_beside_a_face_that_narrows_to_a_point_is_refused_naming_it() {
+        let on_base = |offset: f64| {
+            let base = crate::cylinder(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 0.0, 1.0), 25.0, 15.0).unwrap();
+            let boss = crate::cylinder(Vec3::new(0.0, -offset, 15.0), Vec3::new(0.0, 0.0, 1.0), 17.5, 25.0).unwrap();
+            crate::boolean(&base, &boss, crate::BoolOp::Union).unwrap().unwrap()
+        };
+        let touching = on_base(7.5);
+        let joint = Vec3::new(17.5, -7.5, 15.0);
+        for radius in [2.0, 0.5] {
+            let e = imp::blend(&touching, "fillet", Kind::Round(FilletTurn::Mitre), &[joint], &[radius]).unwrap_err();
+            let KernelError::Invalid(text) = &e else { panic!("r{radius}: {e:?}") };
+            assert!(text.contains("the fillet cannot be built: a face beside its edge narrows to a point at ("), "r{radius}: {text}");
+            assert!(text.contains("-25.000, 15.000), where the edge touches another edge of that face tangentially"), "r{radius}: {text}");
+        }
+        let clear = on_base(6.5);
+        let e = imp::blend(&clear, "fillet", Kind::Round(FilletTurn::Mitre), &[Vec3::new(17.5, -6.5, 15.0)], &[2.0]).unwrap_err();
+        let KernelError::TooLarge(text) = &e else { panic!("{e:?}") };
+        assert!(text.contains("the largest radius that fits is 0.99"), "{text}");
     }
 
     /// A fixed-angle chamfer's refusal identifies the edge, limiting top face and first

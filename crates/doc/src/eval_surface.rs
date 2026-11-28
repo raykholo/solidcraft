@@ -152,15 +152,21 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             }
             Ok(())
         }
-        FeatureKind::SurfaceExtend { body, edges, distance, mode, up_to, neighbours, stays_surface } => {
+        FeatureKind::SurfaceExtend { body, edges, distance, mode, angle, up_to, neighbours, stays_surface } => {
             let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
             let Some(mb) = st.bodies.get(i).cloned() else { return Err(DocError::Invalid("body".into())) };
             let mode = match mode {
                 crate::ExtendMode::Natural => kernel::ExtendMode::Natural,
                 crate::ExtendMode::Tangent => kernel::ExtendMode::Tangent,
                 crate::ExtendMode::Curvature => kernel::ExtendMode::Curvature,
+                crate::ExtendMode::Law => kernel::ExtendMode::Law,
             };
-            let at = |limit| kernel::ExtendOptions { mode, limit, neighbours: *neighbours };
+            // Law only (0: tangent to the surface); the other modes keep no angle.
+            let angle = match angle {
+                Some(a) => val(vals, a, Kind::Angle)?,
+                None => 0.0,
+            };
+            let at = |limit| kernel::ExtendOptions { mode, limit, neighbours: *neighbours, angle };
             let out = match up_to {
                 None => {
                     kernel::extend_surface(&mb.body, &crate::plain(edges), &at(kernel::ExtendLimit::Distance(val(vals, distance, Kind::Length)?)))?
@@ -330,6 +336,105 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             }
             Ok(())
         }
+        FeatureKind::SurfaceMorph {
+            body,
+            faces,
+            base,
+            base_face,
+            control,
+            control_face,
+            projection,
+            map_mode,
+            scale,
+            tolerance,
+            flip_u,
+            flip_v,
+            swap_uv,
+            keep_original,
+        } => {
+            let scale_val = val(vals, scale, Kind::Unitless)?;
+            let tol = val(vals, tolerance, Kind::Length)?;
+            let i = st.bodies.iter().position(|b| &b.name == body).ok_or_else(|| DocError::Unknown(format!("body `{body}`")))?;
+            let Some(mb) = st.bodies.get(i).cloned() else {
+                return Err(DocError::Invalid("body".into()));
+            };
+            let base_mb = st.body(base).cloned().ok_or_else(|| DocError::Unknown(format!("body `{base}`")))?;
+            let control_mb = st.body(control).cloned().ok_or_else(|| DocError::Unknown(format!("body `{control}`")))?;
+
+            // Resolve face picks in each operand's own frame before moving into a common frame.
+            let mut picked_faces: Vec<usize> = Vec::new();
+            for p in faces {
+                let fi =
+                    crate::appearance::face_index_at(&mb, p.0).ok_or_else(|| DocError::Invalid(format!("Morph: no face of {body} at {}", p.0)))?;
+                if !picked_faces.contains(&fi) {
+                    picked_faces.push(fi);
+                }
+            }
+
+            let base_fi = match base_face {
+                Some(p) => crate::appearance::face_index_at(&base_mb, p.0)
+                    .ok_or_else(|| DocError::Invalid(format!("Morph: no face of {base} at {}", p.0)))?,
+                None => 0,
+            };
+            let control_fi = match control_face {
+                Some(p) => crate::appearance::face_index_at(&control_mb, p.0)
+                    .ok_or_else(|| DocError::Invalid(format!("Morph: no face of {control} at {}", p.0)))?,
+                None => 0,
+            };
+
+            // Bring target, base, and control into the destination body's frame so offsets and
+            // component placements on any operand are respected and Keep Original keeps placement.
+            let body_world = |b: &ModelBody| -> crate::Mat {
+                let m = doc.component_transform(doc.model_body_component(b));
+                doc.model_body_offset(b).map(|o| crate::mat_mul(&m, o)).unwrap_or(m)
+            };
+            let dest_world = if *keep_original { doc.component_transform(f.component) } else { body_world(&mb) };
+            let inv_dest =
+                crate::mat_inverse(&dest_world).ok_or_else(|| DocError::Invalid("Morph: destination placement cannot be inverted".into()))?;
+            let in_dest = |b: &ModelBody| -> Result<kernel::Body> {
+                let bw = body_world(b);
+                if bw == dest_world {
+                    return Ok(b.body.clone());
+                }
+                let rel = crate::mat_mul(&inv_dest, &bw);
+                if crate::is_identity(&rel) {
+                    Ok(b.body.clone())
+                } else {
+                    st.body_in_frame(b, &rel)
+                        .map(|moved| moved.body)
+                        .map_err(|e| DocError::Invalid(format!("Morph: body `{}` cannot be moved into frame: {e}", b.name)))
+                }
+            };
+            let target_body = in_dest(&mb)?;
+            let base_body = in_dest(&base_mb)?;
+            let control_body = in_dest(&control_mb)?;
+
+            let opts = kernel::services::morph::MorphOptions {
+                projection: match *projection {
+                    crate::MorphProjection::Normal => kernel::services::morph::MorphProjection::Normal,
+                    crate::MorphProjection::Direction { dir } => kernel::services::morph::MorphProjection::Direction(dir),
+                },
+                map_mode: match *map_mode {
+                    crate::MorphMapMode::NormalToNormal => kernel::services::morph::MorphMapMode::NormalToNormal,
+                    crate::MorphMapMode::Translate => kernel::services::morph::MorphMapMode::Translate,
+                },
+                scale: scale_val,
+                flip_u: *flip_u,
+                flip_v: *flip_v,
+                swap_uv: *swap_uv,
+                tolerance: tol,
+                faces: if picked_faces.is_empty() { None } else { Some(picked_faces) },
+            };
+            let morphed = kernel::morph_surface(&target_body, &base_body, base_fi, &control_body, control_fi, &opts)?;
+
+            if *keep_original {
+                let name = new_name(st, f, 0);
+                st.bodies.push(ModelBody { sheet: mb.sheet, ..ModelBody::new(name, morphed, f.id) });
+            } else if let Some(slot) = st.bodies.get_mut(i) {
+                *slot = ModelBody { sheet: mb.sheet, component: mb.component, ..ModelBody::new(mb.name, morphed, mb.feature) };
+            }
+            Ok(())
+        }
         FeatureKind::SurfaceExtrude { sketch, profiles, curves, extent, to_next } => {
             let ss = constructor_profile_in_frame(
                 doc,
@@ -338,6 +443,9 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
             )?;
             if extent.through_all || extent.through_all2 || extent.to2.is_some() || extent.from.is_some() || extent.symmetric_offset {
                 return Err(DocError::Invalid("not supported yet: a surface extrude through all, from an object, or with symmetric offset".into()));
+            }
+            if extent.taper2.is_some() {
+                return Err(DocError::Invalid("not supported yet: a second taper (`taper2`) on a surface extrude".into()));
             }
             if *to_next && extent.to.is_some() {
                 return Err(DocError::Invalid("a surface extrude goes To Next or To Object, not both".into()));
@@ -533,19 +641,53 @@ pub(super) fn eval(doc: &Document, vals: &BTreeMap<String, Value>, f: &Feature, 
         FeatureKind::SurfaceLoft { sections, continuity, crown, rails, rail_fit, faced, stays_surface } => {
             use kernel::Continuity::{G0, G1};
             let in_space = sections.iter().any(|s| section_in_space(st, s));
-            let planar = !in_space && sections.iter().all(|s| s.body.is_none());
+            let sketch_only = sections.iter().all(|s| s.body.is_none());
+            let planar = !in_space && sketch_only;
             let plain = planar && *continuity == [G0, G0];
+            let space_railed = in_space && sketch_only && *continuity == [G0, G0] && !rails.is_empty();
             let tangent_end = match *continuity {
                 [G1, G0] if planar && sections.len() == 2 => Some((0, crown[0])),
                 [G0, G1] if planar && sections.len() == 2 => Some((1, crown[1])),
                 _ => None,
             };
-            if !plain && !rails.is_empty() {
-                return Err(DocError::Invalid(if in_space {
-                    "not supported yet: guide rails on a loft through 3D sketch curves".into()
+            if !plain && !space_railed && !rails.is_empty() {
+                return Err(DocError::Invalid("not supported yet: guide rails on a loft with edge sections or end continuity".into()));
+            }
+            if space_railed {
+                let mut secs = Vec::with_capacity(sections.len());
+                for sec in sections {
+                    let raw = loft_section_sketch(st, sec)?;
+                    if section_in_space(st, sec) {
+                        if sec.profiles.is_some() {
+                            return Err(loft_section_chain_error());
+                        }
+                        let mapped = path_in_frame(doc, raw, f.component)?;
+                        let path = path_points(&curves_in(mapped.as_ref(), &sec.curves), Vec3::new(f64::NAN, f64::NAN, f64::NAN))?
+                            .ok_or_else(loft_section_chain_error)?;
+                        secs.push(kernel::SpaceLoftSection::Space(path));
+                    } else {
+                        let (ss, chain) = planar_loft_section(doc, raw, f, sec)?;
+                        secs.push(kernel::SpaceLoftSection::Planar { plane: ss.plane, segs: chain });
+                    }
+                }
+                let start = secs
+                    .first()
+                    .and_then(|s| match s {
+                        kernel::SpaceLoftSection::Planar { plane, segs } => segs.first().map(|seg| plane.to_world(seg.start())),
+                        kernel::SpaceLoftSection::Space(path) => path.points().first().copied(),
+                    })
+                    .unwrap_or_default();
+                let rails = crate::eval::rail_polylines(doc, st, rails, f.component, start)?;
+                let fit = crate::eval::kernel_rail_fit(*rail_fit);
+                let body = if *faced {
+                    kernel::loft_sheet_space_with_rails(&secs, &rails, fit)?
                 } else {
-                    "not supported yet: guide rails on a loft with edge sections or end continuity".into()
-                }));
+                    kernel::loft_sheet_space_with_rails_legacy_sides(&secs, &rails, fit)?
+                };
+                let name = new_name(st, f, 0);
+                st.bodies.push(ModelBody::new(name, body, f.id));
+                stays_a_surface(st, *stays_surface);
+                return Ok(());
             }
             if !plain && tangent_end.is_none() {
                 loft_blend(st, f, sections, *continuity, *crown, doc)?;

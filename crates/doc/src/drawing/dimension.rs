@@ -194,6 +194,9 @@ pub fn text_literal(text: &str) -> String {
 pub const MAX_DIMENSIONS: usize = 10_000;
 /// The most decimals a dimension shows.
 pub const MAX_DECIMALS: u8 = 6;
+/// How many decimals a new dimension or hole callout shows unless told: the length-decimals
+/// preference's default, one constant for both so a callout and a dimension on one sheet read alike.
+pub const DEFAULT_DECIMALS: u8 = 2;
 /// The most candidates an ambiguous dimension lists.
 pub const MAX_CANDIDATES: usize = 16;
 /// The longest text shown instead of a dimension's number, in bytes.
@@ -206,7 +209,7 @@ pub const MAX_MODEL_NAME_BYTES: usize = 256;
 pub const MAX_SET_TARGETS: usize = 64;
 /// What a diameter's number follows: Ø (U+00D8), as tolerance texts write it. The diameter sign
 /// U+2300 isn't in the bundled fonts, so it would print as a missing glyph.
-const DIAMETER_SIGN: &str = "Ø";
+pub(crate) const DIAMETER_SIGN: &str = "Ø";
 
 /// One dimension of a drawing.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

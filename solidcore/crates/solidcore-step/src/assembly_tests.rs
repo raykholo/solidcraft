@@ -5,8 +5,9 @@
 use std::collections::HashMap;
 
 use super::*;
+use solidcore::math::det;
 use solidcore_record::Vec3;
-use solidcore_record::brep::{Curve as BCurve, Frame, Surface as BSurface};
+use solidcore_record::brep::{Curve as BCurve, Curve2, Frame, Surface as BSurface};
 
 /// The box's corner `c`: bit 0 is x (10 mm), bit 1 y (20 mm), bit 2 z (30 mm).
 fn corner(c: usize) -> [f64; 3] {
@@ -87,6 +88,108 @@ fn a_box_assembled_from_its_parts_is_a_closed_solid_record() {
     origins.sort_unstable();
     assert_eq!(origins, vec![0, 1, 2, 3, 4, 5]);
     assert!(solid.turned.is_empty(), "no face disagrees with its loops: {:?}", solid.turned);
+}
+
+/// Each record edge is named by the origin it was added with (the box's `8 * low + high`
+/// corner), each once.
+#[test]
+fn every_edge_of_the_box_is_named_by_its_origin() {
+    let (solid, _) = assembled_box().unwrap();
+    let mut origins: Vec<u64> = solid.edge_origin.iter().map(|o| o.expect("an edge added, not made")).collect();
+    origins.sort_unstable();
+    let mut want: Vec<u64> = FACES
+        .iter()
+        .flat_map(|(c, _, _)| (0..4).map(move |k| (c[k].min(c[(k + 1) % 4]), c[k].max(c[(k + 1) % 4]))))
+        .map(|(a, z)| a as u64 * 8 + z as u64)
+        .collect();
+    want.sort_unstable();
+    want.dedup();
+    assert_eq!(origins, want);
+}
+
+/// The box with its top face (corners 4, 5, 7, 6 at z = 30) on a spline patch 40 mm square about
+/// the face's centre c = (5, 10, 30), turned 30° about z and quadratic in u, its middle row of
+/// control points 1 mm on along â: `p = c + s(u) â + 40 (v - 1/2) b̂`,
+/// `s(u) = 40 u - 20 + 2 u (1 - u)`. No edge of the face runs along a line of its parameters,
+/// no straight edge is a straight line in them, and there is no kernel to fit a pcurve. Where
+/// `given`, each top use's pcurve is given as the straight (u, v) line between its ends (`off`
+/// from them in u), which lies off its edge by at most a quarter of the 1 mm bulge.
+fn box_with_spline_top(given: bool, off: f64) -> R<Solid> {
+    let (sin, cos) = det::sin_cos(std::f64::consts::FRAC_PI_6);
+    let (a, b) = ([cos, sin], [-sin, cos]);
+    let c = [5.0, 10.0];
+    // u where s(u) = t: the root in [0, 1] of -2u² + 42u - (20 + t).
+    let u_of = |t: f64| (42.0 - (42.0f64 * 42.0 - 8.0 * (20.0 + t)).sqrt()) / 4.0;
+    let uv = |p: [f64; 3]| {
+        let d = [p[0] - c[0], p[1] - c[1]];
+        [u_of(d[0] * a[0] + d[1] * a[1]) + off, 0.5 + (d[0] * b[0] + d[1] * b[1]) / 40.0]
+    };
+    let at = |s: f64, v: f64| [c[0] + s * a[0] + 40.0 * (v - 0.5) * b[0], c[1] + s * a[1] + 40.0 * (v - 0.5) * b[1], 30.0];
+    let mut asm = Assembly::new(1e-6, None);
+    let mut vertices = Vec::new();
+    for c in 0..8 {
+        vertices.push(asm.add_vertex(corner(c))?);
+    }
+    let mut edges: HashMap<(usize, usize), u32> = HashMap::new();
+    let mut faces = Vec::new();
+    for (f, (corners, u_axis, v_axis)) in FACES.into_iter().enumerate() {
+        let (mut uses, mut pcurves) = (Vec::new(), Vec::new());
+        for k in 0..4 {
+            let (i, j) = (corners[k], corners[(k + 1) % 4]);
+            let key = (i.min(j), i.max(j));
+            let (p, q) = (corner(key.0), corner(key.1));
+            let e = match edges.get(&key) {
+                Some(e) => *e,
+                None => {
+                    let (e, _) = asm.add_edge(
+                        key.0 as u64 * 8 + key.1 as u64,
+                        BCurve::Line { start: p, end: q },
+                        [0.0, 1.0],
+                        [vertices[key.0], vertices[key.1]],
+                    )?;
+                    edges.insert(key, e);
+                    e
+                }
+            };
+            uses.push((e, i == key.0));
+            pcurves.push(Some(Curve2::Spline { knots: vec![0.0, 0.0, 1.0, 1.0], points: vec![uv(p), uv(q)] }));
+        }
+        let face = if f == 1 {
+            // Control rows at s = -20, 1 (the quadratic's middle: s(1/2) = 1/2 = (-20 + 2·1 + 20) / 4), 20.
+            let surface = BSurface::Spline {
+                u_knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                v_knots: vec![0.0, 0.0, 1.0, 1.0],
+                points: vec![vec![at(-20.0, 0.0), at(-20.0, 1.0)], vec![at(1.0, 0.0), at(1.0, 1.0)], vec![at(20.0, 0.0), at(20.0, 1.0)]],
+            };
+            if given {
+                asm.add_face_with_pcurves(f as u64, surface, vec![Bound::Edges(uses)], Some(0), true, vec![pcurves])?
+            } else {
+                asm.add_face(f as u64, surface, vec![Bound::Edges(uses)], Some(0), true)?
+            }
+        } else {
+            asm.add_face(f as u64, BSurface::Plane { origin: corner(corners[0]), u_axis, v_axis }, vec![Bound::Edges(uses)], Some(0), true)?
+        };
+        faces.push((face, true));
+    }
+    asm.finish(0, "box".into(), vec![faces], Kind::Solid)
+}
+
+/// A spline face's pcurves given by its producer are its record's where the face has none in
+/// closed form and no kernel is there to fit them, and without them the face is refused. Each
+/// edge's tolerance covers its given pcurve's gap, up to a quarter of the 1 mm bulge (as a file's
+/// pcurves are covered). Given off their edges by 0.1 in u (4 mm, past the 1 mm an edge's
+/// tolerance may grow to), the record's check refuses them.
+#[test]
+fn a_spline_face_takes_the_pcurves_its_producer_gives() {
+    assert!(box_with_spline_top(false, 0.0).is_err(), "no pcurves on the top without a kernel to fit them");
+    let solid = box_with_spline_top(true, 0.0).unwrap();
+    let brep = &solid.brep;
+    assert_eq!((brep.faces.len(), brep.edges.len(), brep.vertices.len()), (6, 12, 8));
+    let top = solid.face_origin.iter().position(|o| *o == 1).unwrap();
+    assert!(matches!(brep.faces[top].surface, BSurface::Spline { .. }));
+    let worst = brep.edges.iter().map(|e| e.tolerance).fold(0.0, f64::max);
+    assert!(worst <= 0.25 * 1.5 + 1e-6, "the most tolerance an edge takes, {worst} mm");
+    assert!(box_with_spline_top(true, 0.1).is_err(), "pcurves off their edges");
 }
 
 /// The top face's cubic edge lies off its plane only between the 16 even gap samples (#11652).
@@ -365,7 +468,7 @@ fn box_with(f: usize, definition: &SweptSurface, own: bool) -> R<(Solid, BSurfac
 #[test]
 fn an_ellipse_swept_across_its_parameter_origin_bounds_only_its_face() {
     let (a, b, h) = (10.0, 6.0, 5.0);
-    let s = (std::f64::consts::PI / 3.0).sin();
+    let s = det::sin(std::f64::consts::PI / 3.0);
     for up in [true, false] {
         let mut asm = Assembly::new(1e-6, None);
         let v: Vec<u32> =
@@ -414,7 +517,7 @@ fn an_ellipse_swept_across_its_parameter_origin_bounds_only_its_face() {
         let solid = asm.finish(0, "segment".into(), vec![vec![(bottom, true), (top, true), (flat, true), side]], Kind::Solid).unwrap();
         assert_eq!((solid.brep.faces.len(), solid.brep.edges.len(), solid.brep.vertices.len()), (4, 6, 4), "up: {up}");
         let theta = 2.0 * std::f64::consts::FRAC_PI_3;
-        let expected = b / a * 0.5 * a * a * (theta - theta.sin()) * h;
+        let expected = b / a * 0.5 * a * a * (theta - det::sin(theta)) * h;
         let got = volume(&solid);
         assert!((got - expected).abs() < 1e-6 * expected, "up: {up}: {got} vs {expected}");
     }
@@ -534,7 +637,7 @@ fn parabola_and_hyperbola_edges_lie_on_their_conics() {
     let c = hyperbola_curve(o, z, x, r, [t0, t1]);
     let eval = crate::kernel::CurveEval::new(&c).unwrap();
     for t in [t0, t1] {
-        let want = Vec3::new(1.0 + r[0] * f64::cosh(t), 2.0 + r[1] * f64::sinh(t), 3.0);
+        let want = Vec3::new(1.0 + r[0] * det::cosh(t), 2.0 + r[1] * det::sinh(t), 3.0);
         assert!(eval.point(t).unwrap().dist(want) < 1e-9, "hyperbola at {t}");
     }
 }
@@ -583,7 +686,7 @@ fn half_cylinder() -> BSurface {
 /// A bicubic patch with a single interior knot along each direction, its points off any plane.
 fn bicubic() -> BSurface {
     let points =
-        (0..5).map(|i| (0..5).map(|j| [f64::from(i), f64::from(j), (f64::from(i) * 0.7).sin() + (f64::from(j) * 1.3).cos()]).collect()).collect();
+        (0..5).map(|i| (0..5).map(|j| [f64::from(i), f64::from(j), det::sin(f64::from(i) * 0.7) + det::cos(f64::from(j) * 1.3)]).collect()).collect();
     let knots = vec![0.0, 0.0, 0.0, 0.0, 0.4, 1.0, 1.0, 1.0, 1.0];
     BSurface::Spline { u_knots: knots.clone(), v_knots: knots, points }
 }
@@ -719,7 +822,7 @@ fn an_arc_wholly_past_the_quarter_line_its_faces_form_ends_on_takes_its_closed_f
     let (r, h, tol) = (10.0, 5.0, 1e-3);
     let delta = 0.8 * tol / r;
     let mut asm = Assembly::new(tol, None);
-    let rim = |a: f64, z: f64| [r * a.cos(), r * a.sin(), z];
+    let rim = |a: f64, z: f64| [r * det::cos(a), r * det::sin(a), z];
     let half = std::f64::consts::FRAC_PI_2;
     let (cb, ct) = (asm.add_vertex([0.0; 3]).unwrap(), asm.add_vertex([0.0, 0.0, h]).unwrap());
     let mut at = |a: f64, z: f64| asm.add_vertex(rim(a, z)).unwrap();
@@ -744,7 +847,7 @@ fn an_arc_wholly_past_the_quarter_line_its_faces_form_ends_on_takes_its_closed_f
     let (ta, tb) = (arc(10, h, [-delta, 0.0], [tm, t0]), arc(11, h, [0.0, half], [t0, tq]));
     let cylinder = BSurface::Cylinder { frame: Frame { origin: [0.0; 3], x_axis: [1.0, 0.0, 0.0], y_axis: [0.0, 1.0, 0.0] }, radius: r };
     let plane = |origin: [f64; 3], u_axis: [f64; 3], v_axis: [f64; 3]| BSurface::Plane { origin, u_axis, v_axis };
-    let d = [(-delta).cos(), (-delta).sin(), 0.0];
+    let d = [det::cos(-delta), det::sin(-delta), 0.0];
     let faces = [
         (cylinder, vec![(ba, true), (bb, true), (up_q, true), (tb, false), (ta, false), (up_m, false)]),
         (plane([0.0; 3], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]), vec![(b_q, true), (bb, false), (ba, false), (b_m, false)]),

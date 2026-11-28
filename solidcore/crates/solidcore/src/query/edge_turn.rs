@@ -19,6 +19,7 @@ use crate::error::{Result, SolidError};
 use crate::geom::interval_vector::{cross as cross_ivl, dot as dot_ivl, norm as norm_ivl};
 use crate::geom::vector2d::Vec2;
 use crate::kernel::Kernel;
+use crate::math::det;
 use crate::math::{Vec3, PI};
 use crate::nurbs::math::UNIT;
 use crate::query::tangent_edge::face_use_normal;
@@ -133,9 +134,10 @@ pub fn turn_at(k: &Kernel, b: &Brep, e: EdgeId, f: EdgeId, v: VertexId) -> Resul
         return Ok(None);
     };
     let arrives = arrives * -1.0;
-    Ok(Some(
-        arrives.cross(leaves).length().atan2(arrives.dot(leaves)),
-    ))
+    Ok(Some(det::atan2(
+        arrives.cross(leaves).length(),
+        arrives.dot(leaves),
+    )))
 }
 
 /// Whether edge `e` is convex at its end `v` (its faces meet at less than 180 degrees inside
@@ -212,7 +214,7 @@ pub fn convex_at(
     // a dot product of at most 0 or |na x nc| > tan(smooth) (na . nc) is proved (the tangent
     // within 2 ulps, and the product one rounding: 8 u more)
     let (c, d) = (norm_ivl(cross_ivl(na, nc)), dot_ivl(na, nc));
-    let parted = d.hi <= 0.0 || c.lo > smooth.tan() * (1.0 + 8.0 * UNIT) * d.hi;
+    let parted = d.hi <= 0.0 || c.lo > det::tan(smooth) * (1.0 + 8.0 * UNIT) * d.hi;
     if !parted {
         return Ok(None);
     }
@@ -309,7 +311,7 @@ pub fn frame_z_deviation(before: &[[f64; 4]; 4], after: &[[f64; 4]; 4]) -> (f64,
     let shift = Vec3::new(at0 - bt0, at1 - bt1, at2 - bt2).length();
     let bz = Vec3::new(bz0, bz1, bz2);
     let az = Vec3::new(az0, az1, az2);
-    let angle_deg = bz.cross(az).length().atan2(bz.dot(az)).to_degrees();
+    let angle_deg = det::atan2(bz.cross(az).length(), bz.dot(az)).to_degrees();
     (shift, angle_deg)
 }
 
@@ -335,6 +337,6 @@ pub fn rigid_pose_delta(a: &[[f64; 4]; 4], b: &[[f64; 4]; 4]) -> (f64, f64) {
     let c01 = ax.dot(by);
     let c10 = ay.dot(bx);
     let sin2 = Vec3::new(c12 - c21, c20 - c02, c01 - c10).length();
-    let angle_deg = sin2.atan2(c00 + c11 + c22 - 1.0).to_degrees();
+    let angle_deg = det::atan2(sin2, c00 + c11 + c22 - 1.0).to_degrees();
     (t, angle_deg)
 }

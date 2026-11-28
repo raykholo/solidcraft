@@ -86,6 +86,7 @@
 //! Walls of lines and arcs only (conics and Béziers are refused). One planar section: a
 //! channel whose section changes along its length is the caller's to slice.
 
+use crate::math::det;
 use std::f64::consts::{PI, TAU};
 
 use crate::error::{Failure, Fit, FitMeasure, Reason, Result, SolidError};
@@ -242,6 +243,24 @@ pub struct Filled {
 pub fn fill(k: &Kernel, section: &Channel, options: &FillOptions) -> Result<Filled> {
     check_input(section, options)?;
     build(k, section, options)
+}
+
+/// The depth margin a face of `section`'s fill keeps from what it touches (`delta` in [`fill`]):
+/// the larger of the section's conservative allowance (1e-9 of its size, [`scale`]) and the
+/// kernel's zone tolerance. The fill reads it here, and so does a caller that compares walls
+/// against it (one implementation; brett19's point 5 on #22504).
+#[must_use]
+pub fn margin(k: &Kernel, section: &Channel) -> f64 {
+    margin_of(
+        1e-9 * scale(section.left.iter().chain(&section.right)),
+        k.tolerances.zone_tol_3d,
+    )
+}
+
+/// [`margin`] from the section's allowance `eps` and the zone tolerance `zone`, for a caller
+/// that has `eps` already ([`build`]).
+fn margin_of(eps: f64, zone: f64) -> f64 {
+    eps.max(zone)
 }
 
 /// The second face's contour: flat without one.
@@ -474,7 +493,7 @@ fn build(k: &Kernel, section: &Channel, options: &FillOptions) -> Result<Filled>
     // to the half circle, which builds). Outside that, its fit is the nearest size that
     // builds: the floor below it, the deepest past it, the zone tolerance (built flat) where
     // the deepest is below the floor. Every fit builds when retried.
-    let delta = eps.max(zone);
+    let delta = margin_of(eps, zone);
     for &(side, depth, touch, contact, floor) in &limits {
         let (upper, slack) = if contact {
             (touch - delta, 0.0)
@@ -838,7 +857,7 @@ fn shallow(
     let m = a.max(overlap);
     let b = MAX_ARC_RADIUS;
     let turn = if overlap > 0.0 { 0.5 } else { 0.25 };
-    let floor = (x * (turn * smallest_arc_sweep(f64::MAX, zone)).tan())
+    let floor = (x * det::tan(turn * smallest_arc_sweep(f64::MAX, zone)))
         .max(x * m / (b + (b * b - m * m).max(0.0).sqrt()))
         * (1.0 + 1e-9);
     if size < floor && !matches!(contour, Contour::Concave { .. }) {
@@ -1005,7 +1024,7 @@ pub fn arc_clearance(p: Point2, q: Point2, others: &[Seg2], eps: f64) -> (f64, b
                 continue;
             };
             let toward = (other - toe) * (1.0 / (2.0 * a));
-            let angle = (-dir.dot(n)).atan2(dir.dot(toward));
+            let angle = det::atan2(-dir.dot(n), dir.dot(toward));
             if angle > 0.0 && angle < PI {
                 // read from the step back past the toe, not from the point's coordinates (whose
                 // rounding is large beside a step of `off`)
@@ -1021,7 +1040,7 @@ pub fn arc_clearance(p: Point2, q: Point2, others: &[Seg2], eps: f64) -> (f64, b
                 }
                 if !found {
                     // a side all but along the chord: the touch itself
-                    take(a * (0.5 * angle).tan());
+                    take(a * det::tan(0.5 * angle));
                 }
             }
         }
@@ -1144,7 +1163,7 @@ fn leaving(seg: &Seg2, toe: Point2, tol: f64) -> Option<Vec2> {
             start: s, sweep, ..
         } => {
             let at = if start { s } else { s + sweep };
-            let travel = Vec2::new(-at.sin(), at.cos()) * sweep.signum();
+            let travel = Vec2::new(-det::sin(at), det::cos(at)) * sweep.signum();
             if start {
                 travel
             } else {
@@ -1178,12 +1197,12 @@ fn roots(a: f64, b: f64, c: f64) -> Vec<f64> {
 /// of its bulge `tan(sweep / 4)`; `None` past half a circle.
 fn arc_about(center: Point2, p: Point2, q: Point2, ccw: bool) -> Option<Seg2> {
     let (dp, dq) = (p - center, q - center);
-    let turn = (dq.y.atan2(dq.x) - dp.y.atan2(dp.x)).rem_euclid(TAU);
+    let turn = (det::atan2(dq.y, dq.x) - det::atan2(dp.y, dp.x)).rem_euclid(TAU);
     let sweep = if ccw { turn } else { turn - TAU };
     bulge_arc(
         Vertex {
             at: p,
-            bulge: (sweep / 4.0).tan(),
+            bulge: det::tan(sweep / 4.0),
         },
         q,
     )
@@ -1217,8 +1236,8 @@ pub fn cut_chain(chain: &[Seg2], s: f64, origin: Point2, up: Vec2, eps: f64) -> 
                 if k.abs() > 1.0 {
                     None
                 } else {
-                    let base = up.y.atan2(up.x);
-                    let off = k.acos();
+                    let base = det::atan2(up.y, up.x);
+                    let off = det::acos(k);
                     [base + off, base - off]
                         .into_iter()
                         .filter_map(|ang| {

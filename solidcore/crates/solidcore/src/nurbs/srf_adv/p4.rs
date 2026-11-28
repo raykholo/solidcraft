@@ -64,6 +64,7 @@
 //!   allocated are `NL_MEM_ERR`.
 
 use crate::error::{nurbs::NurbsFailure, Result, SolidError};
+use crate::math::det;
 use crate::math::Vec3;
 use crate::nurbs::basis_basic::PTOL;
 use crate::nurbs::bezier::{srf_extend_4d, ExtendAt};
@@ -172,8 +173,23 @@ pub fn create_b_vectors(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<Vec<Vec3>> {
 /// Those of [`create_b_vectors`]; `InvalidInput` for parameters that do not ascend from
 /// the first to the last.
 pub fn create_b_vectors_closing(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<(Vec<Vec3>, bool)> {
+    create_b_vectors_closing_with(cur, b0, t, |u| Ok(cur.eval_tangent(u, Side::Left)?.1))
+}
+
+/// [`create_b_vectors_closing`] using a caller-supplied unit tangent at each sample
+/// parameter (used by `sweep_scale` when bridging a short rounding-perturbed linear piece
+/// so the frame chain stays orthogonal to the bridged tangent across both piece joints).
+pub(super) fn create_b_vectors_closing_with<F>(
+    cur: &Curve,
+    b0: Vec3,
+    t: &[f64],
+    tangent_at: F,
+) -> Result<(Vec<Vec3>, bool)>
+where
+    F: FnMut(f64) -> Result<Vec3>,
+{
     const OP: &str = OP_BVEC;
-    let (mut b, tg) = projection_b_vectors(cur, b0, t)?;
+    let (mut b, tg) = projection_b_vectors_with(b0, t, tangent_at)?;
     if !closing_gap(cur, &b)? {
         return Ok((b, false));
     }
@@ -181,7 +197,7 @@ pub fn create_b_vectors_closing(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<(Vec
     let (first, last) = (at(&b, 0, OP)?, at(&b, k, OP)?);
     let t_last = at(&tg, k, OP)?;
     // the signed angle about the last tangent from the last vector to the first
-    let angle = last.cross(first).dot(t_last).atan2(last.dot(first));
+    let angle = det::atan2(last.cross(first).dot(t_last), last.dot(first));
     let (t0, tk) = (at(t, 0, OP)?, at(t, k, OP)?);
     let span = tk - t0;
     #[allow(clippy::neg_cmp_op_on_partial_ord)] // refuses NaN too
@@ -195,7 +211,12 @@ pub fn create_b_vectors_closing(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<(Vec
         let turn = angle * (at(t, i, OP)? - t0) / span;
         let (bi, ti) = (at(&b, i, OP)?, at(&tg, i, OP)?);
         // B[i] is square to T[i]: turned about it, it stays so
-        let (turned, _) = normalize(combine2_pts(turn.cos(), bi, turn.sin(), ti.cross(bi)))?;
+        let (turned, _) = normalize(combine2_pts(
+            det::cos(turn),
+            bi,
+            det::sin(turn),
+            ti.cross(bi),
+        ))?;
         put(&mut b, i, turned, OP)?;
     }
     put(&mut b, k, first, OP)?;
@@ -205,6 +226,18 @@ pub fn create_b_vectors_closing(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<(Vec
 /// The projection normal method's vectors `B` and the unit tangents `T` along `cur` at
 /// `t` (`T[0]` is not computed: zero), before any correction for a closed curve.
 fn projection_b_vectors(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<(Vec<Vec3>, Vec<Vec3>)> {
+    projection_b_vectors_with(b0, t, |u| Ok(cur.eval_tangent(u, Side::Left)?.1))
+}
+
+/// [`projection_b_vectors`] with a caller-supplied unit tangent at each sample `t[1..=k]`.
+fn projection_b_vectors_with<F>(
+    b0: Vec3,
+    t: &[f64],
+    mut tangent_at: F,
+) -> Result<(Vec<Vec3>, Vec<Vec3>)>
+where
+    F: FnMut(f64) -> Result<Vec3>,
+{
     const OP: &str = OP_BVEC;
     let k = t.len().checked_sub(1).ok_or_else(|| oob(OP))?;
     let mut b = vec![Vec3::ZERO; k + 1];
@@ -216,7 +249,7 @@ fn projection_b_vectors(cur: &Curve, b0: Vec3, t: &[f64]) -> Result<(Vec<Vec3>, 
 
     // Compute unit tangents and the B's in one direction.
     for i in 1..=k {
-        let (_, ti) = cur.eval_tangent(at(t, i, OP)?, Side::Left)?;
+        let ti = tangent_at(at(t, i, OP)?)?;
         put(&mut tg, i, ti, OP)?;
         // let B[i] = B[i-1] - (B[i-1]*T[i])*T[i]
         let bp = at(&b, i - 1, OP)?;
@@ -926,7 +959,7 @@ pub fn approx_cross_boundary_derivs(
 
         // Insert knots to bring derivatives in compliance.
         let rad = (eps * PI) / 180.0;
-        let sne = rad.sin();
+        let sne = det::sin(rad);
         let mut mx_: isize = -1;
 
         if als_ > eps {
@@ -1558,7 +1591,11 @@ mod tests {
         let points: Vec<Vec3> = (0..16)
             .map(|i| {
                 let t = std::f64::consts::TAU * f64::from(i) / 16.0;
-                Vec3::new(10.0 * t.cos(), 10.0 * t.sin(), 3.0 * (2.0 * t).cos())
+                Vec3::new(
+                    10.0 * det::cos(t),
+                    10.0 * det::sin(t),
+                    3.0 * det::cos(2.0 * t),
+                )
             })
             .collect();
         let traj = crate::nurbs::b_spline_curve::BSplineCurve::interpolate_points(

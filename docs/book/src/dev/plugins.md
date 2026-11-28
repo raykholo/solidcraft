@@ -6,7 +6,7 @@ example adds a docked panel to a command plugin. It covers the
 manifest, the WIT interface, building the component, permissions, limits, checking, testing and
 installing.
 
-The reference for everything here is [Plugins](../../../plugins.md) (placement, dialogs, package
+The reference for everything here is [Plugins](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md) (placement, dialogs, package
 limits, importers, exporters) and [the runtime reference](../../../plugin-runtime.md) (execution and file
 scope). The design behind them is [RFC 0002](../../../rfcs/0002-plugins.md).
 
@@ -22,7 +22,7 @@ component. SolidCraft runs the component in a sandbox:
   The design opens as a new, unsaved design, with a report of what could not be carried over.
 - An **exporter** writes the open design as a file of a format SolidCraft doesn't write. It reads
   the design through read-only commands and returns the file's bytes; SolidCraft writes them where
-  the user chose. See [Exporters](../../../plugins.md#exporters).
+  the user chose. See [Exporters](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#exporters).
 
 A plugin has no network access, ever. It reads and writes files only in folders the user approved,
 and it runs within fuel, memory and time limits. It ships no UI code: SolidCraft draws its dialog
@@ -34,6 +34,15 @@ Rust.
 Both examples are in SolidCraft's source, in `docs/book/plugin-examples`, and are built against
 the current WIT with every change to it (`cargo xtask plugin-examples`), so the code here
 compiles.
+
+## Start from a template
+
+The community-maintained [SolidCraft plugin template](https://github.com/AlpDmr/solidcraft-plugin-template)
+provides a working Rust command plugin, test cases, build scripts for Linux, macOS and Windows,
+and a GitHub Actions release workflow. Choose **Use this template**, set your plugin's id, name,
+description and `updates.github` repository in `plugin.json`, then follow its build instructions.
+Check the SolidCraft and WIT versions against the version you target. The steps below explain
+the same package structure if you prefer to start from an empty folder.
 
 ## What you need
 
@@ -100,7 +109,7 @@ Create `plate-maker/plugin.json`:
 The input schema is the entry's dialog: SolidCraft draws a field per property, with the `title`,
 `default`, limits and `unit`, and passes the values to the plugin as JSON. A field can also take
 geometry picked in the viewport, a dropdown, or a picture per option: see
-[Plugins](../../../plugins.md#integration-apis). `slots` place the entry in a ribbon tab or the
+[Plugins](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#integration-apis). `slots` place the entry in a ribbon tab or the
 File or Help menu; every entry is in the Plugins menu anyway.
 
 ## Step 2: the crate
@@ -301,7 +310,35 @@ In SolidCraft, open **Preferences › Plugins**, choose **Install plugin…** an
 The confirmation screen shows what the plugin asks for; **Install** approves it. The entry appears
 in the Plugins menu and the Model tab at once. A program installs it with `plugin.install`, which
 never opens a dialog: send `"dry_run": true` first to review what it asks for (see
-[Installing](../../../plugins.md#installing)).
+[Installing](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#installing)).
+
+## Check every push and publish releases
+
+In your repository's CI, build the component against the WIT from the SolidCraft version you
+support. Run these checks on the built package folder before making its installation archive:
+
+```sh
+solidcraft-cli plugin check plate-maker
+solidcraft-cli plugin test plate-maker --require-cases
+```
+
+Use a CLI release matching the WIT you build against. For an entry without an explicit
+test case, the second command runs a smoke test with its defaults when possible.
+`--require-cases` fails entries that have neither a case nor usable defaults, and any
+failing test fails the command. Add explicit cases for the behavior you depend on.
+Package the manifest, component and required assets, leaving tests in the source
+repository. For release automation:
+
+1. Set `updates.github` in the manifest to your repository's `owner/name`.
+2. Bump `version` to a new `major.minor.patch` version and tag the commit with that version
+   (for example, `v0.2.0`).
+3. Run the build and checks above, then publish a stable GitHub release with the checked
+   archive attached as `<id>.zip` or `<id>-<version>.zip`. Check the archive with
+   `solidcraft-cli plugin check` before publication.
+4. Verify the release asset has a SHA-256 digest listed by GitHub. SolidCraft uses this digest
+   to verify downloads.
+
+See [Updates](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#updates) for version and archive requirements.
 
 ## Permissions
 
@@ -474,7 +511,7 @@ valid file the importer does not convert answers `unsupported`, which SolidCraft
 Once installed, **File › Open** offers `.box` files, and `doc.open` and `file.import` open them.
 An importer that converts a large file can ask for more guest compute time (`deadline_ms` up to
 600,000 under the default host policy, or more with a raised `max_deadline_ms`), stack
-(`stack_kib`) and memory; see [Importers](../../../plugins.md#importers), which also covers reading
+(`stack_kib`) and memory; see [Importers](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#importers), which also covers reading
 an assembly's other files and checking the result with `evaluate`.
 
 ## A plugin with a panel
@@ -485,8 +522,9 @@ A click in the panel runs one of the plugin's entries as an ordinary command, so
 over MCP everything a person does in the panel.
 
 This one, Job List, keeps a list of machining jobs in the open design and shows them in a **Jobs**
-panel. **Add** in the Model tab's Plugins group asks for a job's name and tool diameter; the
-panel's **Refresh** and **Clear** buttons read the list again or empty it.
+panel. **Add** in the Model tab's Plugins group asks for a job's name and tool diameter. In the
+panel, **Refresh** reads the list again, **Remove** deletes the job selected in the table, **Clear**
+empties the list, and a double-click on a job opens its values in a form to change them.
 
 The manifest, `job-list/plugin.json`:
 
@@ -496,7 +534,7 @@ The manifest, `job-list/plugin.json`:
   "name": "Job List",
   "version": "0.1.0",
   "description": "Keeps a list of machining jobs in the design and shows it in a docked panel.",
-  "capabilities": ["commands@0.2", "ui@0.1", "storage@0.1"],
+  "capabilities": ["commands@0.2", "ui@0.1", "storage@0.1", "forms@0.1"],
   "runtime": {
     "module": "job-list.wasm",
     "data_format": 1,
@@ -511,7 +549,17 @@ The manifest, `job-list/plugin.json`:
         }}
       },
       {"name": "clear", "effect": "edit", "input_schema": {"type": "object", "properties": {}}},
-      {"name": "refresh", "effect": "read", "input_schema": {"type": "object", "properties": {}}}
+      {"name": "refresh", "effect": "read", "input_schema": {"type": "object", "properties": {}}},
+      {"name": "remove", "effect": "edit", "input_schema": {"type": "object", "properties": {}}},
+      {"name": "edit", "effect": "read", "input_schema": {"type": "object", "properties": {}}},
+      {
+        "name": "update",
+        "effect": "edit",
+        "input_schema": {"type": "object", "additionalProperties": true, "properties": {
+          "name": {"type": "string", "title": "Job"},
+          "tool": {"type": "number", "title": "Tool diameter", "minimum": 0.1, "unit": "mm"}
+        }}
+      }
     ],
     "ui": {
       "ui_version": 1,
@@ -521,6 +569,7 @@ The manifest, `job-list/plugin.json`:
           {"widget": {"group": [1, 2]}},
           {"widget": {"toolbar": [
             {"label": "Refresh", "icon": null, "entry": "refresh"},
+            {"label": "Remove", "icon": null, "entry": "remove"},
             {"label": "Clear", "icon": null, "entry": "clear"}
           ]}},
           {"widget": {"table": {
@@ -529,7 +578,7 @@ The manifest, `job-list/plugin.json`:
               {"key": "name", "label": "Job", "unit": null},
               {"key": "tool", "label": "Tool", "unit": "length"}
             ],
-            "select": "single", "on_select": null, "on_edit": null
+            "select": "single", "on_select": null, "on_edit": "edit"
           }}}
         ]}
       }],
@@ -548,7 +597,11 @@ What is new beside a command plugin:
   names is one of `runtime.entries`.
 - `"storage@0.1"` and `data_format`: the jobs live in the design, written with the `storage.set`
   command and read with `storage.get`, so each change is one undo step and a saved design keeps
-  them. See [Plugin data in a design](../../../plugins.md#plugin-data-in-a-design).
+  them. See [Plugin data in a design](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#plugin-data-in-a-design).
+- `"forms@0.1"`: lets `edit` open the form of another of the plugin's entries, `update`, filled
+  with values. See [Edit a stored operation through its normal form](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#edit-a-stored-operation-through-its-normal-form).
+- `update`'s schema has `"additionalProperties": true`, so the job's `id`, which the form has no
+  field for, comes back with the values the person applied.
 
 The crate is made as in Steps 2 and 3. The component implements the `panel-plugin` world: it
 exports `entry`, as a command does, and `ui-provider`, whose `describe` returns the same panels as
@@ -557,9 +610,9 @@ exports `entry`, as a command does, and `ui-provider`, whose `describe` returns 
 ```rust
 wit_bindgen::generate!({ path: "wit", world: "panel-plugin" });
 
-use craft::plugin::commands;
 use craft::plugin::types::{Datum, FieldFailure, PluginError, Value as Cell};
 use craft::plugin::ui::{self, ButtonSpec, Column, Declarations, DockZone, Layout, Node, PanelSpec, SelectionMode, TableSpec, UiEvent, Widget};
+use craft::plugin::{commands, forms};
 use serde_json::{Value, json};
 
 struct Plugin;
@@ -572,21 +625,58 @@ impl exports::craft::plugin::entry::Guest for Plugin {
             "add" => {
                 let name = params["name"].as_str().unwrap_or("Pocket");
                 let tool = params["tool"].as_f64().unwrap_or(6.0);
-                jobs.push(json!({"id": format!("job{}", jobs.len() + 1), "name": name, "tool": tool}));
-                // The jobs live in the design: one undo step, saved with it.
-                commands::run("storage.set", &json!({"document": {"jobs": jobs}}).to_string())?;
+                jobs.push(json!({"id": next_id(&jobs), "name": name, "tool": tool}));
+                save(&jobs)?;
                 ui::show_panel("jobs", true)?;
             }
             "clear" => {
                 jobs.clear();
-                commands::run("storage.set", &json!({"document": {"jobs": jobs}}).to_string())?;
+                save(&jobs)?;
             }
             "refresh" => {}
+            // A press of Remove: `row` is the job selected in the table, or null.
+            "remove" => {
+                let row = selected_row(&params)?;
+                jobs.retain(|job| job["id"] != row);
+                save(&jobs)?;
+            }
+            // A double-click on a row: open `update`'s form filled with that job. The form opens
+            // once this run has finished; nothing changes until the person applies it.
+            "edit" => {
+                let row = selected_row(&params)?;
+                let job = jobs.iter().find(|job| job["id"] == row).ok_or_else(|| invalid("row", format!("no job `{row}`")))?;
+                forms::open("update", &job.to_string())?;
+            }
+            // The form's Apply: `id` came from `edit` and is kept although the form has no field for it.
+            "update" => {
+                let id = params["id"].as_str().ok_or_else(|| invalid("id", "which job to change"))?;
+                let job = jobs.iter_mut().find(|job| job["id"] == id).ok_or_else(|| invalid("id", format!("no job `{id}`")))?;
+                job["name"] = params["name"].clone();
+                job["tool"] = params["tool"].clone();
+                save(&jobs)?;
+            }
             _ => return Err(invalid("entry", format!("no entry `{entry}`"))),
         }
         show(&jobs)?;
         Ok(json!({"jobs": jobs.len()}).to_string())
     }
+}
+
+/// Write the jobs into the design: one undo step, saved with it.
+fn save(jobs: &[Value]) -> Result<(), PluginError> {
+    commands::run("storage.set", &json!({"document": {"jobs": jobs}}).to_string())?;
+    Ok(())
+}
+
+/// The `row` of a panel event: the id of the table row it is about.
+fn selected_row(params: &Value) -> Result<&str, PluginError> {
+    params["row"].as_str().ok_or_else(|| invalid("row", "select a job in the table first"))
+}
+
+/// An id no job has: one past the highest number in use, so a removed job's id is not reused.
+fn next_id(jobs: &[Value]) -> String {
+    let highest = jobs.iter().filter_map(|job| job["id"].as_str()?.strip_prefix("job")?.parse::<u64>().ok()).max().unwrap_or(0);
+    format!("job{}", highest + 1)
 }
 
 /// The jobs kept in the open design, oldest first.
@@ -619,11 +709,11 @@ impl exports::craft::plugin::ui_provider::Guest for Plugin {
             columns: vec![column("name", "Job", None), column("tool", "Tool", Some("length"))],
             select: SelectionMode::Single,
             on_select: None,
-            on_edit: None,
+            on_edit: Some("edit".into()),
         };
         let nodes = vec![
             Node { widget: Widget::Group(vec![1, 2]) },
-            Node { widget: Widget::Toolbar(vec![button("Refresh", "refresh"), button("Clear", "clear")]) },
+            Node { widget: Widget::Toolbar(vec![button("Refresh", "refresh"), button("Remove", "remove"), button("Clear", "clear")]) },
             Node { widget: Widget::Table(table) },
         ];
         let panel =
@@ -661,8 +751,18 @@ A button press runs its entry at once, with the press as its `params`:
 is the button's entry. A button does not open the entry's dialog, so an entry that needs values
 from the user, such as `add`, is opened from the Plugins menu or the Plugins group.
 
-Build, check and install it as in Steps 5 to 8; its test, `job-list/tests/add-job.json`, adds one
-job:
+When a row of the panel's table is selected, a press carries that row's id as its `row`, so
+**Remove** knows which job to delete without asking; with no row selected, `row` is null and
+`remove` says to select one. A double-click on a row runs the table's `on_edit` entry, `edit`, with
+the row's id in the same way. `edit` changes nothing itself: it calls `forms::open("update", ...)`
+with the job's values, and the host opens `update`'s form once the run has finished. Applying the
+form runs `update`, which changes the job as one undo step; closing it changes nothing.
+
+Build, check and install it as in Steps 5 to 8. Its first test, `job-list/tests/add-job.json`,
+adds one job. Three more check the refusals: **Remove** or a double-click with no row
+(`remove-without-selection.json`, `edit-without-row.json`) and a form applied for a job the design
+does not have (`update-unknown-job.json`). `plugin test` runs an entry that has no test with its
+default values, which `edit` and `update` refuse, so they need tests of their own:
 
 ```json
 {
@@ -676,7 +776,7 @@ job:
 
 The panel docks on the right the first time a job is added, with its title, the plugin's name and
 a plugin badge. The other widgets, the events each one sends and the limits (eight panels per
-plugin, 512 widgets per layout) are in [Docked panels](../../../plugins.md#docked-panels).
+plugin, 512 widgets per layout) are in [Docked panels](https://github.com/tangency-labs/solidcraft/blob/main/docs/plugins.md#docked-panels).
 
 ## When something goes wrong
 

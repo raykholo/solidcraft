@@ -16,6 +16,7 @@
 
 use solidcore::geom::vector3d::Vec3;
 use solidcore::kernel::Kernel;
+use solidcore::math::det;
 use solidcore::math::Point2;
 use solidcore::nurbs::b_spline_surface::BSplineSurface;
 use solidcore::nurbs::math::CPoint;
@@ -236,7 +237,7 @@ fn a_shallow_cylinders_endpoints_stay_on_the_derived_support() {
     let (x, y, z) = tilted();
     let radius = 1000.0;
     let start = 2.0;
-    let weight = (sweep * 0.5).cos();
+    let weight = det::cos(sweep * 0.5);
     let rows = [0.0, 12.0]
         .into_iter()
         .map(|height| {
@@ -247,7 +248,7 @@ fn a_shallow_cylinders_endpoints_stay_on_the_derived_support() {
             ]
             .into_iter()
             .map(|(angle, w)| {
-                let p = (x * angle.cos() + y * angle.sin()) * (radius / w) + z * height;
+                let p = (x * det::cos(angle) + y * det::sin(angle)) * (radius / w) + z * height;
                 CPoint::new(p.x * w, p.y * w, p.z * w, w)
             })
             .collect()
@@ -297,7 +298,7 @@ fn partial_tori_round_trip_on_their_control_circles() {
     };
     let (x, y, z) = tilted();
     for origin in [Vec3::ZERO, Vec3::new(600.0, -480.0, 640.0)] {
-        for alpha in [0.6_f64.asin(), -0.6_f64.asin()] {
+        for alpha in [det::asin(0.6_f64), -det::asin(0.6_f64)] {
             for swap in [false, true] {
                 let rows: Vec<Vec<CPoint>> = (0..5)
                     .map(|i| {
@@ -305,16 +306,16 @@ fn partial_tori_round_trip_on_their_control_circles() {
                         let wu = if i % 2 == 0 {
                             1.0
                         } else {
-                            (std::f64::consts::PI / 6.0).cos()
+                            det::cos(std::f64::consts::PI / 6.0)
                         };
-                        let radial = (x * u.cos() + y * u.sin()) * (1.0 / wu);
+                        let radial = (x * det::cos(u) + y * det::sin(u)) * (1.0 / wu);
                         (0..3)
                             .map(|j| {
                                 let v = f64::from(j) * alpha / 2.0;
-                                let wv = if j == 1 { (alpha / 2.0).cos() } else { 1.0 };
+                                let wv = if j == 1 { det::cos(alpha / 2.0) } else { 1.0 };
                                 let p = origin
-                                    + radial * (33.0 + 8.0 * v.cos() / wv)
-                                    + z * (8.0 * v.sin() / wv);
+                                    + radial * (33.0 + 8.0 * det::cos(v) / wv)
+                                    + z * (8.0 * det::sin(v) / wv);
                                 let w = wu * wv;
                                 CPoint::new(p.x * w, p.y * w, p.z * w, w)
                             })
@@ -414,15 +415,15 @@ fn tube_arc_torus(
     let rows: Vec<Vec<CPoint>> = (0..3)
         .map(|i| {
             let u = f64::from(i) * quarter;
-            let wu = if i == 1 { quarter.cos() } else { 1.0 };
-            let radial = (x * u.cos() + y * u.sin()) * (1.0 / wu);
+            let wu = if i == 1 { det::cos(quarter) } else { 1.0 };
+            let radial = (x * det::cos(u) + y * det::sin(u)) * (1.0 / wu);
             (0..3)
                 .map(|j| {
                     let v = mid.to_radians() + (f64::from(j) - 1.0) * step;
-                    let wv = if j == 1 { half.cos() } else { 1.0 };
+                    let wv = if j == 1 { det::cos(half) } else { 1.0 };
                     let p = origin
-                        + radial * (major + minor * v.cos() / wv)
-                        + z * (minor * v.sin() / wv);
+                        + radial * (major + minor * det::cos(v) / wv)
+                        + z * (minor * det::sin(v) / wv);
                     let w = wu * wv;
                     CPoint::new(p.x * w, p.y * w, p.z * w, w)
                 })
@@ -523,8 +524,8 @@ fn a_torus_label_stands_on_a_form_that_shows_a_short_arc_of_its_tube() {
                             AnalyticSupport::Torus {
                                 placement: Axis2Placement::from_stored(
                                     origin,
-                                    x * turn.cos() + y * turn.sin(),
-                                    y * turn.cos() - x * turn.sin(),
+                                    x * det::cos(turn) + y * det::sin(turn),
+                                    y * det::cos(turn) - x * det::sin(turn),
                                 ),
                                 major_radius: major,
                                 minor_radius: minor,
@@ -569,7 +570,7 @@ fn short_swept_revolution_nets_derive_about_their_own_axis() {
         // are on the surface
         let angle = |n: usize| {
             let [x, y, _] = form.points[n];
-            y.atan2(x)
+            det::atan2(y, x)
         };
         let sweep = (angle(form.v_count - 1) - angle(0)).abs().to_degrees();
         assert!((sweep - 0.4466).abs() < 1e-4, "{sweep}");
@@ -594,7 +595,7 @@ fn a_revolution_net_swept_past_half_a_turn_derives_about_its_own_axis() {
     // on the surface, the long way round
     let angle = |n: usize| {
         let [x, y, _] = form.points[n];
-        y.atan2(x)
+        det::atan2(y, x)
     };
     let last = (form.u_count - 1) * form.v_count;
     let sweep = 360.0 - (angle(0) - angle(last)).to_degrees();
@@ -623,9 +624,9 @@ fn derives_about_the_z_axis(form: &Form, sweep: f64) {
         };
         let position = rev.position();
         let axis = position.x_axis().cross(position.y_axis());
-        assert!(axis.x.hypot(axis.y) < 1e-9, "axis {axis:?}");
+        assert!(det::hypot(axis.x, axis.y) < 1e-9, "axis {axis:?}");
         let origin = position.origin();
-        assert!(origin.x.hypot(origin.y) < 1e-9, "origin {origin:?}");
+        assert!(det::hypot(origin.x, origin.y) < 1e-9, "origin {origin:?}");
         let domain = rev.step_uv_domain();
         let derived_sweep = domain.max().x - domain.min().x;
         assert!(
@@ -659,7 +660,7 @@ fn cone_span(
     weight_sign: f64,
 ) -> BSplineSurface {
     let half = sweep_deg.to_radians() * 0.5;
-    let (c, s, w) = (half.cos(), half.sin(), half.cos());
+    let (c, s, w) = (det::cos(half), det::sin(half), det::cos(half));
     let row = |x: f64, r: f64| {
         let pts = [
             (x, r * c, -r * s, weight_sign),
@@ -804,15 +805,15 @@ fn short_tube_torus(origin: Vec3, major: f64, minor: f64, mid: f64, arc: f64) ->
     let rows: Vec<Vec<CPoint>> = (0..3)
         .map(|i| {
             let u = f64::from(i) * quarter;
-            let wu = if i == 1 { quarter.cos() } else { 1.0 };
-            let radial = (x * u.cos() + y * u.sin()) * (1.0 / wu);
+            let wu = if i == 1 { det::cos(quarter) } else { 1.0 };
+            let radial = (x * det::cos(u) + y * det::sin(u)) * (1.0 / wu);
             (0..3)
                 .map(|j| {
                     let v = mid.to_radians() + (f64::from(j) - 1.0) * half;
-                    let wv = if j == 1 { half.cos() } else { 1.0 };
+                    let wv = if j == 1 { det::cos(half) } else { 1.0 };
                     let p = origin
-                        + radial * (major + minor * v.cos() / wv)
-                        + z * (minor * v.sin() / wv);
+                        + radial * (major + minor * det::cos(v) / wv)
+                        + z * (minor * det::sin(v) / wv);
                     let w = wu * wv;
                     CPoint::new(p.x * w, p.y * w, p.z * w, w)
                 })
@@ -825,19 +826,21 @@ fn short_tube_torus(origin: Vec3, major: f64, minor: f64, mid: f64, arc: f64) ->
 }
 
 /// A reader that works a torus back out of a face's form keeps the torus it finds where the form
-/// lies on it, and takes the label's own numbers only where it does not
+/// proves it, and takes the label's own numbers only where it does not
 /// (`Torus::from_label_unless_found_stands`). A tool's section with a short arc in it, turned
 /// about a line, sweeps a torus of which the tube shows only that arc (the end of a tooth space
 /// cut with a round cutter). Such a form does not fix the tube's circle (a 0.1 degree arc of a
 /// circle of radius 13.7 is 0.024 long and 5e-6 high), so the torus worked back out of it is
 /// off it, or none is found. Over tubes that show from 60 down to 0.02 degrees:
 ///
-/// - where the form lies on the torus found, the label is not asked;
+/// - where the form proves the torus found, the label is not asked;
 /// - a torus the label gives carries the label's numbers exactly and evaluates as the form;
 /// - where the label gives none, the kernel's proof of the label on the form refuses it too.
 ///
-/// A tube that shows 60 degrees is found as it is, in every place. A label a thousandth off its
-/// form gives no torus.
+/// A tube that shows 60 degrees has its form on the torus found, in every place. The form proves
+/// that torus in most places; a tube of radius 1 at 26 from the axis, away from the origin, is found
+/// 1e-12 to 4e-12 off its parametrisation, and there the label's numbers are taken. A label a
+/// thousandth off its form gives no torus.
 #[test]
 fn a_reader_takes_a_torus_labels_own_numbers_only_where_the_form_is_off_the_torus_it_finds() {
     use solidcore::geom::axis2_placement::Axis2Placement;
@@ -871,8 +874,14 @@ fn a_reader_takes_a_torus_labels_own_numbers_only_where_the_form_is_off_the_toru
                         .ok()
                         .flatten()
                         .map(Surface::from);
-                    let stands = match found.as_ref().and_then(AnalyticSupport::of) {
+                    // the form lies on the torus found (the point set alone)
+                    let lies = match found.as_ref().and_then(AnalyticSupport::of) {
                         Some(of_found) => lies_on(&form, &of_found.implicit()).unwrap(),
+                        None => false,
+                    };
+                    // the form proves the torus found: it lies on it and evaluates as it
+                    let stands = match found.as_ref() {
+                        Some(found) => AnalyticSupport::proved_on(&k, found, &form).unwrap(),
                         None => false,
                     };
                     let own = Torus::from_label_unless_found_stands(
@@ -885,12 +894,20 @@ fn a_reader_takes_a_torus_labels_own_numbers_only_where_the_form_is_off_the_toru
                     )
                     .unwrap_or_else(|e| panic!("{at}: {e}"));
                     if arc >= 60.0 {
-                        assert!(stands, "{at}: the form lies on the torus found in it");
+                        assert!(lies, "{at}: the form lies on the torus found in it");
+                        // a tube of radius 1 at 26 from the axis, away from the origin, is found
+                        // 1e-12 to 4e-12 off its parametrisation (margin 1.7 to 2.8): not proved
+                        let unproved = major == 26.0 && minor == 1.0 && origin.length() != 0.0;
+                        assert_eq!(stands, !unproved, "{at}: the form proves the torus found");
                     }
                     match own {
                         _ if stands => assert!(own.is_none(), "{at}: the torus found is kept"),
                         Some(torus) => {
                             assert_eq!(AnalyticSupport::of(&torus), Some(label), "{at}");
+                            assert!(
+                                AnalyticSupport::proved_on(&k, &torus, &form).unwrap(),
+                                "{at}: the label's torus is not proved on the form"
+                            );
                             let size = origin.length() + major + minor;
                             let d = form.natural_uv_domain();
                             for (a, b) in [(0.0, 0.4567), (0.4567, 0.7654), (0.9, 0.1)] {

@@ -13,6 +13,9 @@
 //!   knots, the bound at most the tolerance asked and no looser than the wall's true
 //!   distance; read through `NetScope` as a blend is, and carried through the net's edits.
 //!   Every wall face is a definition or of a kind `data/sweep_definition_ledger/` lists.
+//! - A joined flank's trims, one along each half turn beside a cylinder piece, are proved
+//!   within their edges' tolerance by their control points, with no bisection (stress
+//!   corpus S0252).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -43,6 +46,7 @@ use solidcore::topology::{edgeuse, face};
 use solidcore::SolidError;
 use solidcore::{Brep, Kernel};
 
+use solidcore::math::det;
 use std::collections::{BTreeMap, BTreeSet};
 use std::f64::consts::PI;
 
@@ -63,13 +67,13 @@ impl Meridian {
                 r: cr,
                 z: cz,
                 radius,
-            } => ((r - cr).hypot(z - cz) - radius).abs(),
+            } => (det::hypot(r - cr, z - cz) - radius).abs(),
             Self::Polygon(rz) => {
                 let mut best = f64::INFINITY;
                 for (&(ax, az), &(bx, bz)) in rz.iter().zip(rz.iter().cycle().skip(1)) {
                     let (dx, dz) = (bx - ax, bz - az);
                     let t = (((r - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)).clamp(0.0, 1.0);
-                    best = best.min((r - ax - t * dx).hypot(z - az - t * dz));
+                    best = best.min(det::hypot(r - ax - t * dx, z - az - t * dz));
                 }
                 best
             }
@@ -153,8 +157,8 @@ fn screw_deviation(
                                 let uu = u[0] + (u[1] - u[0]) * f64::from(a) / 4.0;
                                 let vv = v[0] + (v[1] - v[0]) * f64::from(c) / 4.0;
                                 let q = surface.evaluate_point(k, Point2::new(uu, vv)).unwrap();
-                                let r = q.x.hypot(q.y);
-                                let mut theta = q.y.atan2(q.x);
+                                let r = det::hypot(q.x, q.y);
+                                let mut theta = det::atan2(q.y, q.x);
                                 if theta < 0.0 {
                                     theta += 2.0 * PI;
                                 }
@@ -200,7 +204,7 @@ fn coil() -> Meridian {
 /// The groove of an M10x1.5 thread (ISO 68-1).
 fn m10_groove(p: f64) -> Meridian {
     let h = p * 3f64.sqrt() / 2.0;
-    let slope = (PI / 6.0).tan();
+    let slope = det::tan(PI / 6.0);
     let r0 = 5.0 - 5.0 * h / 8.0;
     let w0 = p / 8.0;
     let r1 = 5.0 + 0.05 * p;
@@ -354,14 +358,47 @@ fn issue_22577_a_thread_of_202_turns_builds() {
     // its outer end, turn for turn.
     let (area, centroid) = (0.5 * 1.0 * 1.3, (7.2 + 8.5 + 8.5) / 3.0);
     let expected = area * 2.0 * PI * centroid * turns;
-    let flank = 0.5f64.hypot(1.3);
-    let helix = (2.0 * PI * 8.5).hypot(p) * turns;
+    let flank = det::hypot(0.5f64, 1.3);
+    let helix = det::hypot(2.0 * PI * 8.5, p) * turns;
     let bound = tol * (1.0 + 2.0 * flank) * helix;
     let v = volume(&k, &mut b);
     assert!(
         (v - expected).abs() <= bound,
         "volume {v}, expected {expected} within {bound}"
     );
+}
+
+/// #22577: a 446 mm lead screw thread of 281 turns at pitch 1.5875 (tolerance 1e-4 of pitch)
+/// decides positive volume through the certified enclosure (`volume_sign`), holding Pappus's
+/// volume within the wall tolerance bound.
+#[test]
+fn issue_22577_a_lead_screw_coil_of_281_turns_decides_positive_volume() {
+    use solidcore::mass::enclosure::{volume_sign, EnclosureStop, VolumeSign};
+    let mut k = Kernel::default();
+    let (p, turns) = (1.5875, 281.0);
+    let tol = p * 1e-4;
+    let m = Meridian::Polygon(vec![(7.2, 0.6), (8.5, 0.0), (8.5, 1.2)]);
+    let mut b = screw_sweep(&mut k, &m.curves(), O, Z, p, turns, tol).unwrap();
+    assert!(p2::is_manifold_solid(&b).unwrap());
+    let halves = 2 * turns as usize;
+    assert_eq!(p1::faces(&b, None).unwrap().len(), 3 * halves + 2);
+    let (area, centroid) = (0.5 * 1.2 * 1.3, (7.2 + 8.5 + 8.5) / 3.0);
+    let expected = area * 2.0 * PI * centroid * turns;
+    let flank = 0.6f64.hypot(1.3);
+    let helix = (2.0 * PI * 8.5).hypot(p) * turns;
+    let bound = tol * (1.2 + 2.0 * flank) * helix;
+    match volume_sign(&k, &mut b).unwrap() {
+        VolumeSign::Positive(e) => {
+            assert_eq!(e.stop, EnclosureStop::Reached, "{e:?}");
+            assert!(
+                e.lo > 0.0 && e.lo <= expected + bound && expected - bound <= e.hi,
+                "enclosure [{}, {}] misses {expected} +- {bound} ({e:?})",
+                e.lo,
+                e.hi
+            );
+        }
+        other => panic!("expected Positive volume sign for 281-turn lead screw, got {other:?}"),
+    }
 }
 
 #[test]
@@ -444,8 +481,8 @@ fn walls(b: &Brep) -> Vec<Surface> {
 fn screw_point(p: Point3, offset: f64, theta: f64, pitch: f64) -> Point3 {
     let (x, y) = (p.x + offset, p.y);
     Point3::new(
-        x * theta.cos() - y * theta.sin(),
-        x * theta.sin() + y * theta.cos(),
+        x * det::cos(theta) - y * det::sin(theta),
+        x * det::sin(theta) + y * det::cos(theta),
         p.z + pitch * theta / (2.0 * PI),
     )
 }
@@ -453,7 +490,7 @@ fn screw_point(p: Point3, offset: f64, theta: f64, pitch: f64) -> Point3 {
 /// The angle the net's arcs turn to at `v` on the span `[v0, v1]` of half angle `half`.
 fn arc_angle(v0: f64, v1: f64, half: f64, v: f64) -> f64 {
     let s = 2.0 * (v - v0) / (v1 - v0) - 1.0;
-    0.5 * (v0 + v1) + 2.0 * ((0.5 * half).tan() * s).atan()
+    0.5 * (v0 + v1) + 2.0 * det::atan(det::tan(0.5 * half) * s)
 }
 
 /// The face's `(u, v)` of the definition's `(w, t)`, through its map.
@@ -641,6 +678,104 @@ fn joined_walls_run_on_across_the_half_turns() {
     assert!(dev <= tol, "a wall strays {dev}, {tol} asked");
 }
 
+/// Stress corpus S0252 (a modelled M100x6 thread on a 100 mm stud): a joined flank runs on
+/// across the half turns, and each cylinder piece beside it meets it along half a turn of its
+/// row, so the flank holds a trim along each such piece of its row, under the edge the stitch
+/// keeps, the piece's path. The stitch's cover proves every joined edge's trims within its
+/// tolerance, and a move's cover proves them again before and after it (a boolean moves its
+/// operands near the origin and back when their box is far from it). Each flank trim is proved
+/// from the control points of its piece of the row at once, as sets as well as at equal
+/// parameters: no bisection runs (before, each was bisected down to just under its tolerance,
+/// and at radius 50 the thread's 22 turns took most of the minutes its cut ran). Here 4 turns
+/// of the M100x6 groove: 8 half turns, 2 flanks, each beside the root's and the crest's
+/// cylinder pieces, so 32 such trims, and the bounds within `1e-9` (the piece's data is the
+/// row's, up to the rounding of the stitched trims' ends).
+#[test]
+fn a_joined_flanks_trims_along_its_half_turns_are_proved_without_bisecting() {
+    use solidcore::query::curve_surface_gap::trim_image_gap_bound_within;
+    use solidcore::topology::edgeuse;
+
+    let mut k = Kernel::default();
+    let (p, turns) = (6.0, 4.0);
+    let tol = p * 1e-4;
+    // (the M100x6 groove as `m10_groove` takes ISO 68-1's, at radius 50)
+    let h = p * 3f64.sqrt() / 2.0;
+    let slope = det::tan(PI / 6.0);
+    let r0 = 50.0 - 5.0 * h / 8.0;
+    let w0 = p / 8.0;
+    let r1 = 50.0 + 0.05 * p;
+    let w1 = (p / 4.0 + 2.0 * (r1 - r0) * slope) / 2.0;
+    let m = Meridian::Polygon(vec![
+        (r0, -p - w0),
+        (r1, -p - w1),
+        (r1, -p + w1),
+        (r0, -p + w0),
+    ]);
+    let b = screw_sweep_with(
+        &mut k,
+        &m.curves(),
+        O,
+        Z,
+        p,
+        turns,
+        None,
+        tol,
+        Walls::Joined,
+    )
+    .unwrap();
+    assert_eq!(walls(&b).len(), 2, "one face per flank");
+    // (each trim once: an edge use without its own reads its mate's)
+    let mut held_by = Vec::new();
+    for e in p1::edges(&b, None).unwrap() {
+        let rec = b.edge(e).unwrap();
+        let (edge_tol, ivl) = (rec.tolerance, rec.interval);
+        let range = [ivl.min(), ivl.max()];
+        let curve = rec.curve.as_ref().unwrap();
+        for &eu in &rec.edgeuses {
+            let (Some(trim), Some(holder)) = edgeuse::p1::uv_trim_curve(&b, eu).unwrap() else {
+                continue;
+            };
+            if held_by.contains(&holder) {
+                continue;
+            }
+            let f = edgeuse::p1::face(&b, holder).unwrap().unwrap();
+            let held = b.face(f).unwrap().surface.as_ref().unwrap();
+            // (a flank's trim of an edge along half a turn, not of a cap's profile line, whose
+            // parameters run over [0, 1])
+            if held.procedural_sweep().is_none() || range[1] - range[0] <= 3.0 {
+                continue;
+            }
+            // (each as the kernel's covers read them: copies for evaluation)
+            let surface = held.clone_for_evaluation().unwrap();
+            let (curve, trim) = (
+                curve.clone_for_evaluation().unwrap(),
+                trim.clone_for_evaluation().unwrap(),
+            );
+            held_by.push(holder);
+            let before = k.work_counters.fitted_trim_bisections();
+            let g = trim_image_gap_bound_within(
+                &k,
+                &surface,
+                &curve,
+                &trim,
+                range,
+                1e-3 * edge_tol,
+                [edge_tol, f64::INFINITY],
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                k.work_counters.fitted_trim_bisections(),
+                before,
+                "edge {e:?}: the flank's trim over {range:?} was bisected"
+            );
+            assert!(g <= 1e-9, "edge {e:?}: {g:e}");
+        }
+    }
+    assert_eq!(held_by.len(), 32, "the flanks' trims along the half turns");
+}
+
 /// A caller reads through the net at a tolerance of at least the bound, and through the
 /// definition tighter than that or outside every scope.
 #[test]
@@ -745,10 +880,10 @@ fn issue_2572_tapered_thread_walls_carry_their_law() {
         // the wall strays past what its lift alone could make it (the rational lift's
         // largest error on a span of its half angle): the law's error is real, and the
         // bound holds it
-        let tau = (0.5 * c.half).tan();
-        let kk = 2.0 * (1.0 + tau * tau) * tau.atan() / tau;
+        let tau = det::tan(0.5 * c.half);
+        let kk = 2.0 * (1.0 + tau * tau) * det::atan(tau) / tau;
         let x = ((kk - 2.0) / (kk + 2.0)).sqrt();
-        let lift = p / (2.0 * PI) * (kk * x / (1.0 + x * x) - 2.0 * x.atan());
+        let lift = p / (2.0 * PI) * (kk * x / (1.0 + x * x) - 2.0 * det::atan(x));
         assert!(
             c.farthest > 2.0 * lift,
             "strays {}, the lift {lift}",
@@ -1020,4 +1155,97 @@ fn issue_22930_a_cylinder_pieces_path_trims_are_proved_at_once() {
     }
     // (two cylinders, an edge along each side of each of their six half-turn pieces)
     assert!(proved >= 24, "{proved} cylinder piece trims");
+}
+
+// ---- tangency-labs/solidcore#3446: a drop onto a wall finds no saddle ---------------------
+
+/// tangency-labs/solidcore#3446: the coil of SolidCraft's helical groove cut from a shaft's
+/// end face, a circle of radius 1 about (10, 0, 30) in the plane z = 30, carried 6 turns at
+/// pitch 3 down the axis (-z through (0, 0, 30)). Every point of the circle lies on the
+/// wall: the wall's first station is the profile itself (`sweep::screw`, "a point at turn 0
+/// is the point itself"), so a point's drop onto the wall is that point, up to the drop's
+/// convergence; the B-rep holds an edge on the circle on the wall only within the wall's
+/// zone tolerance, so the drop must land within it. Near the circle's
+/// inner point (9, 0, 30), where its tangent runs almost along the screw motion (the wall's
+/// partials there 3° apart), the distance from a point of the circle has a saddle about
+/// 0.0137 away, which the drop returned: its Newton step converged to it, and the check
+/// measured the cut's edge on the circle that far off the wall. The points are those the
+/// check's gap function samples on the cut's edge, the circle's inner arc between its
+/// crossings with radius 10 at parameters 0.2587536620883 and 0.7412463379116 (21 even
+/// steps; the 12th, next to the inner point at 0.5, dropped to the saddle), and the steps
+/// between them; each is dropped without a guess and seeded with the previous point's
+/// foot, as the gap function does.
+#[test]
+fn issue_3446_a_point_of_a_walls_start_station_drops_onto_it() {
+    use solidcore::curve::arc::ArcDefinition;
+    use solidcore::curve::path::PathPiece;
+    use solidcore::surface::surface::p4::NoObject;
+    use solidcore::surface::surface::p5::DropPointOptions;
+    let mut k = Kernel::default();
+    let arc = PathPiece::of_arc(
+        &k,
+        &ArcDefinition {
+            centre: Point3::new(10.0, 0.0, 30.0),
+            axis: Z,
+            reference: Vec3::X,
+            radius: 1.0,
+            start: 0.0,
+            end: 2.0 * PI,
+        },
+    )
+    .unwrap();
+    let circle = arc.curve().clone();
+    let (pitch, turns) = (3.0, 6.0);
+    let b = screw_sweep(
+        &mut k,
+        std::slice::from_ref(&circle),
+        Point3::new(0.0, 0.0, 30.0),
+        -Z,
+        pitch,
+        turns,
+        pitch * 1e-4,
+    )
+    .unwrap();
+    let wall = p1::faces(&b, None)
+        .unwrap()
+        .into_iter()
+        .find(|&f| {
+            let s = face::p2::surface(&b, f).unwrap().unwrap();
+            matches!(s.kind(), SurfaceKind::BSpline(_))
+        })
+        .unwrap();
+    let s = face::p2::surface(&b, wall).unwrap().unwrap();
+    let domain = face::p2::uv_domain(&b, wall).unwrap();
+    let zone = face::p2::tolerance(&b, wall).unwrap();
+    let (first, last) = (0.258_753_662_088_38, 0.741_246_337_911_62);
+    for n in [20_u32, 40] {
+        let mut guess = None;
+        for i in 0..=n {
+            let t = first + (last - first) * f64::from(i) / f64::from(n);
+            let p = circle.evaluate_point(&k, t).unwrap();
+            for (seed, opts) in [
+                ("no guess", DropPointOptions::default()),
+                (
+                    "the previous foot",
+                    DropPointOptions {
+                        guess_uv: guess,
+                        ..Default::default()
+                    },
+                ),
+            ] {
+                let d = s.drop_point::<NoObject>(&k, p, &domain, &opts).unwrap();
+                assert!(d.success, "t {t}, {seed}");
+                let foot = s.evaluate_point(&k, d.result_uv).unwrap();
+                assert!(
+                    d.gap <= zone && (foot - p).length() <= zone,
+                    "t {t}, {seed}: dropped to {:?}, {} off",
+                    d.result_uv,
+                    d.gap
+                );
+                if seed == "the previous foot" {
+                    guess = Some(d.result_uv);
+                }
+            }
+        }
+    }
 }

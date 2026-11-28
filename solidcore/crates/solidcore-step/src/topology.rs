@@ -57,6 +57,7 @@ use crate::geom::{BSplineCurve, BSplineSurface, Curve, P3, Placement, Transform,
 use crate::p21::{Entity, Exchange, Param};
 use crate::read::{R, Reader};
 use crate::units;
+use solidcore::math::det;
 
 pub(crate) mod swept;
 
@@ -374,10 +375,16 @@ const FEATURE_MARGIN: f64 = 0.25;
 /// (Fusion: 0.01 mm) beside geometry far finer (edges of 0.2 to 10 um in the same file). Taken
 /// as the solid's tolerance, such edges read as zero-length edges, coincident edges and loops
 /// that turn the wrong way, and the kernel refuses every operation on the solid.
+///
+/// An edge needs twice the stated tolerance, not once: each of its two vertices carries it,
+/// and on a shorter edge their tolerance balls overlap. A union that merges one of them with a
+/// vertex of the other operand then reaches the other one and refuses (#3212: a 0.01 mm round,
+/// edges of 0.0141 mm, in a file stating 0.01 mm).
 fn feature_tolerance(brep: &Brep, stated: f64) -> Option<f64> {
     let shortest = shortest_edge(brep);
-    // An edge as long as the stated tolerance or longer is one that tolerance tells apart.
-    if shortest >= stated {
+    // An edge of twice the stated tolerance or longer keeps its vertices' balls apart; the
+    // slack keeps an edge of exactly twice it there when its length rounds just below.
+    if shortest >= 2.0 * stated * (1.0 - 1e-9) {
         return None;
     }
     let fine = (FEATURE_MARGIN * shortest).max(MIN_TOLERANCE);
@@ -737,7 +744,15 @@ impl<'b, 'a> Builder<'b, 'a> {
             self.asm.raise_vertex(v, gap, id)?;
         }
         let i = index(self.asm.edges.len())?;
-        self.asm.edges.push(EdgeB { curve, interval, vertices, tolerance: self.asm.tol, pcurve_tolerance: self.asm.pcurve_tolerance(), form: None });
+        self.asm.edges.push(EdgeB {
+            curve,
+            interval,
+            vertices,
+            tolerance: self.asm.tol,
+            pcurve_tolerance: self.asm.pcurve_tolerance(),
+            form: None,
+            origin: Some(id),
+        });
         self.edge_ids.insert(id, (i, mapped.with_step));
         Ok((i, mapped.with_step))
     }
@@ -941,6 +956,7 @@ impl<'b, 'a> Builder<'b, 'a> {
     /// roots of their vertices' joined sets ([`Builder::join_vertices`]).
     fn finish(mut self, item: u64, name: String, shells: Vec<Vec<(u32, bool)>>, kind: Kind) -> R<Solid> {
         self.join_vertices()?;
+        self.asm.source_bytes = self.ex.source_bytes as u64;
         self.asm.finish(item, name, shells, kind)
     }
 
@@ -1050,6 +1066,7 @@ impl<'b, 'a> Builder<'b, 'a> {
                 tolerance: self.asm.tol,
                 pcurve_tolerance: self.asm.pcurve_tolerance(),
                 form: None,
+                origin: None,
             });
             self.poly_edges.insert(key, e);
             uses.push((e, forward));
@@ -1525,7 +1542,7 @@ fn unfold_line(line: &mut [[f64; 4]], original: &[[f64; 4]], tol: f64) {
     }
     let point = |h: &[f64; 4]| Vec3::new(h[0] / h[3], h[1] / h[3], h[2] / h[3]);
     let within = |i: usize, p: Vec3| original.get(i).map(point).is_some_and(|o| o.dist(p) <= tol);
-    let cos_back = TURNS_BACK_DEGREES.to_radians().cos();
+    let cos_back = det::cos(TURNS_BACK_DEGREES.to_radians());
     let origin = Vec3::new(0.0, 0.0, 0.0);
     let last = line.len().saturating_sub(1);
     // The last step that had a direction, and the point it ended at.
@@ -1826,7 +1843,7 @@ struct Mapped {
 }
 
 fn angle_of(a: f64, b: f64) -> f64 {
-    let t = b.atan2(a);
+    let t = det::atan2(b, a);
     if t < 0.0 { t + TAU } else { t }
 }
 
@@ -1845,14 +1862,14 @@ fn ellipse_angle(x: f64, y: f64, [r0, r1]: [f64; 2]) -> f64 {
         return scaled;
     }
     // Half the squared distance from the point at `t`, and its first and second derivatives.
-    let dist = |t: f64| 0.5 * ((r0 * t.cos() - x).powi(2) + (r1 * t.sin() - y).powi(2));
-    let slope = |t: f64| (r1 * r1 - r0 * r0) * t.sin() * t.cos() + r0 * x * t.sin() - r1 * y * t.cos();
-    let bend = |t: f64| (r1 * r1 - r0 * r0) * (2.0 * t).cos() + r0 * x * t.cos() + r1 * y * t.sin();
+    let dist = |t: f64| 0.5 * (det::powi(r0 * det::cos(t) - x, 2) + det::powi(r1 * det::sin(t) - y, 2));
+    let slope = |t: f64| (r1 * r1 - r0 * r0) * det::sin(t) * det::cos(t) + r0 * x * det::sin(t) - r1 * y * det::cos(t);
+    let bend = |t: f64| (r1 * r1 - r0 * r0) * det::cos(2.0 * t) + r0 * x * det::cos(t) + r1 * y * det::sin(t);
     // A point on the ellipse to rounding: its angle on the circle is the nearest point's.
     if (2.0 * dist(scaled)).sqrt() <= 1e-12 * r0.max(r1) {
         return scaled;
     }
-    let (c, s) = ((x / r0).clamp(-1.0, 1.0).acos(), (y / r1).clamp(-1.0, 1.0).asin());
+    let (c, s) = (det::acos((x / r0).clamp(-1.0, 1.0)), det::asin((y / r1).clamp(-1.0, 1.0)));
     let starts = [scaled, if y < 0.0 { -c } else { c }, s, std::f64::consts::PI - s];
     let Some(mut t) = starts.into_iter().min_by(|a, b| dist(*a).total_cmp(&dist(*b))) else { return scaled };
     let mut d = dist(t);
@@ -1877,7 +1894,7 @@ fn ellipse_angle(x: f64, y: f64, [r0, r1]: [f64; 2]) -> f64 {
             break;
         }
     }
-    angle_of(t.cos(), t.sin())
+    angle_of(det::cos(t), det::sin(t))
 }
 
 /// `x` reduced to [0, 2π).

@@ -34,6 +34,99 @@ fn extrusions_straight_and_drafted() {
     assert_close(solid_volume(&b, "frustum"), PI * 4.0 / 3.0 * (25.0 + r2 * r2 + 5.0 * r2), 1e-6, "drafted disc");
 }
 
+/// Two cubic pieces of a closed spline that run within 3e-7 mm of one straight line, from the
+/// design of #22584, closed into a stadium by two half circles and a line, drafted 10 degrees
+/// outward over 80 mm. Each piece's wall is a ruled patch a plane fits to within the zone
+/// tolerance (1e-5) but not to within half its edges' (5e-6): taken as that plane, the wall
+/// missed its corner by 7.03e-6 and the check refused the solid. The volume is the profile's
+/// area A, its length L and the offset d = z tan 10 at depth z, integrated over the height
+/// (A + L d + pi d^2: the profile is convex, so each section is its parallel curve).
+#[test]
+fn a_drafted_nearly_straight_spline_keeps_its_walls_on_their_corners() {
+    let z = 80.0;
+    let cubic = |p: [[f64; 2]; 4]| Curve::Nurbs {
+        degree: 3,
+        points: p.iter().map(|q| [q[0], q[1], z, 1.0]).collect(),
+        knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+    };
+    let pieces = [
+        [
+            [22.9046875, 108.60000000000001],
+            [22.1226345485602, 108.59999969569137],
+            [21.340581597201535, 108.59999991448386],
+            [20.558528645833334, 108.60000000000001],
+        ],
+        [
+            [20.558528645833334, 108.60000000000001],
+            [19.740407986132755, 108.60000008946011],
+            [18.922287326421745, 108.60000003306719],
+            [18.104166666666668, 108.60000000000001],
+        ],
+    ];
+    let (start, end, r) = (pieces[0][0], pieces[1][3], 24.3);
+    let arc = |c: [f64; 2], from: f64| Curve::Arc {
+        center: [c[0], c[1], z],
+        axis: [0.0, 0.0, 1.0],
+        reference: [1.0, 0.0, 0.0],
+        radius: r,
+        start: from,
+        end: from + PI,
+    };
+    let profile = vec![
+        cubic(pieces[0]),
+        cubic(pieces[1]),
+        arc([end[0], end[1] - r], PI / 2.0),
+        Curve::Line { start: [end[0], end[1] - 2.0 * r, z], end: [start[0], start[1] - 2.0 * r, z] },
+        arc([start[0], start[1] - r], 1.5 * PI),
+    ];
+    let taper = 10f64.to_radians();
+    let b = Brep::extrude(&profile, [0.0, 0.0, -1.0], z, -taper, DraftCorner::Curvature, true).unwrap();
+    // A and L by Green's theorem and arc length, 16-point Gauss-Legendre on each piece (exact
+    // for the cubics' area, the circles' closed forms for theirs).
+    let nodes: Vec<(f64, f64)> = (1..=16)
+        .map(|i| {
+            let mut x = (PI * (f64::from(i) - 0.25) / 16.5).cos();
+            let mut dp = 1.0;
+            for _ in 0..100 {
+                let (mut p0, mut p1) = (1.0, x);
+                for k in 2..=16 {
+                    let k = f64::from(k);
+                    (p0, p1) = (p1, ((2.0 * k - 1.0) * x * p1 - (k - 1.0) * p0) / k);
+                }
+                dp = 16.0 * (x * p1 - p0) / (x * x - 1.0);
+                x -= p1 / dp;
+            }
+            (0.5 * (x + 1.0), 1.0 / ((1.0 - x * x) * dp * dp))
+        })
+        .collect();
+    let (mut area, mut length) = (0.0, 0.0);
+    for p in pieces {
+        for &(t, w) in &nodes {
+            let m = 1.0 - t;
+            let (b, db) = (
+                [m * m * m, 3.0 * m * m * t, 3.0 * m * t * t, t * t * t],
+                [-3.0 * m * m, 3.0 * m * m - 6.0 * m * t, 6.0 * m * t - 3.0 * t * t, 3.0 * t * t],
+            );
+            let at = |c: &[f64; 4], i: usize| c.iter().zip(&p).map(|(c, q)| c * q[i]).sum::<f64>();
+            let (x, y, dx, dy) = (at(&b, 0), at(&b, 1), at(&db, 0), at(&db, 1));
+            area += w * 0.5 * (x * dy - y * dx);
+            length += w * dx.hypot(dy);
+        }
+    }
+    // The half circles about (cx, cy) from angle a over pi: 0.5 (r^2 pi + r (cx (sin b - sin a) - cy (cos b - cos a))).
+    for (c, a) in [([end[0], end[1] - r], PI / 2.0), ([start[0], start[1] - r], 1.5 * PI)] {
+        let b2 = a + PI;
+        area += 0.5 * (r * r * PI + r * (c[0] * (b2.sin() - a.sin()) - c[1] * (b2.cos() - a.cos())));
+        length += r * PI;
+    }
+    let (y0, x0, x1) = (end[1] - 2.0 * r, end[0], start[0]);
+    area += 0.5 * (x0 * (start[1] - 2.0 * r) - y0 * x1);
+    length += (x1 - x0).hypot(start[1] - end[1]);
+    let t = taper.tan();
+    let want = z * area + length * t * z * z / 2.0 + PI * t * t * z * z * z / 3.0;
+    assert_close(solid_volume(&b, "drafted stadium"), want, 1e-6, "drafted stadium");
+}
+
 #[test]
 fn revolutions_whole_and_partial() {
     // A half disc on the z axis, in the xz plane: a sphere; a quarter turn of a square off it.
@@ -123,11 +216,11 @@ fn sweeps_lofts_and_screws() {
     let b = Brep::screw_sweep(&tooth, [0.0; 3], [0.0, 0.0, 1.0], 1.0, 3.0, 1e-4).unwrap();
     assert_close(solid_volume(&b, "screw"), 0.16 * TAU * 4.2 * 3.0, 1e-4, "screw sweep");
     let historical = b.to_native().unwrap();
-    assert!(historical.faces.iter().filter(|f| matches!(f.surface, solidcore_record::brep::Surface::RationalSpline { .. })).count() > 2);
+    assert!(historical.faces.iter().filter(|f| matches!(f.surface, solidcore_record::brep::Surface::Sweep { .. })).count() > 2);
     let options = crate::sweeps::ScrewSweepOptions { law: None, join_spline_walls: true, tolerance: 1e-4 };
     let b = Brep::screw_sweep_with_options(&tooth, [0.0; 3], [0.0, 0.0, 1.0], 1.0, 3.0, options).unwrap();
     let record = b.to_native().unwrap();
-    let flanks = record.faces.iter().filter(|f| matches!(f.surface, solidcore_record::brep::Surface::RationalSpline { .. })).count();
+    let flanks = record.faces.iter().filter(|f| matches!(f.surface, solidcore_record::brep::Surface::Sweep { .. })).count();
     assert_eq!(flanks, 2, "each screw flank must remain one face across the cylinder seams");
     // The tooth moved out 1 mm over its three turns, linearly: A 2 pi (c turns + int offset dt).
     let b = Brep::screw_sweep_with_options(
@@ -155,9 +248,88 @@ fn sweeps_lofts_and_screws() {
     .unwrap();
     assert!(b.check(CheckLevel::All).unwrap().is_valid());
     let record = b.to_native().unwrap();
-    let splines = record.faces.iter().filter(|f| matches!(f.surface, solidcore_record::brep::Surface::RationalSpline { .. })).count();
+    let splines = record.faces.iter().filter(|f| matches!(f.surface, solidcore_record::brep::Surface::Sweep { .. })).count();
     assert_eq!(splines, 8, "two flanks across three law intervals and two sloping radial walls");
     assert_eq!(Brep::screw_sweep_radial(&tooth, [0.0; 3], [0.0, 0.0, 1.0], 1.0, 3.0, &[(2.0, 0.0), (1.0, 1.0)], 1e-4).err(), Some(Error::Argument));
+}
+
+/// a 40×20 rounded rectangle, corner radius 2, and a centred rectangle of width
+/// `2 w` and height 1. Pappus: the centroid rides the path, length `104 + 4π` (straights
+/// 36+16+36+16 and four quarter circles of radius 2), times the profile area `2 w`.
+#[test]
+fn near_centre_closed_rounded_rectangle_keeps_its_offset() {
+    let z = [0.0, 0.0, 1.0];
+    let arc = |center: [f64; 3], reference: [f64; 3]| Curve::Arc { center, axis: z, reference, radius: 2.0, start: 0.0, end: PI / 2.0 };
+    let path = vec![
+        Curve::Line { start: [-18.0, -10.0, 0.0], end: [18.0, -10.0, 0.0] },
+        arc([18.0, -8.0, 0.0], [0.0, -1.0, 0.0]),
+        Curve::Line { start: [20.0, -8.0, 0.0], end: [20.0, 8.0, 0.0] },
+        arc([18.0, 8.0, 0.0], [1.0, 0.0, 0.0]),
+        Curve::Line { start: [18.0, 10.0, 0.0], end: [-18.0, 10.0, 0.0] },
+        arc([-18.0, 8.0, 0.0], [0.0, 1.0, 0.0]),
+        Curve::Line { start: [-20.0, 8.0, 0.0], end: [-20.0, -8.0, 0.0] },
+        arc([-18.0, -8.0, 0.0], [-1.0, 0.0, 0.0]),
+    ];
+    for w in [2.0 - 1e-6, 2.0 - 1e-9, 2.0, 1.5] {
+        let profile = polygon(&[[-18.0, -10.0 - w, 0.0], [-18.0, -10.0 + w, 0.0], [-18.0, -10.0 + w, 1.0], [-18.0, -10.0 - w, 1.0]]);
+        let want = (2.0 * w) * (104.0 + 4.0 * PI);
+        let (b, _) = Brep::sweep_placed(&profile, &path, SweepFrame::Follow, true).unwrap();
+        let report = b.check(CheckLevel::All).unwrap();
+        assert!(report.is_valid(), "w={w}: {} failed\n{}", report.failures, report.text);
+        let got = b.volume(1e-12).unwrap();
+        assert_close(got, want, 1e-9, &format!("w={w}"));
+    }
+}
+
+/// the same closed sweep with the inner edge `delta` mm inside the corner centres,
+/// `delta` from `6e-6` to `1.5e-5`. Pappus volume `(2 w) (104 + 4 pi)`, and a valid solid.
+#[test]
+fn a_closed_rounded_sweep_inner_edge_8e_6_to_1_2e_5_inside_builds() {
+    let z = [0.0, 0.0, 1.0];
+    let arc = |center: [f64; 3], reference: [f64; 3]| Curve::Arc { center, axis: z, reference, radius: 2.0, start: 0.0, end: PI / 2.0 };
+    let path = vec![
+        Curve::Line { start: [-18.0, -10.0, 0.0], end: [18.0, -10.0, 0.0] },
+        arc([18.0, -8.0, 0.0], [0.0, -1.0, 0.0]),
+        Curve::Line { start: [20.0, -8.0, 0.0], end: [20.0, 8.0, 0.0] },
+        arc([18.0, 8.0, 0.0], [1.0, 0.0, 0.0]),
+        Curve::Line { start: [18.0, 10.0, 0.0], end: [-18.0, 10.0, 0.0] },
+        arc([-18.0, 8.0, 0.0], [0.0, 1.0, 0.0]),
+        Curve::Line { start: [-20.0, 8.0, 0.0], end: [-20.0, -8.0, 0.0] },
+        arc([-18.0, -8.0, 0.0], [-1.0, 0.0, 0.0]),
+    ];
+    let mut failed = String::new();
+    for delta in [6e-6, 8e-6, 9e-6, 1e-5, 1.2e-5, 1.5e-5] {
+        let w = 2.0 - delta;
+        let profile = polygon(&[[-18.0, -10.0 - w, 0.0], [-18.0, -10.0 + w, 0.0], [-18.0, -10.0 + w, 1.0], [-18.0, -10.0 - w, 1.0]]);
+        let want = (2.0 * w) * (104.0 + 4.0 * PI);
+        let (b, _) = match Brep::sweep_placed(&profile, &path, SweepFrame::Follow, true) {
+            Ok(built) => built,
+            Err(e) => {
+                failed.push_str(&format!("delta={delta}: {e}\n"));
+                continue;
+            }
+        };
+        let report = match b.check(CheckLevel::All) {
+            Ok(report) => report,
+            Err(e) => {
+                failed.push_str(&format!("delta={delta}: {e}\n"));
+                continue;
+            }
+        };
+        if !report.is_valid() {
+            failed.push_str(&format!("delta={delta}: {} failed\n{}", report.failures, report.text));
+            continue;
+        }
+        let got = match b.volume(1e-12) {
+            Ok(got) => got,
+            Err(e) => {
+                failed.push_str(&format!("delta={delta}: {e}\n"));
+                continue;
+            }
+        };
+        assert_close(got, want, 1e-9, &format!("delta={delta}"));
+    }
+    assert!(failed.is_empty(), "{failed}");
 }
 
 /// `x` turned by `a` about z, then lifted `z`.
@@ -229,4 +401,112 @@ fn a_circle_swept_round_a_circle_in_its_own_plane_returns() {
     });
     let valid = rx.recv_timeout(std::time::Duration::from_secs(60)).expect("the sweep did not return within 60 s");
     assert!(!valid, "a circle swept within its own plane is no valid sheet");
+}
+
+/// the closed rounded sweep scaled by `s = 1e-3`, with an absolute inner offset of
+/// 1e-5 (not scaled). Path length `(104 + 4 pi) s`, profile area `2 w * s`. A refusal must name
+/// its reason. A body must pass `check(All)` and match Pappus within 1e-9 relative: a valid
+/// solid whose volume misses that is a silent drift.
+#[test]
+fn small_closed_rounded_sweep_absolute_offset_does_not_drift() {
+    let s = 1e-3;
+    let z = [0.0, 0.0, 1.0];
+    let arc = |center: [f64; 3], reference: [f64; 3]| Curve::Arc { center, axis: z, reference, radius: 2.0 * s, start: 0.0, end: PI / 2.0 };
+    let path = vec![
+        Curve::Line { start: [-18.0 * s, -10.0 * s, 0.0], end: [18.0 * s, -10.0 * s, 0.0] },
+        arc([18.0 * s, -8.0 * s, 0.0], [0.0, -1.0, 0.0]),
+        Curve::Line { start: [20.0 * s, -8.0 * s, 0.0], end: [20.0 * s, 8.0 * s, 0.0] },
+        arc([18.0 * s, 8.0 * s, 0.0], [1.0, 0.0, 0.0]),
+        Curve::Line { start: [18.0 * s, 10.0 * s, 0.0], end: [-18.0 * s, 10.0 * s, 0.0] },
+        arc([-18.0 * s, 8.0 * s, 0.0], [0.0, 1.0, 0.0]),
+        Curve::Line { start: [-20.0 * s, 8.0 * s, 0.0], end: [-20.0 * s, -8.0 * s, 0.0] },
+        arc([-18.0 * s, -8.0 * s, 0.0], [-1.0, 0.0, 0.0]),
+    ];
+    let w = 2.0 * s - 1e-5;
+    let profile = polygon(&[
+        [-18.0 * s, -10.0 * s - w, 0.0],
+        [-18.0 * s, -10.0 * s + w, 0.0],
+        [-18.0 * s, -10.0 * s + w, 1.0 * s],
+        [-18.0 * s, -10.0 * s - w, 1.0 * s],
+    ]);
+    let path_length = (104.0 + 4.0 * PI) * s;
+    let area = (2.0 * w) * s;
+    let want = area * path_length;
+    match Brep::sweep_placed(&profile, &path, SweepFrame::Follow, true) {
+        Err(e) => {
+            let reason = e.to_string();
+            assert!(!reason.trim().is_empty(), "refusal has an empty reason");
+        }
+        Ok((b, _)) => {
+            let report = b.check(CheckLevel::All).unwrap();
+            assert!(report.is_valid(), "{} failed\n{}", report.failures, report.text);
+            assert_close(b.volume(1e-12).unwrap(), want, 1e-9, "scaled closed sweep");
+        }
+    }
+}
+
+/// a corner under 0.5 mm, inner edge between the scaled band and the sweep tolerance,
+/// must still build the base's valid solid. The 8-segment rounded rectangle scaled by
+/// `s = 5e-4` (corner radius `2 s = 1e-3`). Inner edge `delta` inside the corner centres,
+/// profile height `s`. Pappus is `2 w s (104 + 4 pi) s`, within 1e-9 relative.
+#[test]
+fn closed_sweep_corner_under_half_mm_keeps_base_on_axis() {
+    let s = 5e-4;
+    let delta = 1.555_634_918_610_404_7e-7_f64;
+    let z = [0.0, 0.0, 1.0];
+    let arc = |center: [f64; 3], reference: [f64; 3]| Curve::Arc { center, axis: z, reference, radius: 2.0 * s, start: 0.0, end: PI / 2.0 };
+    let path = vec![
+        Curve::Line { start: [-18.0 * s, -10.0 * s, 0.0], end: [18.0 * s, -10.0 * s, 0.0] },
+        arc([18.0 * s, -8.0 * s, 0.0], [0.0, -1.0, 0.0]),
+        Curve::Line { start: [20.0 * s, -8.0 * s, 0.0], end: [20.0 * s, 8.0 * s, 0.0] },
+        arc([18.0 * s, 8.0 * s, 0.0], [1.0, 0.0, 0.0]),
+        Curve::Line { start: [18.0 * s, 10.0 * s, 0.0], end: [-18.0 * s, 10.0 * s, 0.0] },
+        arc([-18.0 * s, 8.0 * s, 0.0], [0.0, 1.0, 0.0]),
+        Curve::Line { start: [-20.0 * s, 8.0 * s, 0.0], end: [-20.0 * s, -8.0 * s, 0.0] },
+        arc([-18.0 * s, -8.0 * s, 0.0], [-1.0, 0.0, 0.0]),
+    ];
+    let w = 1e-3 - delta;
+    let profile =
+        polygon(&[[-18.0 * s, -10.0 * s - w, 0.0], [-18.0 * s, -10.0 * s + w, 0.0], [-18.0 * s, -10.0 * s + w, s], [-18.0 * s, -10.0 * s - w, s]]);
+    let want = 2.0 * w * s * (104.0 + 4.0 * PI) * s;
+    let (b, _) = match Brep::sweep_placed(&profile, &path, SweepFrame::Follow, true) {
+        Ok(built) => built,
+        Err(e) => panic!("{e}"),
+    };
+    let report = match b.check(CheckLevel::All) {
+        Ok(report) => report,
+        Err(e) => panic!("{e}"),
+    };
+    assert!(report.is_valid(), "{} failed\n{}", report.failures, report.text);
+    let got = match b.volume(1e-12) {
+        Ok(got) => got,
+        Err(e) => panic!("{e}"),
+    };
+    assert_close(got, want, 1e-9, "sub-0.5 mm closed sweep");
+}
+
+/// the open run `l1`, `a1`, `l2` of the rounded rectangle (a curve sweep along an open path),
+/// the inner edge `delta` mm inside the corner centre, `delta` from `1e-6` to `1.5e-5`. Only a
+/// closed path refuses a wall within tolerance of singular (the piece-by-piece sweep takes
+/// over there), so an open path still builds, with the Pappus volume: profile area `2 w`
+/// times the run's length `36 + pi + 16`.
+#[test]
+fn an_open_rounded_sweep_with_the_inner_edge_near_a_corner_centre_still_builds() {
+    let z = [0.0, 0.0, 1.0];
+    let path = vec![
+        Curve::Line { start: [-18.0, -10.0, 0.0], end: [18.0, -10.0, 0.0] },
+        Curve::Arc { center: [18.0, -8.0, 0.0], axis: z, reference: [0.0, -1.0, 0.0], radius: 2.0, start: 0.0, end: PI / 2.0 },
+        Curve::Line { start: [20.0, -8.0, 0.0], end: [20.0, 8.0, 0.0] },
+    ];
+    let mut failed = String::new();
+    for delta in [1e-6, 6e-6, 1e-5, 1.5e-5] {
+        let w = 2.0 - delta;
+        let profile = polygon(&[[-18.0, -10.0 - w, 0.0], [-18.0, -10.0 + w, 0.0], [-18.0, -10.0 + w, 1.0], [-18.0, -10.0 - w, 1.0]]);
+        let want = (2.0 * w) * (36.0 + PI + 16.0);
+        match Brep::sweep(&profile, &path, SweepFrame::Follow, true).map(|b| b.volume(1e-12)) {
+            Ok(Ok(got)) if (got - want).abs() <= 1e-9 * want => {}
+            other => failed.push_str(&format!("delta={delta}: {other:?} vs {want}\n")),
+        }
+    }
+    assert!(failed.is_empty(), "{failed}");
 }

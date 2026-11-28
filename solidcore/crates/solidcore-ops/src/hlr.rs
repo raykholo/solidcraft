@@ -178,6 +178,9 @@ fn kernel_body(b: &Brep) -> Result<k::body::Brep, HlrError> {
         Surface::Blend { .. } => Err(HlrError::Unsupported(
             "a blend's label (draw its NURBS form)",
         )),
+        Surface::Sweep { .. } => Err(HlrError::Unsupported(
+            "a sweep's label (draw its NURBS form)",
+        )),
         s => solidcore_convert::surface(s).map_err(|_| HlrError::Unsupported("face surface")),
     };
     let edges = b
@@ -197,7 +200,7 @@ fn kernel_body(b: &Brep) -> Result<k::body::Brep, HlrError> {
         .map(|f| {
             // A blend's label has no surface of its own: its face is drawn as its NURBS form.
             let (label, form) = match (&f.surface, &f.nurbs) {
-                (Surface::Blend { .. }, Some(net)) => (net, None),
+                (Surface::Blend { .. } | Surface::Sweep { .. }, Some(net)) => (net, None),
                 (label, form) => (label, form.as_ref()),
             };
             Ok(k::body::Face {
@@ -338,6 +341,7 @@ pub fn silhouettes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use solidcore::math::det;
     use solidcore_record::brep::Curve;
 
     #[test]
@@ -481,7 +485,7 @@ mod tests {
         // The corners lie on their labels' spheres and the rounds on theirs: a radius, a
         // position or a length is off by rounding only, far within a micrometre.
         let near = |x: f64, y: f64| (x - y).abs() <= 1e-6;
-        let dist = |p: Vec2, q: Vec2| (q.x - p.x).hypot(q.y - p.y);
+        let dist = |p: Vec2, q: Vec2| det::hypot(q.x - p.x, q.y - p.y);
         // Distance from p to the segment from a to b.
         let to_segment = |p: Vec2, a: Vec2, b: Vec2| {
             let (ux, uy) = (b.x - a.x, b.y - a.y);
@@ -556,15 +560,15 @@ mod tests {
                             if near(leg, 0.) {
                                 continue;
                             }
-                            let half = w.acos();
-                            let radius = leg / half.tan();
-                            assert!(near(dist(a, b), 2. * radius * half.sin()), "{seg:?}");
+                            let half = det::acos(w);
+                            let radius = leg / det::tan(half);
+                            assert!(near(dist(a, b), 2. * radius * det::sin(half)), "{seg:?}");
                             assert!(near(radius, r), "conic radius {radius}");
                             let m = Vec2 {
                                 x: 0.5 * (a.x + b.x),
                                 y: 0.5 * (a.y + b.y),
                             };
-                            let k = radius.hypot(leg) / dist(m, apex);
+                            let k = det::hypot(radius, leg) / dist(m, apex);
                             centre(Vec2 {
                                 x: apex.x + k * (m.x - apex.x),
                                 y: apex.y + k * (m.y - apex.y),

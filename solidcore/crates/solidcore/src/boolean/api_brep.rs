@@ -605,11 +605,31 @@ fn merge_boolean(
 /// B-rep (`SmMerge::m_vEdges`) as it left them.
 fn merge_boolean_by(
     k: &mut Kernel,
+    brep1: Brep,
+    brep2: Brep,
+    operation: BooleanOperation,
+    options: Option<MergeOptions>,
+    method: MergeMethod,
+) -> Result<(BooleanOutcome, Vec<EdgeId>)> {
+    merge_boolean_with_driver(
+        k,
+        brep1,
+        brep2,
+        operation,
+        options,
+        method,
+        crate::boolean::merge::p3::DependencyMerge::carrying_attributes(),
+    )
+}
+
+fn merge_boolean_with_driver(
+    k: &mut Kernel,
     mut brep1: Brep,
     mut brep2: Brep,
     operation: BooleanOperation,
     options: Option<MergeOptions>,
     method: MergeMethod,
+    mut driver: crate::boolean::merge::p3::DependencyMerge,
 ) -> Result<(BooleanOutcome, Vec<EdgeId>)> {
     // SmMerge sMerge(*pContext, pBrep1, pBrep2) (or 0, 0, &sOptions): tolerance and
     // angle 0, both computed by the constructor.
@@ -619,9 +639,6 @@ fn merge_boolean_by(
     // (not upstream: WR-754) the operands' self-touch edge copies glued first
     glue_self_touching_edges(k, &mut brep1)?;
     glue_self_touching_edges(k, &mut brep2)?;
-    // (not upstream) the driver carries the operands' attributes through the merge, as
-    // upstream's live on the objects the merge edits
-    let mut driver = crate::boolean::merge::p3::DependencyMerge::carrying_attributes();
     let mut primary = Some(brep1);
     let mut other = Some(brep2);
     driver.construct(k, &mut primary, &mut other, 0.0, 0.0, options.as_ref())?;
@@ -704,6 +721,28 @@ pub fn boolean(
 pub fn boolean_union(k: &mut Kernel, brep1: Brep, brep2: Brep) -> Result<Brep> {
     validate_boolean_operands(BooleanOperation::Union)?;
     merge_boolean(k, brep1, brep2, BooleanOperation::Union, None).map(|o| o.result)
+}
+
+/// Unions two B-reps while constraining unmated faces of `brep2` to regions bordered by
+/// every mated edge on the union's kept void side (recovery for grazing radial-sector
+/// misclassifications in `make_faceuse`).
+///
+/// # Errors
+///
+/// The merge's error.
+pub fn boolean_union_constrained(k: &mut Kernel, brep1: Brep, brep2: Brep) -> Result<Brep> {
+    validate_boolean_operands(BooleanOperation::Union)?;
+    merge_boolean_with_driver(
+        k,
+        brep1,
+        brep2,
+        BooleanOperation::Union,
+        None,
+        MergeMethod::ByOperands,
+        crate::boolean::merge::p3::DependencyMerge::carrying_attributes()
+            .with_constrain_mated_regions(true),
+    )
+    .map(|(o, _)| o.result)
 }
 
 /// Combines non-empty mutually disjoint closed manifold solids sharing the same B-rep tolerance
@@ -1547,6 +1586,7 @@ pub fn tessellate_boundaries(
 mod tests {
     use super::*;
     use crate::geom::context::MarkType;
+    use crate::math::det;
 
     /// A geometry curve over a cubic NURB on `knots` with the control points `pts`.
     fn cubic(pts: &[[f64; 3]], knots: Vec<f64>) -> crate::curve::curve::p2::Curve {
@@ -1785,12 +1825,12 @@ mod tests {
         // two Hermite spans of the quarter (ends and tangents on the circle)
         let along = |a0: f64, dz: f64| {
             let h = half_pi / 2.0;
-            let t = 4.0 / 3.0 * (h / 4.0).tan();
+            let t = 4.0 / 3.0 * det::tan(h / 4.0);
             let mut pts = vec![];
             for i in 0..2 {
                 let (a, b) = (a0 + h * f64::from(i), a0 + h * f64::from(i + 1));
-                let p = |u: f64| [r * u.cos(), r * u.sin()];
-                let d = |u: f64| [-r * u.sin(), r * u.cos()];
+                let p = |u: f64| [r * det::cos(u), r * det::sin(u)];
+                let d = |u: f64| [-r * det::sin(u), r * det::cos(u)];
                 let (pa, pb, da, db) = (p(a), p(b), d(a), d(b));
                 if i == 0 {
                     pts.push([pa[0], pa[1], dz]);
@@ -1810,7 +1850,7 @@ mod tests {
         let off_circle = (0..=2000)
             .map(|i| {
                 let p = b.evaluate_point(&k, f64::from(i) / 1000.0).unwrap();
-                ((p.x.hypot(p.y) - r).powi(2) + p.z * p.z).sqrt()
+                (det::powi(det::hypot(p.x, p.y) - r, 2) + p.z * p.z).sqrt()
             })
             .fold(0.0, f64::max);
         assert!(off_circle >= rise);

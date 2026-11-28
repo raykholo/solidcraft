@@ -86,7 +86,10 @@ pub(crate) use imp::{
     sphere, sweep, sweep_controlled, torus,
 };
 #[cfg(feature = "backend-occt")]
-pub(crate) use imp::{extrusion_curves, name_extrusion, name_revolution, revolution_curves};
+pub(crate) use imp::{
+    cylinder_circle, extrusion_curves, loft_curves_of, name_cylinder, name_extrusion, name_loft, name_loft_to_point, name_revolution,
+    name_revolved_primitive, revolution_curves, section_curves,
+};
 
 /// `parts` joined in order in a balanced tree: each part with its neighbour, then each pair with
 /// the next pair, and so on, a part left over at the end of a level carried up as it is. Every
@@ -125,7 +128,7 @@ mod imp {
     use std::collections::BTreeSet;
 
     use solidcore_ops::sweep::Curve as SkinCurve;
-    use solidcore_ops::sweep::railed::{RailFit as SkinFit, RailLoft, RailSection as SkinSection};
+    use solidcore_ops::sweep::railed::{RailFit as SkinFit, RailLoft, SpaceRailSection as SkinSection};
     use solidcraft_smlib::Brep;
     use solidcraft_smlib::sweeps::{Affine, Curve, DraftCorner, Ends, SweepFrame};
 
@@ -459,9 +462,16 @@ mod imp {
     /// right cylinder) while skipping `number_regions`, `broken_at_seams`, and `roles()` curve
     /// sampling. Carries the exact same cap/wall history and construction sources.
     pub(crate) fn cylinder(plane: &Plane, radius: f64, lo: f64, hi: f64, region: &Region2) -> Result<Body> {
-        let distance = hi - lo;
+        let (circle, n) = cylinder_circle(plane, radius, lo);
+        let brep = Brep::extrude(&[circle], n, hi - lo, 0.0, DraftCorner::default(), true).map_err(|e| failed("extrude", e))?;
+        let body = body_of(brep, "extrude")?;
+        name_cylinder(body, plane, lo, hi, region)
+    }
+
+    /// The circle [`cylinder`] extrudes, at `lo` along the normal of `plane`, and the unit normal
+    /// it goes along.
+    pub(crate) fn cylinder_circle(plane: &Plane, radius: f64, lo: f64) -> (Curve, [f64; 3]) {
         let base = plane.offset(lo);
-        let top = plane.offset(hi);
         let n = plane.normal();
         let circle = Curve::Arc {
             center: p(base.origin),
@@ -471,8 +481,15 @@ mod imp {
             start: crate::build::SEAM_ANGLE,
             end: crate::build::SEAM_ANGLE + std::f64::consts::TAU,
         };
-        let brep = Brep::extrude(&[circle], p(n), distance, 0.0, DraftCorner::default(), true).map_err(|e| failed("extrude", e))?;
-        let body = body_of(brep, "extrude")?;
+        (circle, p(n))
+    }
+
+    /// `body`, a cylinder from `lo` to `hi` along `plane`'s normal, with the history and
+    /// construction sources [`cylinder`] gives its own: the wall swept from the circle, the caps.
+    pub(crate) fn name_cylinder(body: Body, plane: &Plane, lo: f64, hi: f64, region: &Region2) -> Result<Body> {
+        let distance = hi - lo;
+        let base = plane.offset(lo);
+        let top = plane.offset(hi);
         let r = body.record();
         let size = body.size().max(1e-9);
         let tol = (size * 1e-5 + 1e-9).min(0.25 * distance);
@@ -525,7 +542,12 @@ mod imp {
     /// a sphere revolves.
     pub(crate) fn sphere(center: Vec3, radius: f64) -> Result<Body> {
         let brep = Brep::make_sphere(p(center), radius).map_err(|e| failed("sphere", e))?;
-        let body = body_of(brep, "sphere")?;
+        name_revolved_primitive(body_of(brep, "sphere")?)
+    }
+
+    /// A sphere's or torus's history as [`sphere`] and [`torus`] give it: every face swept from
+    /// the one profile segment the solid revolves.
+    pub(crate) fn name_revolved_primitive(body: Body) -> Result<Body> {
         let faces = body.face_count();
         Ok(record::attach(body, &[], Some(vec![record::profile(&[0usize]); faces]), &[]))
     }
@@ -534,9 +556,7 @@ mod imp {
     /// (segment 0) a torus revolves.
     pub(crate) fn torus(center: Vec3, major: f64, minor: f64) -> Result<Body> {
         let brep = Brep::make_torus(p(center), major, minor).map_err(|e| failed("torus", e))?;
-        let body = body_of(brep, "torus")?;
-        let faces = body.face_count();
-        Ok(record::attach(body, &[], Some(vec![record::profile(&[0usize]); faces]), &[]))
+        name_revolved_primitive(body_of(brep, "torus")?)
     }
 
     /// A point a wall is known by: on its edge in the start plane, or inside it; and the piece
@@ -1160,10 +1180,12 @@ mod imp {
             })
             .min_by(f64::total_cmp);
         match (&e, tightest) {
-            (solidcraft_smlib::Error::Status(1025), Some(radius)) => KernelError::Invalid(format!(
-                "the profile reaches past the centre of a bend in the path: it must stay inside the radius of every bend it turns towards (the tightest bend here is {} mm)",
-                crate::blend::trimmed_mm(radius)
-            )),
+            (solidcraft_smlib::Error::Status(1025) | solidcraft_smlib::Error::Refused(solidcore_ops::Error::Status(1025)), Some(radius)) => {
+                KernelError::Invalid(format!(
+                    "the profile reaches past the centre of a bend in the path: it must stay inside the radius of every bend it turns towards (the tightest bend here is {} mm)",
+                    crate::blend::trimmed_mm(radius)
+                ))
+            }
             _ => failed("sweep", e),
         }
     }
@@ -2637,6 +2659,20 @@ mod imp {
         loft_roles(body_of(brep, "loft")?, sections, first)
     }
 
+    /// The section curves [`loft`] skins (runs of one curve joined where every section agrees),
+    /// section by section: what another kernel lofts.
+    #[cfg(feature = "backend-occt")]
+    pub(crate) fn loft_curves_of(sections: &[(Plane, Vec<Piece>)]) -> Result<Vec<Vec<Curve>>> {
+        loft_section_curves(sections)
+    }
+
+    /// `body`, another kernel's loft of [`loft_curves_of`], with the roles and history [`loft`]
+    /// gives its own.
+    #[cfg(feature = "backend-occt")]
+    pub(crate) fn name_loft(body: Body, sections: &[(Plane, Vec<Piece>)], first: usize) -> Result<Body> {
+        loft_roles(body, sections, first)
+    }
+
     /// `body`, a loft through `sections` (`first` as [`loft`] takes it), with the roles and the
     /// history its faces and walls have.
     fn loft_roles(body: Body, sections: &[(Plane, Vec<Piece>)], first: usize) -> Result<Body> {
@@ -2726,7 +2762,7 @@ mod imp {
             cap,
             ..RailLoft::relative(1e-4)
         };
-        let skin = solidcore_ops::sweep::railed::loft_rails(sections, &rail_curves, &how).map_err(|e| KernelError::Invalid(e.to_string()))?;
+        let skin = solidcore_ops::sweep::railed::loft_rails_space(sections, &rail_curves, &how).map_err(|e| KernelError::Invalid(e.to_string()))?;
         let (record, _) = skin.to_record().map_err(|e| KernelError::Invalid(e.to_string()))?;
         Ok(record)
     }
@@ -2746,16 +2782,15 @@ mod imp {
     /// brought to one form, as the one or two rails' loft does (`unified`). Solidcore pairs the
     /// curves by their weights, so a straight curve's weights are solidcore's to give.
     pub(crate) fn skin_sections(matched: &[crate::loft_rails::Section]) -> Result<Vec<SkinSection>> {
-        let unified = crate::loft_rails::unified(matched)?;
+        let unified = crate::loft_rails::resolve_planes(&crate::loft_rails::unified(matched)?);
         Ok(unified
             .iter()
-            .map(|s| {
-                let n = s.plane.normal();
-                SkinSection {
-                    origin: [s.plane.origin.x, s.plane.origin.y, s.plane.origin.z],
-                    normal: [n.x, n.y, n.z],
-                    curves: s.curves.iter().map(skin_nurbs).collect(),
-                }
+            .map(|s| SkinSection {
+                plane: s.plane.map(|pl| {
+                    let n = pl.normal();
+                    ([pl.origin.x, pl.origin.y, pl.origin.z], [n.x, n.y, n.z])
+                }),
+                curves: s.curves.iter().map(skin_nurbs).collect(),
             })
             .collect())
     }
@@ -2771,9 +2806,21 @@ mod imp {
     pub(crate) fn loft_to_point(plane: &Plane, pieces: &[Piece], apex: Vec3) -> Result<Body> {
         let c = curves(plane, pieces)?;
         let brep = Brep::loft_to_point(&c, p(apex)).map_err(|e| failed("loft to a point", e))?;
-        let body = body_of(brep, "loft to a point")?;
+        name_loft_to_point(body_of(brep, "loft to a point")?, plane, pieces)
+    }
+
+    /// `body`, a loft of `pieces` on `plane` to a point, with the roles and history
+    /// [`loft_to_point`] gives its own: the base is the start cap, each wall comes from the
+    /// segment it stands on.
+    pub(crate) fn name_loft_to_point(body: Body, plane: &Plane, pieces: &[Piece]) -> Result<Body> {
         let roles = roles(&body, plane, None, &seeds(plane, pieces, |q| q), &[], false)?;
         with_history(body, &roles, pieces)
+    }
+
+    /// The section curves [`loft_to_point`] lofts: what another kernel lofts.
+    #[cfg(feature = "backend-occt")]
+    pub(crate) fn section_curves(plane: &Plane, pieces: &[Piece]) -> Result<Vec<Curve>> {
+        curves(plane, pieces)
     }
 
     /// [`loft_to_point`] following one or two guide `rails` (polylines from the section to the
